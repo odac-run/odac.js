@@ -48,17 +48,15 @@ async function run() {
             const pkgPath = path.join(targetDir, 'package.json')
             const frameworkPkg = require('../package.json')
 
-            if (fs.existsSync(pkgPath)) {
-                const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
-                pkg.name = projectName === '.' ? path.basename(targetDir) : projectName
-                pkg.version = '0.0.1'
+            const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+            pkg.name = projectName === '.' ? path.basename(targetDir) : projectName
+            pkg.version = '0.0.1'
 
-                // Inject framework dependency
-                if (!pkg.dependencies) pkg.dependencies = {}
-                pkg.dependencies[frameworkPkg.name] = `^${frameworkPkg.version}`
+            // Inject framework dependency
+            if (!pkg.dependencies) pkg.dependencies = {}
+            pkg.dependencies[frameworkPkg.name] = `^${frameworkPkg.version}`
 
-                fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
-            }
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2))
 
             console.log('\n📦 Installing dependencies...')
             try {
