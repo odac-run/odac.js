@@ -8,45 +8,22 @@
     "url": "https://emre.red"
   },
   "version": "0.9.0",
-  "license": "AGPL-3.0",
+  "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
   },
-  "main": "framework/index.js",
+  "bin": {
+    "odac": "./bin/odac.js"
+  },
+  "main": "index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/odac-run/odac.git"
-  },
-  "directories": {
-    "bin": "./bin",
-    "cli": "./cli",
-    "core": "./core",
-    "docs": "./docs",
-    "framework": "./framework",
-    "locale": "./locale",
-    "server": "./server",
-    "test": "./test",
-    "watchdog": "./watchdog",
-    "web": "./web"
-  },
-  "bin": {
-    "odac": "bin/odac"
+    "url": "https://github.com/odac-run/framework.git"
   },
   "dependencies": {
-    "acme-client": "^5.1.0",
     "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
-    "dkim-signer": "^0.2.2",
-    "find-process": "^2.0.0",
-    "mailparser": "^3.7.1",
-    "mysql2": "^3.6.5",
-    "native-dns": "^0.7.0",
-    "node-forge": "^1.3.1",
-    "selfsigned": "^2.4.1",
-    "smtp-server": "^3.13.4",
-    "sqlite3": "^5.1.7",
-    "ssh2": "^1.15.0",
-    "ws": "^8.18.0"
+    "mysql2": "^3.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",

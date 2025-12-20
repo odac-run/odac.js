@@ -183,8 +183,8 @@ class View {
         }
       }
       if (this.#part.all) {
-        let parts = result.match(/{{.*?}}/g).map(part => part.replace(/{{|}}/g, '').trim())
-        if (parts)
+        let parts = (result.match(/{{.*?}}/g) || []).map(part => part.replace(/{{|}}/g, '').trim())
+        if (parts.length > 0)
           for (let part of parts) {
             part = part.trim()
             let file = this.#part.all.split('.')
