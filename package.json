@@ -52,6 +52,19 @@
     "test:watch": "jest --watch",
     "release": "semantic-release"
   },
+  "release": {
+    "plugins": [
+      "@semantic-release/commit-analyzer",
+      "@semantic-release/release-notes-generator",
+      [
+        "@semantic-release/npm",
+        {
+          "provenance": true
+        }
+      ],
+      "@semantic-release/github"
+    ]
+  },
   "lint-staged": {
     "*.js": [
       "eslint --fix",
