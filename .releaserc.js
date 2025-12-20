@@ -52,8 +52,6 @@ module.exports = {
                 commit.subject = commit.subject.replace(prRegex, '')
               }
 
-              let prLink = ''
-
               // Get author name - prefer GitHub login if available
               const email = commit.committer.email || commit.authorEmail || ''
               const ghUserMatch = email.match(/^(?:\d+\+)?([a-zA-Z0-9-]+)@users\.noreply\.github\.com$/)
