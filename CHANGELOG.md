@@ -1,3 +1,13 @@
+### 🛠️ Fixes & Improvements
+
+- Simplify project initialization by removing directory emptiness validation and extraneous comments.
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### Framework
 
 - HTML Email
