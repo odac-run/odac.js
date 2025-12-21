@@ -20,31 +20,14 @@ async function run() {
         const projectName = args[0] || '.'
         const targetDir = path.resolve(process.cwd(), projectName)
 
-        // 1. Validate Target Directory
-        if (fs.existsSync(targetDir)) {
-            const files = fs.readdirSync(targetDir)
-            const isNotEmpty = files.some(file =>
-                !['.git', '.DS_Store', '.gitignore', '.idea', '.vscode'].includes(file)
-            )
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true })
 
-            if (isNotEmpty) {
-                console.error(`❌ Error: Directory "${projectName === '.' ? 'Current directory' : projectName}" is not empty.`)
-                console.error('   Please run in an empty directory or specify a new project name.')
-                process.exit(1)
-            }
-        } else {
-            fs.mkdirSync(targetDir, { recursive: true })
-        }
-
-        // 4. Copy Template
         console.log(`🚀 Initializing new Odac project in: ${targetDir}`)
         const templateDir = path.resolve(__dirname, '../template')
 
         try {
-            // Recursive copy
             fs.cpSync(templateDir, targetDir, { recursive: true })
 
-            // Update package.json
             const pkgPath = path.join(targetDir, 'package.json')
             const frameworkPkg = require('../package.json')
 
@@ -52,7 +35,6 @@ async function run() {
             pkg.name = projectName === '.' ? path.basename(targetDir) : projectName
             pkg.version = '0.0.1'
 
-            // Inject framework dependency
             if (!pkg.dependencies) pkg.dependencies = {}
             pkg.dependencies[frameworkPkg.name] = `^${frameworkPkg.version}`
 
@@ -78,7 +60,6 @@ async function run() {
                     cwd: targetDir
                 })
             } catch (err) {
-                // User probably cancelled with Ctrl+C
                 console.log('\n👋 Server stopped.')
             }
 
@@ -87,7 +68,6 @@ async function run() {
         }
 
     } else if (command === 'dev') {
-        // Start the framework
         require('../index.js')
     } else {
         console.log('Usage:')
