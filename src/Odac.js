@@ -19,6 +19,7 @@ module.exports = {
     _odac.Env = require('./Env.js')
     _odac.Mail = (...args) => new (require('./Mail.js'))(...args)
     _odac.Database = require('./Database.js')
+    _odac.DB = _odac.Database
     _odac.Route = global.Odac?.Route ?? new (require('./Route.js'))()
     _odac.Server = require('./Server.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)

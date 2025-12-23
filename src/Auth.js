@@ -23,14 +23,26 @@ class Auth {
     if (!this.#table) return false
     if (where) {
       if (!this.#validateInput(where)) return false
-      let sql = Odac.Database.table(this.#table)
-      if (!sql) {
-        console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
+      
+      // Using new DB API
+      let query = Odac.DB[this.#table]
+      
+      if (!query) {
+        console.error('Odac Auth Error: Database not configured.')
         return false
       }
-      for (let key in where) sql = sql.orWhere(key, where[key] instanceof Promise ? await where[key] : where[key])
-      if (!sql.rows()) return false
-      let get = await sql.get()
+      
+      // Knex build queries differently than previous builder
+      // Need to chain where clauses
+      for (let key in where) {
+          query = query.orWhere(key, where[key] instanceof Promise ? await where[key] : where[key]) 
+      }
+      
+      // Execute query
+      let get = await query
+      
+      if (!get || get.length === 0) return false
+      
       let equal = false
       for (var user of get) {
         equal = Object.keys(where).length > 0
@@ -48,39 +60,55 @@ class Auth {
     } else if (this.#user) {
       return true
     } else {
-      let check_table = await Odac.Database.run('SHOW TABLES LIKE ?', [this.#table])
-      if (check_table.length == 0) return false
-      let odac_x = this.#request.cookie('odac_x')
-      let odac_y = this.#request.cookie('odac_y')
-      let browser = this.#request.header('user-agent')
-      if (!odac_x || !odac_y || !browser) return false
-      const tokenTable = Odac.Config.auth.token || 'odac_auth'
-      const primaryKey = Odac.Config.auth.key || 'id'
-      let sql_token = await Odac.Database.table(tokenTable).where(['token_x', odac_x], ['browser', browser]).get()
-      if (sql_token.length !== 1) return false
-      if (!Odac.Var(sql_token[0].token_y).hashCheck(odac_y)) return false
+        // Checking for token
+        let odac_x = this.#request.cookie('odac_x')
+        let odac_y = this.#request.cookie('odac_y')
+        let browser = this.#request.header('user-agent')
+        
+        if (!odac_x || !odac_y || !browser) return false
 
-      const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
-      const updateAge = Odac.Config.auth?.updateAge || 24 * 60 * 60 * 1000
-      const now = Date.now()
-      const lastActive = new Date(sql_token[0].active).getTime()
-      const inactiveAge = now - lastActive
+        const tokenTable = Odac.Config.auth.token || 'odac_auth'
+        const primaryKey = Odac.Config.auth.key || 'id'
 
-      if (inactiveAge > maxAge) {
-        await Odac.Database.table(tokenTable).where('id', sql_token[0].id).delete()
-        return false
-      }
+        // Code First Migration: Ensure token table exists and clean up old tokens
+        try {
+            await this.#ensureTokenTableV2(tokenTable)
+        } catch(e) { /* ignore if fails, maybe db not up */ }
 
-      this.#user = await Odac.Database.table(this.#table).where(primaryKey, sql_token[0].user).first()
+        // Query token
+        let sql_token = await Odac.DB[tokenTable]
+            .where('token_x', odac_x)
+            .where('browser', browser)
+            
+        if (!sql_token || sql_token.length !== 1) return false
+        
+        if (!Odac.Var(sql_token[0].token_y).hashCheck(odac_y)) return false
 
-      if (inactiveAge > updateAge) {
-        Odac.Database.table(tokenTable)
-          .where('id', sql_token[0].id)
-          .set({active: new Date()})
-          .catch(() => {})
-      }
+        const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
+        const updateAge = Odac.Config.auth?.updateAge || 24 * 60 * 60 * 1000
+        const now = Date.now()
+        
+        // Active comes as Date object usually from drivers
+        const lastActive = new Date(sql_token[0].active).getTime()
+        const inactiveAge = now - lastActive
 
-      return true
+        if (inactiveAge > maxAge) {
+            await Odac.DB[tokenTable].where('id', sql_token[0].id).delete()
+            return false
+        }
+
+        this.#user = await Odac.DB[this.#table].where(primaryKey, sql_token[0].user).first()
+        if (!this.#user) return false;
+
+        if (inactiveAge > updateAge) {
+             // Use update instead of set for Knex
+            Odac.DB[tokenTable]
+            .where('id', sql_token[0].id)
+            .update({active: new Date()}) // knex uses .update
+            .catch(() => {})
+        }
+
+        return true
     }
   }
 
@@ -88,24 +116,17 @@ class Auth {
     this.#user = null
     let user = await this.check(where)
     if (!user) return false
+    
     if (!Odac.Config.auth) Odac.Config.auth = {}
     let key = Odac.Config.auth.key || 'id'
     let token = Odac.Config.auth.token || 'odac_auth'
-    const mysql = require('mysql2')
-    const safeTokenTable = mysql.escapeId(token)
-    let check_table = await Odac.Database.run('SHOW TABLES LIKE ?', [token])
-    if (check_table === false) {
-      console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
-      return false
-    }
-    if (check_table.length == 0)
-      await Odac.Database.run(
-        `CREATE TABLE ${safeTokenTable} (id INT NOT NULL AUTO_INCREMENT, user INT NOT NULL, token_x VARCHAR(255) NOT NULL, token_y VARCHAR(255) NOT NULL, browser VARCHAR(255) NOT NULL, ip VARCHAR(255) NOT NULL, \`date\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \`active\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id))`
-      )
 
+    await this.#ensureTokenTableV2(token)
+    
     this.#cleanupExpiredTokens(token)
 
     let token_y = Odac.Var(Math.random().toString() + Date.now().toString() + this.#request.id + this.#request.ip).md5()
+    
     let cookie = {
       user: user[key],
       token_x: Odac.Var(Math.random().toString() + Date.now().toString()).md5(),
@@ -113,26 +134,25 @@ class Auth {
       browser: this.#request.header('user-agent'),
       ip: this.#request.ip
     }
+    
     this.#request.cookie('odac_x', cookie.token_x, {
       httpOnly: true,
       secure: true,
       sameSite: 'Strict'
     })
     this.#request.cookie('odac_y', token_y, {httpOnly: true, secure: true, sameSite: 'Strict'})
-    let mysqlTable = Odac.Database.table(token)
-    if (!mysqlTable) {
-      console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
-      return false
-    }
-    let sql = await mysqlTable.insert(cookie)
-    return sql !== false
+    
+    // Knex insert returns ids on some dbs, promise resolves to result
+    const result = await Odac.DB[token].insert(cookie)
+    return !!result
   }
 
   async #cleanupExpiredTokens(tokenTable) {
     const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
+    // Knex handles dates well, but better to pass JS Date object
     const cutoffDate = new Date(Date.now() - maxAge)
 
-    Odac.Database.table(tokenTable)
+    Odac.DB[tokenTable]
       .where('active', '<', cutoffDate)
       .delete()
       .catch(() => {})
@@ -148,13 +168,12 @@ class Auth {
     const passwordField = options.passwordField || 'password'
     const uniqueFields = options.uniqueFields || ['email']
 
-    const checkTable = await Odac.Database.run('SHOW TABLES LIKE ?', [this.#table])
-    if (checkTable === false) {
-      console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
-      return {success: false, error: 'Database connection not configured'}
-    }
-    if (checkTable.length === 0) {
-      await this.#createUserTable(this.#table, primaryKey, passwordField, uniqueFields, data)
+    try {
+        await this.#ensureUserTableV2(this.#table, primaryKey, passwordField, uniqueFields, data)
+    } catch (e) {
+        // If DB not configured or connection failed
+        console.error('Odac Auth Error:', e.message)
+        return {success: false, error: 'Database connection failed'}
     }
 
     if (!data || typeof data !== 'object') {
@@ -165,41 +184,60 @@ class Auth {
       data[passwordField] = Odac.Var(data[passwordField]).hash()
     }
 
+    // Check unique fields
     for (const field of uniqueFields) {
       if (data[field]) {
-        const mysqlTable = Odac.Database.table(this.#table)
-        if (!mysqlTable) {
-          console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
-          return {success: false, error: 'Database connection not configured'}
-        }
-        const existing = await mysqlTable.where(field, data[field]).first()
-        if (existing) {
-          return {success: false, error: `${field} already exists`, field}
+        try {
+            const existing = await Odac.DB[this.#table].where(field, data[field]).first()
+            if (existing) {
+            return {success: false, error: `${field} already exists`, field}
+            }
+        } catch (e) {
+             console.error('Odac Auth Error checking unique:', e.message)
         }
       }
     }
 
     try {
-      const mysqlTable = Odac.Database.table(this.#table)
-      if (!mysqlTable) {
-        console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
-        return {success: false, error: 'Database connection not configured'}
-      }
-      const insertResult = await mysqlTable.insert(data)
-      if (insertResult === false) {
-        console.error('Odac Auth Error: Failed to insert user into database - query failed')
-        console.error('Data attempted to insert:', {...data, [passwordField]: '[REDACTED]'})
-        return {success: false, error: 'Failed to create user'}
-      }
-      if (!insertResult.affected || insertResult.affected === 0) {
-        console.error('Odac Auth Error: Insert query succeeded but no rows were affected')
-        console.error('Insert result:', insertResult)
-        console.error('Data attempted to insert:', {...data, [passwordField]: '[REDACTED]'})
-        return {success: false, error: 'Failed to create user'}
-      }
+      // Insert returns [id] in mysql/sqlite if standard knex, or result object
+      // But we are using a proxy that might not standardise this yet? 
+      // Actually standard Knex insert returns:
+      // - MySQL: [id] (array with insertId)
+      // - PG: [result] if returning used
+      
+       const insertResult = await Odac.DB[this.#table].insert(data)
+       
+       // Handle return result (Knex returns array of IDs usually)
+       let userId
+       if (Array.isArray(insertResult) && insertResult.length > 0) {
+           userId = insertResult[0]
+       } else if (insertResult && insertResult.insertId) { // mysql2 raw
+           userId = insertResult.insertId
+       } else {
+           // Try to query by unique field if ID not returned
+           // Fallback
+       }
+       
+       // If no userId, create fallback query to find user
+       // Actually most modern Knex invocations return [id] for auto-increment.
+       
+       if (!userId) {
+           // Fallback: try finding the user we just inserted
+           // Not 100% safe but better than failure
+            for (const field of uniqueFields) {
+               if (data[field]) {
+                   const u = await Odac.DB[this.#table].where(field, data[field]).first()
+                   if (u) userId = u[primaryKey]
+               }
+            }
+       }
+       
+       if (!userId) {
+             console.error('Odac Auth Error: Could not determine new user ID')
+             return {success: false, error: 'Failed to create user'}
+       }
 
-      const userId = insertResult.id
-      const newUser = await Odac.Database.table(this.#table).where(primaryKey, userId).first()
+      const newUser = await Odac.DB[this.#table].where(primaryKey, userId).first()
 
       if (!newUser) {
         return {success: false, error: 'User created but could not be retrieved'}
@@ -221,7 +259,6 @@ class Auth {
     } catch (error) {
       console.error('Odac Auth Error: Registration failed with exception')
       console.error('Error:', error.message)
-      console.error('Stack:', error.stack)
       return {success: false, error: error.message || 'Registration failed'}
     }
   }
@@ -235,10 +272,7 @@ class Auth {
     const browser = this.#request.header('user-agent')
 
     if (odacX && browser) {
-      const mysqlTable = Odac.Database.table(token)
-      if (mysqlTable) {
-        await mysqlTable.where(['token_x', odacX], ['browser', browser]).delete()
-      }
+        await Odac.DB[token].where('token_x', odacX).where('browser', browser).delete()
     }
 
     this.#request.cookie('odac_x', '', {maxAge: -1})
@@ -248,55 +282,51 @@ class Auth {
     return true
   }
 
-  async #createUserTable(tableName, primaryKey, passwordField, uniqueFields, sampleData) {
-    const mysql = require('mysql2')
-    const columns = []
-
-    const safePrimaryKey = mysql.escapeId(primaryKey)
-    columns.push(`${safePrimaryKey} INT NOT NULL AUTO_INCREMENT`)
-
-    for (const field of uniqueFields) {
-      if (field !== primaryKey) {
-        const safeField = mysql.escapeId(field)
-        columns.push(`${safeField} VARCHAR(255) NOT NULL UNIQUE`)
-      }
-    }
-
-    if (!uniqueFields.includes(passwordField) && passwordField !== primaryKey) {
-      const safePasswordField = mysql.escapeId(passwordField)
-      columns.push(`${safePasswordField} VARCHAR(255) NOT NULL`)
-    }
-
-    for (const key in sampleData) {
-      if (key === primaryKey || uniqueFields.includes(key) || key === passwordField) continue
-
-      const value = sampleData[key]
-      let columnType = 'VARCHAR(255)'
-
-      if (typeof value === 'number') {
-        if (Number.isInteger(value)) {
-          columnType = value > 2147483647 ? 'BIGINT' : 'INT'
-        } else {
-          columnType = 'DECIMAL(10,2)'
-        }
-      } else if (typeof value === 'boolean') {
-        columnType = 'TINYINT(1)'
-      } else if (value && value.length > 255) {
-        columnType = 'TEXT'
-      }
-
-      const safeKey = mysql.escapeId(key)
-      columns.push(`${safeKey} ${columnType} NULL`)
-    }
-
-    columns.push(`${mysql.escapeId('created_at')} TIMESTAMP DEFAULT CURRENT_TIMESTAMP`)
-    columns.push(`${mysql.escapeId('updated_at')} TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP`)
-    columns.push(`PRIMARY KEY (${safePrimaryKey})`)
-
-    const safeTableName = mysql.escapeId(tableName)
-    const sql = `CREATE TABLE ${safeTableName} (${columns.join(', ')}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
-
-    await Odac.Database.run(sql)
+  // --- MIGRATION HELPERS (Code-First) ---
+  
+  async #ensureTokenTableV2(tableName) {
+      // Using .schema helper
+      await Odac.DB[tableName].schema(t => {
+          t.increments('id')
+          t.integer('user').notNullable()
+          t.string('token_x').notNullable()
+          t.string('token_y').notNullable()
+          t.string('browser').notNullable()
+          t.string('ip').notNullable()
+          t.timestamp('date').defaultTo(Odac.DB.fn.now())
+          t.timestamp('active').defaultTo(Odac.DB.fn.now())
+      })
+  }
+  
+  async #ensureUserTableV2(tableName, primaryKey, passwordField, uniqueFields, sampleData) {
+      await Odac.DB[tableName].schema(t => {
+          t.increments(primaryKey)
+          
+          for (const field of uniqueFields) {
+              if (field !== primaryKey) t.string(field).notNullable().unique()
+          }
+          
+          if (!uniqueFields.includes(passwordField) && passwordField !== primaryKey) {
+              t.string(passwordField).notNullable()
+          }
+          
+          // Heuristic type guessing from sampleData
+          for (const key in sampleData) {
+              if (key === primaryKey || uniqueFields.includes(key) || key === passwordField) continue;
+              
+              const val = sampleData[key]
+              if (typeof val === 'number') {
+                  if (Number.isInteger(val)) t.integer(key)
+                  else t.float(key)
+              } else if (typeof val === 'boolean') {
+                  t.boolean(key)
+              } else {
+                  t.string(key)
+              }
+          }
+          
+          t.timestamps(true, true) // created_at, updated_at
+      })
   }
 
   user(col) {
