@@ -384,12 +384,12 @@ class Internal {
 
     if (Odac.formConfig.table) {
       try {
-        const mysql = Odac.Mysql
+        const database = Odac.Database
 
         for (const field of Odac.formUniqueFields) {
           if (Odac.formData[field.name] == null) continue
 
-          const existingRecord = await mysql.query(`SELECT id FROM ?? WHERE ?? = ? LIMIT 1`, [
+          const existingRecord = await database.run(`SELECT id FROM ?? WHERE ?? = ? LIMIT 1`, [
             Odac.formConfig.table,
             field.name,
             Odac.formData[field.name]
@@ -404,7 +404,7 @@ class Internal {
           }
         }
 
-        await mysql.query('INSERT INTO ?? SET ?', [Odac.formConfig.table, Odac.formData])
+        await database.run('INSERT INTO ?? SET ?', [Odac.formConfig.table, Odac.formData])
 
         Odac.Request.session(`_custom_form_${token}`, null)
 

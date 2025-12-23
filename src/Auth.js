@@ -23,7 +23,7 @@ class Auth {
     if (!this.#table) return false
     if (where) {
       if (!this.#validateInput(where)) return false
-      let sql = Odac.Mysql.table(this.#table)
+      let sql = Odac.Database.table(this.#table)
       if (!sql) {
         console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
         return false
@@ -48,7 +48,7 @@ class Auth {
     } else if (this.#user) {
       return true
     } else {
-      let check_table = await Odac.Mysql.run('SHOW TABLES LIKE ?', [this.#table])
+      let check_table = await Odac.Database.run('SHOW TABLES LIKE ?', [this.#table])
       if (check_table.length == 0) return false
       let odac_x = this.#request.cookie('odac_x')
       let odac_y = this.#request.cookie('odac_y')
@@ -56,7 +56,7 @@ class Auth {
       if (!odac_x || !odac_y || !browser) return false
       const tokenTable = Odac.Config.auth.token || 'odac_auth'
       const primaryKey = Odac.Config.auth.key || 'id'
-      let sql_token = await Odac.Mysql.table(tokenTable).where(['token_x', odac_x], ['browser', browser]).get()
+      let sql_token = await Odac.Database.table(tokenTable).where(['token_x', odac_x], ['browser', browser]).get()
       if (sql_token.length !== 1) return false
       if (!Odac.Var(sql_token[0].token_y).hashCheck(odac_y)) return false
 
@@ -67,14 +67,14 @@ class Auth {
       const inactiveAge = now - lastActive
 
       if (inactiveAge > maxAge) {
-        await Odac.Mysql.table(tokenTable).where('id', sql_token[0].id).delete()
+        await Odac.Database.table(tokenTable).where('id', sql_token[0].id).delete()
         return false
       }
 
-      this.#user = await Odac.Mysql.table(this.#table).where(primaryKey, sql_token[0].user).first()
+      this.#user = await Odac.Database.table(this.#table).where(primaryKey, sql_token[0].user).first()
 
       if (inactiveAge > updateAge) {
-        Odac.Mysql.table(tokenTable)
+        Odac.Database.table(tokenTable)
           .where('id', sql_token[0].id)
           .set({active: new Date()})
           .catch(() => {})
@@ -93,13 +93,13 @@ class Auth {
     let token = Odac.Config.auth.token || 'odac_auth'
     const mysql = require('mysql2')
     const safeTokenTable = mysql.escapeId(token)
-    let check_table = await Odac.Mysql.run('SHOW TABLES LIKE ?', [token])
+    let check_table = await Odac.Database.run('SHOW TABLES LIKE ?', [token])
     if (check_table === false) {
       console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
       return false
     }
     if (check_table.length == 0)
-      await Odac.Mysql.run(
+      await Odac.Database.run(
         `CREATE TABLE ${safeTokenTable} (id INT NOT NULL AUTO_INCREMENT, user INT NOT NULL, token_x VARCHAR(255) NOT NULL, token_y VARCHAR(255) NOT NULL, browser VARCHAR(255) NOT NULL, ip VARCHAR(255) NOT NULL, \`date\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, \`active\` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (id))`
       )
 
@@ -119,7 +119,7 @@ class Auth {
       sameSite: 'Strict'
     })
     this.#request.cookie('odac_y', token_y, {httpOnly: true, secure: true, sameSite: 'Strict'})
-    let mysqlTable = Odac.Mysql.table(token)
+    let mysqlTable = Odac.Database.table(token)
     if (!mysqlTable) {
       console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
       return false
@@ -132,7 +132,7 @@ class Auth {
     const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
     const cutoffDate = new Date(Date.now() - maxAge)
 
-    Odac.Mysql.table(tokenTable)
+    Odac.Database.table(tokenTable)
       .where('active', '<', cutoffDate)
       .delete()
       .catch(() => {})
@@ -148,7 +148,7 @@ class Auth {
     const passwordField = options.passwordField || 'password'
     const uniqueFields = options.uniqueFields || ['email']
 
-    const checkTable = await Odac.Mysql.run('SHOW TABLES LIKE ?', [this.#table])
+    const checkTable = await Odac.Database.run('SHOW TABLES LIKE ?', [this.#table])
     if (checkTable === false) {
       console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
       return {success: false, error: 'Database connection not configured'}
@@ -167,7 +167,7 @@ class Auth {
 
     for (const field of uniqueFields) {
       if (data[field]) {
-        const mysqlTable = Odac.Mysql.table(this.#table)
+        const mysqlTable = Odac.Database.table(this.#table)
         if (!mysqlTable) {
           console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
           return {success: false, error: 'Database connection not configured'}
@@ -180,7 +180,7 @@ class Auth {
     }
 
     try {
-      const mysqlTable = Odac.Mysql.table(this.#table)
+      const mysqlTable = Odac.Database.table(this.#table)
       if (!mysqlTable) {
         console.error('Odac Auth Error: MySQL connection not configured. Please add database configuration to your config.json')
         return {success: false, error: 'Database connection not configured'}
@@ -199,7 +199,7 @@ class Auth {
       }
 
       const userId = insertResult.id
-      const newUser = await Odac.Mysql.table(this.#table).where(primaryKey, userId).first()
+      const newUser = await Odac.Database.table(this.#table).where(primaryKey, userId).first()
 
       if (!newUser) {
         return {success: false, error: 'User created but could not be retrieved'}
@@ -235,7 +235,7 @@ class Auth {
     const browser = this.#request.header('user-agent')
 
     if (odacX && browser) {
-      const mysqlTable = Odac.Mysql.table(token)
+      const mysqlTable = Odac.Database.table(token)
       if (mysqlTable) {
         await mysqlTable.where(['token_x', odacX], ['browser', browser]).delete()
       }
@@ -296,7 +296,7 @@ class Auth {
     const safeTableName = mysql.escapeId(tableName)
     const sql = `CREATE TABLE ${safeTableName} (${columns.join(', ')}) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
 
-    await Odac.Mysql.run(sql)
+    await Odac.Database.run(sql)
   }
 
   user(col) {

@@ -7,7 +7,7 @@ class Raw {
   }
 }
 
-class Mysql {
+class Database {
   #conn
   #database
   #defining = false
@@ -29,38 +29,10 @@ class Mysql {
     }
   }
 
-  //     function having(){
-  //       if(count(func_get_args()) == 1 && !is_array(func_get_args()[0])){
-  //         $this->arr['having'] = is_numeric(func_get_args()[0]) ? "id='".func_get_args()[0]."'" : "";
-  //       }elseif(count(func_get_args()) > 0){
-  //         $this->arr['having'] = isset($this->arr['having']) && trim($this->arr['having'])!='' ? $this->arr['having'].' AND '.$this->whereExtract(func_get_args()) : $this->whereExtract(func_get_args());
-  //       }
-  //       return new static($this->table,$this->arr);
-  //     }
-
-  //     function whereJson($col,$val){
-  //       //return 'JSON_SEARCH('.$col.', "one", "'.$val.'") IS NOT NULL';
-  //       return new static($this->table,$this->arr);
-  //     }
-  //     function cache($t=3600){
-  //       if(!is_numeric($t)){
-  //         $exp = explode(' ',str_replace('  ',' ',$t));
-  //         if($exp[1] == 'second') $t = intval(trim($exp[0]));
-  //         if($exp[1] == 'minute') $t = intval(trim($exp[0])) * 60;
-  //         if($exp[1] == 'hour')   $t = intval(trim($exp[0])) * 60 * 60;
-  //         if($exp[1] == 'day')    $t = intval(trim($exp[0])) * 60 * 60 * 24;
-  //         if($exp[1] == 'week')   $t = intval(trim($exp[0])) * 60 * 60 * 24 * 7;
-  //         if($exp[1] == 'month')  $t = intval(trim($exp[0])) * 60 * 60 * 24 * 30;
-  //         if($exp[1] == 'year')   $t = intval(trim($exp[0])) * 60 * 60 * 24 * 365;
-  //       }
-  //       $this->arr['cache'] = $t;
-  //       return new static($this->table,$this->arr);
-  //     }
-
   async #define(table) {
     return new Promise(resolve => {
-      if (!Odac.Mysql.db[this.#database]) Odac.Mysql.db[this.#database] = {}
-      this.#table[table] = Odac.Mysql.db[this.#database][table]
+      if (!Odac.Database.db[this.#database]) Odac.Database.db[this.#database] = {}
+      this.#table[table] = Odac.Database.db[this.#database][table]
       if (this.#table[table]) {
         this.#defining = false
         return resolve(true)
@@ -81,7 +53,7 @@ class Mysql {
         }
         if (!this.#table[table]) this.#table[table] = {}
         this.#table[table].columns = columns
-        Odac.Mysql.db[this.#database][table] = this.#table[table]
+        Odac.Database.db[this.#database][table] = this.#table[table]
         this.#defining = false
         return resolve(true)
       })
@@ -93,12 +65,11 @@ class Mysql {
     let run = await this.run(query)
     if (run === false) return false
     this.affected = run.affectedRows
-    //       if($this->affected > 0) self::clearcache();
     return this
   }
 
   #error(err, query) {
-    err = 'Odac Mysql Error: ' + (err?.message ?? 'Unknown error').trim() + '\n'
+    err = 'Odac Database Error: ' + (err?.message ?? 'Unknown error').trim() + '\n'
     if (query) err += 'Query: ' + query + '\n'
     while (this.#stack.length > 0) {
       let line = this.#stack.shift().replace('at', '')
@@ -159,31 +130,13 @@ class Mysql {
   async get(b) {
     if (!b) b = false
     let data = []
-    // if(isset($this->arr['cache'])){
-    //   $md5_query = md5($query);
-    //   $md5_table = md5($this->arr['table']);
-    //   $file = "cache/mysql/".md5(Mysql::$name)."/$md5_table"."_$md5_query";
-    //   $cache = Odac::storage($file)->get('cache');
-    //   if(isset($cache->date) && ($cache->date >= (time() - $this->arr['cache']))) return $cache->data;
-    // }
     let query = this.query('get')
     let sql = await this.run(query)
-    //   console.log(sql);
     if (sql === false) return this.#error()
     for (let row of sql) {
       for (let [key, value] of Object.entries(row)) row[key] = await this.type(key, value)
       data.push(row)
     }
-    // while($row = mysqli_fetch_assoc($sql)){
-    //   foreach($row as $key => $value) $row[$key] = $this->type($key, $value);
-    //   $data[] = $b ? $row : (object)$row;
-    // }
-    // mysqli_free_result($sql);
-    // if(isset($cache)){
-    //   $cache->data = $data;
-    //   $cache->date = time();
-    //   Odac::storage($file)->set('cache', $cache);
-    // }
     return data
   }
 
@@ -197,7 +150,6 @@ class Mysql {
     if (run === false) return false
     this.id = run.insertId
     this.affected = run.affectedRows
-    // if(this.affected > 0) this.clearcache();
     return this
   }
 
@@ -207,13 +159,7 @@ class Mysql {
   }
 
   order(v1, v2 = 'asc') {
-    // if(is_array($v1) && (!isset($v1['ct']) || $v1['ct'] != $GLOBALS['candy_token_mysql'])){
-    //   $order = [];
-    //   foreach($v1 as $key => $val)
-    //   if(!is_int($key)) $order[] = $this->escape($key,'col').(strtolower($val) == 'desc' ? ' DESC' : ' ASC');
-    //   else $order[] = $this->escape($val,'col').' ASC';
-    //   $this->arr['order by'] = implode(',',$order);
-    /* }else */ this.#arr['order by'] = this.escape(v1, 'col') + (v2.toLowerCase() == 'desc' ? ' DESC' : ' ASC')
+    this.#arr['order by'] = this.escape(v1, 'col') + (v2.toLowerCase() == 'desc' ? ' DESC' : ' ASC')
     return this
   }
 
@@ -224,7 +170,6 @@ class Mysql {
   }
 
   async replace(arr) {
-    //       $this->id = 1;
     let ext = await this.#valuesExtract(arr)
     this.#arr['into'] = ext['into']
     this.#arr['values'] = ext['values']
@@ -233,29 +178,14 @@ class Mysql {
     if (run === false) return false
     this.id = run.insertId
     this.affected = run.affectedRows
-    //       if($sql === false) return $this->error();
-    //       $this->success = $sql;
-    //       self::clearcache();
     return this
   }
 
   async rows() {
-    //       if(isset($this->arr['cache'])){
-    //         $md5_query = md5($query);
-    //         $md5_table = md5($this->arr['table']);
-    //         $file = "cache/mysql/".md5(Mysql::$name)."/$md5_table"."_$md5_query"."_r";
-    //         $cache = Odac::storage($file)->get('cache');
-    //         if(isset($cache->date) && ($cache->date >= (time() - $this->arr['cache']))) return $cache->data;
-    //       }
     let query = this.query('get')
     let sql = await this.run(query)
     if (sql === false) return this.#error()
     let rows = sql.length
-    //       if(isset($cache)){
-    //         $cache->data = $rows;
-    //         $cache->date = time();
-    //         Odac::storage($file)->set('cache', $cache);
-    //       }
     return rows
   }
 
@@ -263,7 +193,7 @@ class Mysql {
     return new Promise(resolve => {
       if (!query) return resolve(false)
       if (!this.#conn) return resolve(false)
-      if (this.#conn.state == 'disconnected') Odac.Mysql.init()
+      // Removed disconnected check as pools handle connections automatically
       const args = params ? [query, params] : [query]
       args.push((err, result) => {
         if (err) return resolve(this.#error(err, query))
@@ -310,15 +240,7 @@ class Mysql {
   groupBy(...args) {
     this.#arr['group by'] = this.#arr['group by'] ?? ''
     let select = this.#arr['group by'] ? this.#arr['group by'].split(',') : []
-    //       if(count(func_get_args())==1 && is_array(func_get_args()[0])){
-    //         if(isset(func_get_args()[0]['ct']) && isset(func_get_args()[0]['v']) && func_get_args()[0]['ct'] == $GLOBALS['candy_token_mysql']){
-    //           $select[] = func_get_args()[0]['v'];
-    //         }else{
-    //           foreach(func_get_args()[0] as $key => $value){
-    //             $select[] = $this->escape($value,'col');
-    //           }
-    //         }
-    /*       } else */ for (let key of args) select.push(this.escape(key, 'col'))
+    for (let key of args) select.push(this.escape(key, 'col'))
     this.#arr['group by'] = select.join(', ')
     return this
   }
@@ -355,10 +277,6 @@ class Mysql {
   }
 
   #clearcache() {
-    //       if(!isset($this->arr['table'])) return false;
-    //       $md5_table = md5($this->arr['table']);
-    //       $file = "storage/cache/mysql/".md5(Mysql::$name)."/$md5_table*";
-    //       foreach(glob($file) as $key) unlink($key);
     return true
   }
 
@@ -408,11 +326,6 @@ class Mysql {
         } else if (!this.#arr.select) {
           continue
         } else if (Odac.Var(this.#arr.select).contains(' AS "' + col + '"')) {
-          // $exp = explode(' ,',explode(" AS \"$col\"",$this->arr['select'])[0]);
-          //       $real_col = explode('.',Odac::var(trim(end($exp)))->clear('`'));
-          //       $real_table = trim($real_col[0]);
-          //       $real_col = trim($real_col[1]);
-          //       $this->types[$col] = $this->types[$col] = $this->table[$real_table]['columns'][$real_col]['Type'] ?? $this->types[$col];
           break
         } else if (Odac.Var(this.#arr.select).containsAny(' `' + col + '`', ' `' + key + '`.`' + col + '`')) {
           this.types[col] = this.#table[key].columns[col].Type ?? this.types[col]
@@ -446,13 +359,7 @@ class Mysql {
     for (let i = 0; i < keys.length; i++) {
       let key = keys[i]
       let val = arr[key]
-      //     if(is_object($val)) $val = (array)$val;
-      //     if(is_array($val) && !isset($this->table[$this->arr['table']]['columns'][$key]) && (!isset($val['ct']) || $val['ct']!=$GLOBALS['candy_token_mysql'])){
-      //       $multiple = true;
-      //       $ex = $this->valuesExtract($val);
-      //       $query_key = $ex['into'];
-      //       $query_val[] = $ex['values'];
-      /*     }else */ if (val === null) {
+      if (val === null) {
         query_key.push(this.escape(key, 'col'))
         query_val.push('NULL')
       } else {
@@ -519,16 +426,23 @@ module.exports = {
       for (let key of Object.keys(dbs)) {
         let db = dbs[key]
         if (db.type && db.type != 'mysql') continue
-        Odac.Mysql.conn[key] = mysql.createConnection({
+        
+        // Use createPool instead of createConnection
+        Odac.Database.conn[key] = mysql.createPool({
           host: db.host ?? '127.0.0.1',
           user: db.user,
           password: db.password,
           database: db.database,
-          stringifyObjects: true
+          stringifyObjects: true,
+          waitForConnections: true,
+          connectionLimit: db.connectionLimit || 10,
+          queueLimit: 0
         })
-        Odac.Mysql.conn[key].connect(err => {
-          if (err) {
-            console.error(`Odac Mysql Error: Failed to connect to database '${key}'`)
+
+        // Pool connections are lazy, so we check connectivity by querying
+        Odac.Database.conn[key].query('SELECT 1', err => {
+             if (err) {
+            console.error(`Odac Database Error: Failed to connect to database '${key}'`)
             console.error(`Host: ${db.host ?? '127.0.0.1'}`)
             console.error(`User: ${db.user}`)
             console.error(`Database: ${db.database}`)
@@ -536,16 +450,17 @@ module.exports = {
             return resolve(false)
           }
         })
-        Odac.Mysql.conn[key].query('SHOW TABLES', (err, result) => {
+
+        Odac.Database.conn[key].query('SHOW TABLES', (err, result) => {
           if (err) {
-            console.error(`Odac Mysql Error: Failed to query tables from database '${key}'`)
+            console.error(`Odac Database Error: Failed to query tables from database '${key}'`)
             console.error(`Error: ${err.message}`)
             return resolve(false)
           }
           for (let table of result)
             for (let key of Object.keys(table)) {
               let t = () => {
-                new Mysql(table[key], Odac.Mysql.conn['default'])
+                new Database(table[key], Odac.Database.conn['default'])
               }
               t()
             }
@@ -555,20 +470,20 @@ module.exports = {
     })
   },
   database: function (name) {
-    if (!Odac.Mysql.conn[name]) return null
-    return new Mysql(name, Odac.Mysql.conn[name])
+    if (!Odac.Database.conn[name]) return null
+    return new Database(name, Odac.Database.conn[name])
   },
   run: function (query, params) {
-    if (!Odac.Mysql.conn['default']) return Promise.resolve(false)
-    return new Mysql(null, Odac.Mysql.conn['default']).run(query, params)
+    if (!Odac.Database.conn['default']) return Promise.resolve(false)
+    return new Database(null, Odac.Database.conn['default']).run(query, params)
   },
   table: function (name) {
-    if (!Odac.Mysql.conn['default']) return null
-    return new Mysql(name, Odac.Mysql.conn['default'])
+    if (!Odac.Database.conn['default']) return null
+    return new Database(name, Odac.Database.conn['default'])
   },
   raw: function (query) {
     if (typeof query !== 'string') {
-      throw new Error('Mysql.raw() requires a string parameter')
+      throw new Error('Database.raw() requires a string parameter')
     }
     return new Raw(query)
   }
