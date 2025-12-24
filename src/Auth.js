@@ -196,6 +196,7 @@ class Auth {
             }
         } catch (e) {
              console.error('Odac Auth Error checking unique:', e.message)
+             return {success: false, error: 'A database error occurred during registration.'}
         }
       }
     }
