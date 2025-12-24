@@ -73,7 +73,9 @@ class Auth {
         // Code First Migration: Ensure token table exists and clean up old tokens
         try {
             await this.#ensureTokenTableV2(tokenTable)
-        } catch(e) { /* ignore if fails, maybe db not up */ }
+        } catch(e) { 
+            console.error('Odac Auth Error: Failed to ensure token table exists:', e.message);
+        }
 
         // Query token
         let sql_token = await Odac.DB[tokenTable]
