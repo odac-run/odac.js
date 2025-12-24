@@ -272,6 +272,110 @@ class Internal {
     })
   }
 
+  static async magicLogin(Odac) {
+      const token = await Odac.request('_odac_magic_login_token')
+      if (!token) {
+        return Odac.return({
+          result: {success: false},
+          errors: {_odac_form: 'Invalid request'}
+        })
+      }
+
+      const formData = Odac.Request.session(`_magic_login_form_${token}`)
+      if (!formData) {
+        return Odac.return({
+          result: {success: false},
+          errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        })
+      }
+
+      if (formData.expires < Date.now()) {
+          Odac.Request.session(`_magic_login_form_${token}`, null)
+          return Odac.return({
+            result: {success: false},
+            errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+          })
+      }
+      
+      // Basic security checks
+      if (formData.sessionId !== Odac.Request.session('_client') ||
+          formData.userAgent !== Odac.Request.header('user-agent') ||
+          formData.ip !== Odac.Request.ip) {
+          return Odac.return({
+             result: {success: false},
+             errors: {_odac_form: 'Invalid request security token'}
+          })
+      }
+      
+      const config = formData.config
+      const validator = Odac.validator()
+      let email = ''
+      
+      // Validate inputs (expecting email)
+      for (const field of config.fields) {
+          const value = await Odac.request(field.name)
+          for (const validation of field.validations) {
+             this.#validateField(validator, field, validation, value)
+          }
+          if (field.name === 'email') email = value
+      }
+      
+      if (await validator.error()) {
+          return validator.result()
+      }
+      
+      if (!email) {
+          return Odac.return({
+              result: {success: false},
+              errors: {email: 'Email is required'}
+          })
+      }
+      
+      const result = await Odac.Auth.requestMagicLink(email, {
+          autoRegister: false, // config.autoRegister
+          redirect: config.redirect
+      })
+      
+      if (!result.success) {
+          return Odac.return({
+              result: {success: false},
+              errors: {_odac_form: result.error || 'Failed to send magic link'}
+          })
+      }
+      
+      Odac.Request.session(`_magic_login_form_${token}`, null)
+      
+      return Odac.return({
+          result: {
+              success: true,
+              message: result.message || 'Magic link sent! Please check your email.',
+              // We might want to keep them on page or redirect to a "check email" page
+              redirect: config.redirect
+          }
+      })
+  }
+  
+  static async magicVerify(Odac) {
+      const token = await Odac.request('token')
+      const email = await Odac.request('email')
+      
+      if (!token || !email) {
+          return Odac.Request.end('Invalid verification link.')
+      }
+      
+      const result = await Odac.Auth.verifyMagicLink(token, email)
+      
+      if (!result.success) {
+          return Odac.Request.end(`Verification failed: ${result.error}`)
+      }
+      
+      // Redirect to home or dashboard
+      // Ideally we would know where to redirect, maybe store in query param in link?
+      // For now, default to /
+      Odac.Request.header('Location', '/')
+      Odac.Request.end('', 302)
+  }
+
   static async processForm(Odac) {
     const token = await Odac.request('_odac_form_token')
     if (!token) return
