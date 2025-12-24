@@ -107,7 +107,7 @@ class Internal {
     })
 
     if (!registerResult.success) {
-      if (registerResult.error === 'Database connection not configured') {
+      if (registerResult.error === 'Database connection failed') {
         return Odac.return({
           result: {success: false},
           errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
@@ -247,7 +247,7 @@ class Internal {
     const loginResult = await Odac.Auth.login(credentials)
 
     if (!loginResult.success) {
-      if (loginResult.error === 'Database connection not configured') {
+      if (loginResult.error === 'Database connection failed') {
         return Odac.return({
           result: {success: false},
           errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
@@ -384,18 +384,14 @@ class Internal {
 
     if (Odac.formConfig.table) {
       try {
-        const mysql = Odac.Mysql
+        const table = Odac.DB[Odac.formConfig.table]
 
         for (const field of Odac.formUniqueFields) {
           if (Odac.formData[field.name] == null) continue
 
-          const existingRecord = await mysql.query(`SELECT id FROM ?? WHERE ?? = ? LIMIT 1`, [
-            Odac.formConfig.table,
-            field.name,
-            Odac.formData[field.name]
-          ])
+          const existingRecord = await table.where(field.name, Odac.formData[field.name]).first()
 
-          if (existingRecord && existingRecord.length > 0) {
+          if (existingRecord) {
             const errorMessage = field.message || `This ${field.name} is already registered`
             return Odac.return({
               result: {success: false},
@@ -404,7 +400,7 @@ class Internal {
           }
         }
 
-        await mysql.query('INSERT INTO ?? SET ?', [Odac.formConfig.table, Odac.formData])
+        await table.insert(Odac.formData)
 
         Odac.Request.session(`_custom_form_${token}`, null)
 
@@ -416,7 +412,7 @@ class Internal {
           }
         })
       } catch (error) {
-        if (error.message === 'Database connection not configured') {
+        if (error.message === 'Database connection failed') {
           return Odac.return({
             result: {success: false},
             errors: {_odac_form: 'Database not configured. Please check your config.json'}
