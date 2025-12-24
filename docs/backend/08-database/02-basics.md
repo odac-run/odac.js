@@ -40,16 +40,17 @@ const user = await Odac.DB.users.where('id', 1).first();
 
 ```javascript
 // Simple equals
-await Odac.DB.users.where('email', 'john@example.com');
+const users = await Odac.DB.users.where('email', 'john@example.com').select();
 
 // Comparison operators
-await Odac.DB.products.where('price', '>', 100);
-await Odac.DB.users.where('status', '!=', 'banned');
+const products = await Odac.DB.products.where('price', '>', 100).select();
+const activeUsers = await Odac.DB.users.where('status', '!=', 'banned').select();
 
 // OR statements
-await Odac.DB.users
+const staff = await Odac.DB.users
   .where('role', 'admin')
-  .orWhere('role', 'editor');
+  .orWhere('role', 'editor')
+  .select();
 ```
 
 ### Ordering and Limiting
