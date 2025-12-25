@@ -353,6 +353,9 @@ class Route {
       {token: true}
     )
 
+    this.set(
+      'POST',
+      '/_odac/form',
       async Odac => {
         const csrfToken = await Odac.request('_token')
         if (!csrfToken || !Odac.token(csrfToken)) {
