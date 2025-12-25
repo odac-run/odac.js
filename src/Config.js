@@ -44,7 +44,7 @@ module.exports = {
       return obj.replace(/\$\{(\w+)\}/g, (_, key) => {
         // Special variables
         if (key === 'odac') {
-          return __dirname.replace(/\/framework\/src$/, '')
+          return __dirname.replace(/\/src$/, '')
         }
         // Environment variables
         return process.env[key] || ''
