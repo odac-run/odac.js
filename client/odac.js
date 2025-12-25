@@ -1,4 +1,4 @@
-class Odac {
+class _odac {
   actions = {}
   #data = null
   fn = {}
@@ -1067,7 +1067,7 @@ class Odac {
   }
 }
 
-window.Odac = new Odac()
+window.Odac = new _odac()
 
 // Auto-initialize navigation from data-odac-navigate attribute
 ;(function initAutoNavigate() {
