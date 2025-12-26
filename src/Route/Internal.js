@@ -370,7 +370,12 @@ class Internal {
       }
       
       // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
-      const redirectUrl = await Odac.request('redirect_url') || Odac.Config.auth?.magicLinkRedirect || '/';
+      let redirectUrl = await Odac.request('redirect_url') || Odac.Config.auth?.magicLinkRedirect || '/';
+      
+      // Security: Prevent open redirect attacks by only allowing relative paths
+      if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
+          redirectUrl = '/'
+      }
       
       Odac.Request.header('Location', redirectUrl)
       Odac.Request.end('', 302)

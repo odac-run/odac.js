@@ -296,6 +296,38 @@ class Auth {
          console.error('Failed to ensure magic link table exists:', e);
          // Consider returning an error here to prevent further execution.
       }
+      
+      // Rate limiting: Check recent requests from this IP and email
+      // Magic link requires only email input, so rate limits should be very strict
+      const rateLimitWindow = Odac.Config.auth?.magicLinkRateLimit || 60 * 60 * 1000 // 1 hour default
+      const maxAttempts = Odac.Config.auth?.magicLinkMaxAttempts || 2 // Per email - very strict
+      const maxAttemptsPerIP = Odac.Config.auth?.magicLinkMaxAttemptsPerIP || 5 // Per IP
+      
+      try {
+          // Check email-based rate limit
+          const recentEmailRequests = await Odac.DB[magicTable]
+              .where('email', email)
+              .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
+          
+          if (recentEmailRequests && recentEmailRequests.length >= maxAttempts) {
+              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success to prevent enumeration
+          }
+          
+          // Check IP-based rate limit (prevents mass enumeration attacks)
+          const clientIP = this.#request.ip
+          const recentIPRequests = await Odac.DB[magicTable]
+              .where('ip', clientIP)
+              .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
+          
+          if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
+              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success
+          }
+      } catch(e) {
+          // Ignore rate limit check errors, proceed with request
+      }
+      
+      // Cleanup: Remove expired tokens periodically
+      this.#cleanupExpiredMagicLinks(magicTable)
      
      // 1. Check if user exists (or auto-register check if needed, but for now lets assume user must exist)
      // If you want to support auto-register, we'd need more logic here.
@@ -400,6 +432,14 @@ class Auth {
           t.timestamp('created_at').defaultTo(Odac.DB.fn.now())
           t.timestamp('expires_at')
       })
+  }
+
+  #cleanupExpiredMagicLinks(tableName) {
+      // Run cleanup asynchronously without awaiting (fire and forget)
+      Odac.DB[tableName]
+          .where('expires_at', '<', new Date())
+          .delete()
+          .catch(() => {}) // Silently ignore cleanup errors
   }
 
   // --- MAGIC LINK END ---
