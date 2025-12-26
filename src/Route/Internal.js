@@ -369,10 +369,10 @@ class Internal {
           return Odac.Request.end(`Verification failed: ${result.error}`)
       }
       
-      // Redirect to home or dashboard
-      // Ideally we would know where to redirect, maybe store in query param in link?
-      // For now, default to /
-      Odac.Request.header('Location', '/')
+      // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
+      const redirectUrl = await Odac.request('redirect_url') || Odac.Config.auth?.magicLinkRedirect || '/';
+      
+      Odac.Request.header('Location', redirectUrl)
       Odac.Request.end('', 302)
   }
 

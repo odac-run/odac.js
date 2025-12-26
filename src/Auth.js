@@ -329,7 +329,8 @@ class Auth {
      })
      
      // 4. Send Email
-     const link = `${(this.#request.ssl ? 'https://' : 'http://') + this.#request.host}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
+     let link = `${(this.#request.ssl ? 'https://' : 'http://') + this.#request.host}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
+     if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
      
      try {
          await Odac.Mail(options.template || 'auth/magic-link')
