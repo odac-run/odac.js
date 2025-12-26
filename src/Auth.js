@@ -307,9 +307,9 @@ class Auth {
      // Let's implement options.autoRegister later if requested.
      if (!user) {
          if (options.autoRegister) {
-             // Logic to create user would go here
-             // For now, return false or generic success
-             return {success: false, error: 'User not found'}
+             // TODO: Implement user auto-registration logic here.
+             // For now, return the same generic success message to prevent user enumeration.
+             return {success: true, message: 'If this email exists, a link has been sent.'}
          }
          // Fake success to prevent enumeration
          return {success: true, message: 'If this email exists, a link has been sent.'}
