@@ -1,3 +1,66 @@
+const https = require('https')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+
+let disposableDomains = null
+const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
+const SOURCE_URL = 'https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf'
+
+async function loadDisposableDomains() {
+  if (disposableDomains instanceof Set) return
+
+  disposableDomains = new Set()
+  let content = ''
+  let shouldUpdate = true
+
+  try {
+    if (fs.existsSync(CACHE_FILE)) {
+      const stats = fs.statSync(CACHE_FILE)
+      const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
+      if (ageInHours < 24) {
+        shouldUpdate = false
+        content = fs.readFileSync(CACHE_FILE, 'utf8')
+      }
+    }
+
+    if (shouldUpdate) {
+      try {
+        content = await new Promise((resolve, reject) => {
+          const req = https.get(SOURCE_URL, (res) => {
+            if (res.statusCode !== 200) {
+              res.resume()
+              reject(new Error(`Failed to fetch: ${res.statusCode}`))
+              return
+            }
+            let data = ''
+            res.on('data', chunk => data += chunk)
+            res.on('end', () => resolve(data))
+          })
+          req.on('error', reject)
+          req.end()
+        })
+        fs.writeFileSync(CACHE_FILE, content)
+      } catch (err) {
+        if (fs.existsSync(CACHE_FILE)) {
+          content = fs.readFileSync(CACHE_FILE, 'utf8')
+        }
+      }
+    }
+
+    if (content) {
+      content.split('\n').forEach(line => {
+        const domain = line.trim().toLowerCase()
+        if (domain && !domain.startsWith('#')) {
+          disposableDomains.add(domain)
+        }
+      })
+    }
+  } catch (error) {
+    console.error('Validator Warning: Could not load disposable domains.', error.message)
+  }
+}
+
 class Validator {
   #checklist = {}
   #completed = false
@@ -204,6 +267,10 @@ class Validator {
                     }
                     break
                   }
+                  case 'disposable':
+                    error = value && value !== '' && !(await Validator.isDisposable(value))
+                    break
+
                 }
                 if (inverse) error = !error
               }
@@ -219,6 +286,15 @@ class Validator {
     }
     this.#completed = true
   }
+
+  static async isDisposable(email) {
+    if (!email || typeof email !== 'string') return false
+    await loadDisposableDomains()
+    const domain = email.split('@').pop().toLowerCase()
+    return disposableDomains && disposableDomains.has(domain)
+  }
+
+
 
   var(name, value = null) {
     if (this.#completed) this.#completed = false
