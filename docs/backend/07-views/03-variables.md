@@ -141,7 +141,7 @@ You have full access to the `Odac` object within templates:
 module.exports = async function(Odac) {
   // Fetch user from database
   const userId = Odac.Request.get('id')
-  const user = await Odac.Mysql.table('users')
+  const user = await Odac.DB.users
     .where('id', userId)
     .first()
   
@@ -179,7 +179,7 @@ module.exports = async function(Odac) {
 // Controller: controller/product.js
 module.exports = async function(Odac) {
   const productId = Odac.Request.get('id')
-  const product = await Odac.Mysql.table('products')
+  const product = await Odac.DB.products
     .where('id', productId)
     .first()
   
@@ -221,7 +221,7 @@ module.exports = async function(Odac) {
 ```javascript
 // Controller: controller/products.js
 module.exports = async function(Odac) {
-  const products = await Odac.Mysql.table('products')
+  const products = await Odac.DB.products
     .where('active', true)
     .get()
   
@@ -259,7 +259,7 @@ module.exports = async function(Odac) {
 **Good:**
 ```javascript
 // Controller
-const user = await Odac.Mysql.table('users').first()
+const user = await Odac.DB.users.first()
 const isAdmin = user.role === 'admin'
 
 Odac.set({
@@ -284,7 +284,7 @@ Always handle cases where data might not exist:
 // Controller
 module.exports = async function(Odac) {
   const productId = Odac.Request.get('id')
-  const product = await Odac.Mysql.table('products')
+  const product = await Odac.DB.products
     .where('id', productId)
     .first()
   

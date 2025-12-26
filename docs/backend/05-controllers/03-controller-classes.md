@@ -34,11 +34,10 @@ class User {
     const email = await this.Odac.request('email')
 
     // Update user in database
-    await this.Odac.Mysql.query('UPDATE users SET name = ?, email = ? WHERE id = ?', [
-      name,
-      email,
-      this.Odac.Auth.user().id
-    ])
+    await this.Odac.DB.users.where('id', this.Odac.Auth.user().id).update({
+        name: name,
+        email: email
+    })
 
     return this.Odac.return({
       success: true,

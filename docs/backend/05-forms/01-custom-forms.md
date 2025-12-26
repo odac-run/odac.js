@@ -360,7 +360,8 @@ module.exports = class Contact {
     const { name, email, subject, message } = form.data
     
     // Save to database
-    // await this.Odac.Mysql.query('INSERT INTO contacts ...', [name, email, ...])
+    // Save to database
+    // await this.Odac.DB.contacts.insert({ name, email, subject, message })
     
     // Send email notification
     // await this.Odac.Mail().to('admin@example.com').subject('New Contact').send(message)

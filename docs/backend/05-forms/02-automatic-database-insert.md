@@ -270,7 +270,7 @@ Odac.Route.post('/contact/submit', async Odac => {
   await sendEmail(Odac.formData.email, 'Thank you!')
   
   // Manually insert to database if needed
-  await Odac.Mysql.query('INSERT INTO contacts SET ?', Odac.formData)
+  await Odac.DB.contacts.insert(Odac.formData)
   
   return Odac.return({
     result: {success: true, message: 'Message sent!'}
