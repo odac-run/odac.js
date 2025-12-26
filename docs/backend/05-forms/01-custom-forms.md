@@ -5,7 +5,6 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 ## Basic Usage
 
 ```html
-```html
 <odac:form action="Contact.submit" method="POST">
   <odac:input name="email" type="email" label="Email">
     <odac:validate rule="required|email" message="Valid email required"/>
