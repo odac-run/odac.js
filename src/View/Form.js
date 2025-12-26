@@ -406,7 +406,7 @@ class Form {
     if (errorMessages.pattern) attrs += ` data-error-pattern="${errorMessages.pattern.replace(/"/g, '&quot;')}"`
     if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
 
-    if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
+
     
     attrs = this.appendExtraAttributes(attrs, field)
 
