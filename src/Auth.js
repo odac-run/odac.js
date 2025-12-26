@@ -292,7 +292,10 @@ class Auth {
      // Ensure magic table exists
      try {
         await this.#ensureMagicLinkTable(magicTable)
-     } catch(e) { /* ignore */ }
+      } catch(e) {
+         console.error('Failed to ensure magic link table exists:', e);
+         // Consider returning an error here to prevent further execution.
+      }
      
      // 1. Check if user exists (or auto-register check if needed, but for now lets assume user must exist)
      // If you want to support auto-register, we'd need more logic here.
