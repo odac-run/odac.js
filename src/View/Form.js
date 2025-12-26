@@ -605,7 +605,8 @@ class Form {
   static generateCustomForm(originalHtml, config, formToken) {
     const submitText = config.submitText || 'Submit'
     const submitLoading = config.submitLoading || 'Processing...'
-    const action = config.action || '/_odac/form'
+    // Always post to internal handler, real action is in session config
+    const formAction = '/_odac/form' 
     const method = config.method || 'POST'
 
     let innerContent = originalHtml.replace(/<odac:form[^>]*>/, '').replace(/<\/odac:form>/, '')
@@ -631,7 +632,7 @@ class Form {
 
     innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
 
-    let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(action)}" novalidate`
+    let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(formAction)}" novalidate`
     if (config.id) formAttrs += ` id="${escapeHtml(config.id)}"`
 
     let html = `<form ${formAttrs}>\n`

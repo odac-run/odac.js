@@ -530,6 +530,85 @@ class Internal {
       }
     }
 
+    if (Odac.formConfig.action) {
+      const actionParts = Odac.formConfig.action.split('.')
+      if (actionParts.length === 2) {
+         const controllerName = actionParts[0]
+         const methodName = actionParts[1]
+         
+         // Dynamically load controller
+         // We need to access Odac.Route.class to find the controller path/module
+         // Or use require directly if we know the path structure. 
+         // Since we are in framework/src/Route/Internal.js, controllers are in framework/controller/ OR app/controller/
+         // Ideally Odac.Route.class has the loaded controllers.
+         
+         let controllerModule = null
+         
+         if (Odac.Route && Odac.Route.class && Odac.Route.class[controllerName]) {
+             controllerModule = Odac.Route.class[controllerName].module
+         } else {
+             // Try to require it if not loaded (though Route.js should have loaded it)
+             // This fallback might be tricky with absolute paths, relying on Route.class is safer.
+         }
+
+         if (controllerModule) {
+             try {
+                 // Clean up session
+                 Odac.Request.session(`_custom_form_${token}`, null)
+                 
+                 // Create Form Helper Object
+                 const formHelper = {
+                     data: Odac.formData,
+                     
+                     error: (field, message) => {
+                         return Odac.return({
+                             result: { success: false },
+                             errors: { [field]: message }
+                         })
+                     },
+                     
+                     success: (message, redirect = null) => {
+                         return Odac.return({
+                             result: {
+                                 success: true,
+                                 message: message,
+                                 redirect: redirect || Odac.formConfig.redirect
+                             }
+                         })
+                     }
+                 }
+
+                 // Handle Class-based Controller
+                 if (typeof controllerModule === 'function' && controllerModule.prototype) {
+                     const instance = new controllerModule(Odac)
+                     if (typeof instance[methodName] === 'function') {
+                         return await instance[methodName](formHelper)
+                     }
+                 }
+                 // Handle Object-based Controller (Backwards Compatibility)
+                 else if (typeof controllerModule[methodName] === 'function') {
+                     // We pass formHelper as seconds arg for compatibility if needed, 
+                     // or developers can just use it.
+                     // But previously we changed it to just Odac.
+                     // Let's pass (Odac, formHelper) to object controllers to be safe/flexible
+                     return await controllerModule[methodName](Odac, formHelper)
+                 }
+             } catch (e) {
+                 console.error(e)
+                  return Odac.return({
+                    result: {success: false},
+                    errors: {_odac_form: 'An error occurred while processing your request.'}
+                  })
+             }
+         }
+         
+         return Odac.return({
+            result: {success: false},
+            errors: {_odac_form: `Action ${Odac.formConfig.action} not found or invalid.`}
+         })
+      }
+    }
+
     Odac.Request.session(`_custom_form_${token}`, null)
 
     return null

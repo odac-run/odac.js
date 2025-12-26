@@ -5,7 +5,8 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 ## Basic Usage
 
 ```html
-<odac:form action="/contact/submit" method="POST">
+```html
+<odac:form action="Contact.submit" method="POST">
   <odac:input name="email" type="email" label="Email">
     <odac:validate rule="required|email" message="Valid email required"/>
   </odac:input>
@@ -18,7 +19,7 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 
 ### `<odac:form>`
 
-- `action` - Form submission URL (optional if using `table`)
+- `action` - Controller action `Controller.method` (optional if using `table`)
 - `method` - HTTP method (default: POST)
 - `table` - Database table name for automatic insert (optional)
 - `redirect` - Redirect URL after success (optional)
@@ -27,12 +28,13 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 - `id` - Form ID attribute
 
 ```html
-<!-- With custom controller -->
-<odac:form action="/api/save" method="POST" class="my-form" id="contact-form">
+<!-- With custom controller action -->
+<!-- Executes 'submit' method in 'contact' controller -->
+<odac:form action="Contact.submit" method="POST" class="my-form" id="contact-form">
   <!-- fields here -->
 </odac:form>
 
-<!-- With automatic DB insert -->
+<!-- With automatic DB insert (no controller needed) -->
 <odac:form table="waitlist" redirect="/" success="Thank you for joining!">
   <!-- fields here -->
 </odac:form>
@@ -202,58 +204,63 @@ Automatically set field values without user input:
 <odac:submit text="Save" loading="Saving..." class="btn btn-primary" id="save-btn"/>
 ```
 
-## Controller Handler
+## Controller Handler (Server Actions)
+ 
+Handle form submission directly in your controller. The action is defined as `ControllerName.methodName`.
 
-Handle form submission in your controller:
+**View:**
+```html
+<odac:form action="Contact.submit">
+    ...
+</odac:form>
+```
+
+**Controller (controller/Contact.js):**
 
 ```javascript
-module.exports = {
-  submit: Odac => {
-    // Access validated form data
-    const data = Odac.formData
-    
-    // data contains all field values
-    console.log(data.email, data.message)
-    
-    // Process the data (save to database, send email, etc.)
-    
-    // Return success response
-    return Odac.return({
-      result: {
-        success: true,
-        message: 'Form submitted successfully!',
-        redirect: '/thank-you' // Optional redirect
-      }
-    })
+module.exports = class Contact {
+  constructor(Odac) {
+    this.Odac = Odac
+  }
+
+  async submit(form) {
+    // 1. Access validated clean data
+    const { email, message } = form.data
+
+    // 2. Perform your logic
+    // await this.Odac.Mail().send(email, message)
+
+    // 3. Return success easily
+    return form.success('Message sent successfully!', '/thank-you')
   }
 }
 ```
 
 ### Error Handling
 
-Return validation errors:
+Return errors using the helper method:
 
 ```javascript
-module.exports = {
-  submit: Odac => {
-    const data = Odac.formData
+module.exports = class Contact {
+  constructor(Odac) {
+    this.Odac = Odac
+  }
+
+  async submit(form) {
+    const { email } = form.data
     
-    // Custom validation
-    if (data.email.includes('spam')) {
-      return Odac.return({
-        result: {success: false},
-        errors: {
-          email: 'This email is not allowed'
-        }
-      })
+    // Custom backend validation
+    if (email.includes('spam')) {
+      // Returns field-specific error
+      return form.error('email', 'Spam is not allowed!')
     }
     
-    return Odac.return({
-      result: {success: true, message: 'Success!'}
-    })
+    return form.success('Success!')
   }
 }
 ```
+
+**Note:** No route definition is needed for the action! The form system handles the routing securely.
 
 ## Automatic Database Insert
 
@@ -312,7 +319,7 @@ That's it! No controller needed. The form will:
 <div class="contact-page">
   <h1>Contact Us</h1>
   
-  <odac:form action="/contact/submit" method="POST" class="contact-form">
+  <odac:form action="Contact.submit" method="POST" class="contact-form">
     <odac:input name="name" type="text" label="Your Name" placeholder="Enter your name">
       <odac:validate rule="required|minlen:3" message="Name must be at least 3 characters"/>
     </odac:input>
@@ -337,29 +344,28 @@ That's it! No controller needed. The form will:
 ### Controller (controller/contact.js)
 
 ```javascript
-module.exports = {
-  index: Odac => {
-    Odac.View.skeleton('default')
-    Odac.View.set({content: 'contact'})
-    Odac.View.print()
-  },
+module.exports = class Contact {
+  constructor(Odac) {
+    this.Odac = Odac
+  }
 
-  submit: Odac => {
-    const data = Odac.formData
+  async index() {
+    this.Odac.View.skeleton('default')
+    this.Odac.View.set({content: 'contact'})
+    this.Odac.View.print()
+  }
+
+  async submit(form) {
+    // Get validated data from form helper
+    const { name, email, subject, message } = form.data
     
     // Save to database
-    // await Odac.Mysql.query('INSERT INTO contacts SET ?', data)
+    // await this.Odac.Mysql.query('INSERT INTO contacts ...', [name, email, ...])
     
     // Send email notification
-    // await Odac.Mail().to('admin@example.com').subject('New Contact').send(data.message)
+    // await this.Odac.Mail().to('admin@example.com').subject('New Contact').send(message)
     
-    return Odac.return({
-      result: {
-        success: true,
-        message: 'Thank you! We will get back to you soon.',
-        redirect: '/'
-      }
-    })
+    return form.success('Thank you! We will get back to you soon.', '/')
   }
 }
 ```
@@ -368,7 +374,7 @@ module.exports = {
 
 ```javascript
 Odac.Route.page('/contact', 'contact')
-Odac.Route.post('/contact/submit', 'contact.submit')
+// Note: No route needed for contact.submit action!
 ```
 
 ## Features
