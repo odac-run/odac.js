@@ -373,8 +373,8 @@ class Auth {
       
       if (!validRecord) return {success: false, error: 'Invalid token'}
       
-      // 3. Consume token (delete)
-      await Odac.DB[magicTable].where('id', validRecord.id).delete()
+      // 3. Consume all tokens for this email to prevent reuse of other valid links.
+      await Odac.DB[magicTable].where('email', email).delete()
       
       // 4. Log in user
       const user = await Odac.DB[this.#table].where('email', email).first()
