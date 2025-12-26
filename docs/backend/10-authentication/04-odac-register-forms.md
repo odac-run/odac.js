@@ -23,17 +23,17 @@ That's all you need! The `auth` configuration is optional.
 
 ```html
 <odac:register redirect="/dashboard">
-  <odac:field name="email" type="email" placeholder="Email" unique>
+  <odac:input name="email" type="email" placeholder="Email" unique>
     <odac:validate rule="required|email" message="Please enter a valid email"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="username" type="text" placeholder="Username" unique>
+  <odac:input name="username" type="text" placeholder="Username" unique>
     <odac:validate rule="required|minlen:4" message="Username must be at least 4 characters"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required|minlen:8" message="Password must be at least 8 characters"/>
-  </odac:field>
+  </odac:input>
   
   <odac:submit>Create Account</odac:submit>
 </odac:register>
@@ -94,12 +94,12 @@ Main form container with configuration options:
 
 ## Field Types
 
-### `<odac:field>`
+### `<odac:input>`
 
 Defines an input field with validation rules:
 
 ```html
-<odac:field 
+<odac:input 
   name="email"              <!-- Field name (required) -->
   type="email"              <!-- Input type (default: text) -->
   placeholder="Email"       <!-- Placeholder text -->
@@ -107,7 +107,7 @@ Defines an input field with validation rules:
   unique>                   <!-- Check uniqueness in database -->
   
   <odac:validate rule="required|email" message="Valid email required"/>
-</odac:field>
+</odac:input>
 ```
 
 **Attributes:**
@@ -132,19 +132,19 @@ Use the `skip` attribute for fields that should be validated but not saved to th
 
 ```html
 <!-- Password confirmation - validate but don't save -->
-<odac:field name="confirm_password" type="password" placeholder="Confirm Password" skip>
+<odac:input name="confirm_password" type="password" placeholder="Confirm Password" skip>
   <odac:validate rule="required|same:password" message="Passwords must match"/>
-</odac:field>
+</odac:input>
 
 <!-- Terms acceptance - validate but don't save -->
-<odac:field name="terms" type="checkbox" label="I accept the terms" skip>
+<odac:input name="terms" type="checkbox" label="I accept the terms" skip>
   <odac:validate rule="accepted" message="You must accept the terms"/>
-</odac:field>
+</odac:input>
 
 <!-- Captcha verification - validate but don't save -->
-<odac:field name="captcha" type="text" placeholder="Enter captcha" skip>
+<odac:input name="captcha" type="text" placeholder="Enter captcha" skip>
   <odac:validate rule="required" message="Please complete the captcha"/>
-</odac:field>
+</odac:input>
 ```
 
 **Common Use Cases:**
@@ -213,24 +213,24 @@ Defines validation rules for a field:
 You can add multiple `<odac:validate>` tags for different error messages:
 
 ```html
-<odac:field name="username" type="text" unique>
+<odac:input name="username" type="text" unique>
   <odac:validate rule="required" message="Username is required"/>
   <odac:validate rule="minlen:4" message="Username must be at least {min} characters"/>
   <odac:validate rule="maxlen:20" message="Username cannot exceed {max} characters"/>
   <odac:validate rule="alphanumeric" message="Username can only contain letters and numbers"/>
   <odac:validate rule="unique" message="Username '{value}' is already taken"/>
-</odac:field>
+</odac:input>
 ```
 
 Or combine rules in a single tag:
 
 ```html
-<odac:field name="username" type="text" unique>
+<odac:input name="username" type="text" unique>
   <odac:validate 
     rule="required|minlen:4|maxlen:20|alphanumeric" 
     message="Username must be 4-20 alphanumeric characters"/>
   <odac:validate rule="unique" message="Username '{value}' is already taken"/>
-</odac:field>
+</odac:input>
 ```
 
 ## Message Placeholders
@@ -238,17 +238,17 @@ Or combine rules in a single tag:
 Use placeholders in error messages for dynamic values:
 
 ```html
-<odac:field name="username" type="text">
+<odac:input name="username" type="text">
   <odac:validate 
     rule="minlen:4" 
     message="Username '{value}' is too short. Minimum {min} characters required"/>
-</odac:field>
+</odac:input>
 
-<odac:field name="age" type="number">
+<odac:input name="age" type="number">
   <odac:validate 
     rule="min:18|max:120" 
     message="Age must be between {min} and {max} years"/>
-</odac:field>
+</odac:input>
 ```
 
 **Available Placeholders:**
@@ -269,9 +269,9 @@ Set values that are processed only on the backend (not visible in HTML):
 ```html
 <odac:register redirect="/dashboard">
   <!-- User input fields -->
-  <odac:field name="email" type="email" unique>
+  <odac:input name="email" type="email" unique>
     <odac:validate rule="required|email"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Backend-only values -->
   <odac:set name="role" value="user"/>
@@ -309,9 +309,9 @@ Use `compute` attribute for dynamic values:
 Use `if-empty` to set a default only if the user didn't provide a value:
 
 ```html
-<odac:field name="country" type="text" placeholder="Country (optional)">
+<odac:input name="country" type="text" placeholder="Country (optional)">
   <!-- User can optionally fill this -->
-</odac:field>
+</odac:input>
 
 <odac:set name="country" value="TR" if-empty/>
 <!-- If user leaves it empty, set to "TR" -->
@@ -342,51 +342,51 @@ Or use content as button text:
 <odac:register redirect="/dashboard" autologin="true">
   
   <!-- Email Field -->
-  <odac:field name="email" type="email" placeholder="Email Address" unique>
+  <odac:input name="email" type="email" placeholder="Email Address" unique>
     <odac:validate rule="required" message="Email is required"/>
     <odac:validate rule="email" message="Please enter a valid email address"/>
     <odac:validate rule="unique" message="The email '{value}' is already registered"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Username Field -->
-  <odac:field name="username" type="text" placeholder="Username" unique>
+  <odac:input name="username" type="text" placeholder="Username" unique>
     <odac:validate rule="required" message="Username is required"/>
     <odac:validate rule="minlen:4" message="Username must be at least {min} characters"/>
     <odac:validate rule="maxlen:20" message="Username cannot exceed {max} characters"/>
     <odac:validate rule="alphanumeric" message="Only letters and numbers allowed"/>
     <odac:validate rule="unique" message="Username '{value}' is already taken"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Password Field -->
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required" message="Password is required"/>
     <odac:validate rule="minlen:8" message="Password must be at least {min} characters"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Password Confirmation -->
-  <odac:field name="password_confirm" type="password" placeholder="Confirm Password" skip>
+  <odac:input name="password_confirm" type="password" placeholder="Confirm Password" skip>
     <odac:validate rule="required" message="Please confirm your password"/>
     <odac:validate rule="same:password" message="Passwords do not match"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Full Name -->
-  <odac:field name="name" type="text" placeholder="Full Name">
+  <odac:input name="name" type="text" placeholder="Full Name">
     <odac:validate rule="required" message="Name is required"/>
     <odac:validate rule="alphaspace" message="Name can only contain letters and spaces"/>
     <odac:validate rule="minlen:3" message="Name must be at least {min} characters"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Age -->
-  <odac:field name="age" type="number" placeholder="Age">
+  <odac:input name="age" type="number" placeholder="Age">
     <odac:validate rule="required" message="Age is required"/>
     <odac:validate rule="min:18" message="You must be at least {min} years old"/>
     <odac:validate rule="max:120" message="Please enter a valid age"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Terms Checkbox -->
-  <odac:field name="terms" type="checkbox" label="I agree to the terms and conditions" skip>
+  <odac:input name="terms" type="checkbox" label="I agree to the terms and conditions" skip>
     <odac:validate rule="accepted" message="You must accept the terms to continue"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Backend-only values -->
   <odac:set name="role" value="user"/>
@@ -427,9 +427,9 @@ Each form gets a unique token when rendered:
 Fields marked with `unique` attribute are checked against the database:
 
 ```html
-<odac:field name="email" type="email" unique>
+<odac:input name="email" type="email" unique>
   <odac:validate rule="unique" message="Email already exists"/>
-</odac:field>
+</odac:input>
 ```
 
 The system automatically queries the auth table to check for duplicates.
@@ -440,9 +440,9 @@ Odac automatically adds HTML5 validation attributes for better UX:
 
 ```html
 <!-- This field -->
-<odac:field name="username" type="text">
+<odac:input name="username" type="text">
   <odac:validate rule="required|minlen:4|maxlen:20|alphanumeric"/>
-</odac:field>
+</odac:input>
 
 <!-- Generates this HTML -->
 <input 
@@ -660,7 +660,7 @@ Then handle the response in JavaScript if needed (though not required for basic 
 ### Validation Not Working
 
 - Ensure validation rules are spelled correctly
-- Check that field names match between `<odac:field>` and validation
+- Check that field names match between `<odac:input>` and validation
 - Verify HTML5 validation isn't blocking submission
 
 ### Unique Check Failing

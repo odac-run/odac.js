@@ -103,10 +103,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -122,8 +122,8 @@ class Form {
     return config
   }
 
-  static parseField(html) {
-    const fieldTagMatch = html.match(/<odac:field([^>]*?)(?:\/>|>)/)
+  static parseInput(html) {
+    const fieldTagMatch = html.match(/<odac:input([^>]*?)(?:\/>|>)/)
     if (!fieldTagMatch) return null
 
     const fieldTag = fieldTagMatch[0]
@@ -172,6 +172,26 @@ class Form {
         }
       }
     }
+
+    // Capture generic attributes
+    const extraAttrs = {}
+    const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip']
+    const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+    let attrMatch
+    // Clean tag to just attributes part for safer regex matching if needed, 
+    // or just run on fieldTag from start
+    const attributesString = fieldTag.replace(/^<odac:input/, '').replace(/\/?>$/, '')
+    
+    while ((attrMatch = attrRegex.exec(attributesString))) {
+       const key = attrMatch[1]
+       // If value is undefined, it's a boolean attribute (e.g. required, autofocus) -> set as true (or empty string)
+       const value = attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4] !== undefined ? attrMatch[4] : ""
+       
+       if (!knownAttrs.includes(key)) {
+           extraAttrs[key] = value
+       }
+    }
+    field.extraAttributes = extraAttrs
 
     return field
   }
@@ -224,8 +244,8 @@ class Form {
 
     let innerContent = originalHtml.replace(/<odac:register[^>]*>/, '').replace(/<\/odac:register>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -281,6 +301,23 @@ class Form {
     }
 
     return html
+  }
+
+  static appendExtraAttributes(attrs, field) {
+      if (field.extraAttributes) {
+          for (const key in field.extraAttributes) {
+              const val = field.extraAttributes[key]
+               // If val is empty string, render as boolean attribute if typical, or key=""
+               // For HTML5 boolean attrs like autofocus, required, checked, readonly, disabled, multiple, selected
+               // presence is enough.
+               if (val === "") {
+                   attrs += ` ${key}`
+               } else {
+                   attrs += ` ${key}="${val.replace(/"/g, '&quot;')}"`
+               }
+          }
+      }
+      return attrs
   }
 
   static buildHtml5Attributes(field) {
@@ -369,6 +406,10 @@ class Form {
     if (errorMessages.pattern) attrs += ` data-error-pattern="${errorMessages.pattern.replace(/"/g, '&quot;')}"`
     if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
 
+    if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
+    
+    attrs = this.appendExtraAttributes(attrs, field)
+
     return attrs
   }
 
@@ -407,10 +448,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -441,8 +482,8 @@ class Form {
 
     let innerContent = originalHtml.replace(/<odac:login[^>]*>/, '').replace(/<\/odac:login>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -525,10 +566,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -569,8 +610,8 @@ class Form {
 
     let innerContent = originalHtml.replace(/<odac:form[^>]*>/, '').replace(/<\/odac:form>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -621,12 +662,12 @@ class Form {
     if (redirectMatch) config.redirect = redirectMatch[1]
     
     // Auto-add email field if not manually specified (simplified usage)
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     
     if (fieldMatches) {
         // Custom fields included
         for (const fieldHtml of fieldMatches) {
-            const field = this.parseField(fieldHtml)
+            const field = this.parseInput(fieldHtml)
             if (field) config.fields.push(field)
         }
     } else {
@@ -693,14 +734,14 @@ class Form {
     let innerContent = originalHtml.replace(/<odac:magic-login[^>]*>/, '').replace(/<\/odac:magic-login>/, '')
     
     // If no custom fields were present in HTML but we added default email in config
-    if (!originalHtml.includes('<odac:field')) {
+    if (!originalHtml.includes('<odac:input')) {
         const emailField = config.fields.find(f => f.name === 'email')
         if (emailField) {
             innerContent += this.generateFieldHtml(emailField)
         }
     } else {
-         innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-          const field = this.parseField(fieldMatch)
+         innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+          const field = this.parseInput(fieldMatch)
           if (!field) return fieldMatch
           return this.generateFieldHtml(field)
         })

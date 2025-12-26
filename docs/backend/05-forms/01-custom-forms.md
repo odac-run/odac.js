@@ -6,9 +6,9 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 
 ```html
 <odac:form action="/contact/submit" method="POST">
-  <odac:field name="email" type="email" label="Email">
+  <odac:input name="email" type="email" label="Email">
     <odac:validate rule="required|email" message="Valid email required"/>
-  </odac:field>
+  </odac:input>
   
   <odac:submit text="Send" loading="Sending..."/>
 </odac:form>
@@ -40,69 +40,69 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 
 ## Field Types
 
-### `<odac:field>`
+### `<odac:input>`
 
 Supports all standard HTML input types:
 
 ```html
 <!-- Text input with multiple validations -->
-<odac:field name="username" type="text" label="Username" placeholder="Enter username">
+<odac:input name="username" type="text" label="Username" placeholder="Enter username">
   <odac:validate rule="required" message="Username is required"/>
   <odac:validate rule="minlen:3" message="Username must be at least 3 characters"/>
   <odac:validate rule="maxlen:20" message="Username cannot exceed 20 characters"/>
   <odac:validate rule="alphanumeric" message="Username can only contain letters and numbers"/>
-</odac:field>
+</odac:input>
 
 <!-- Email input -->
-<odac:field name="email" type="email" label="Email Address" placeholder="your@email.com">
+<odac:input name="email" type="email" label="Email Address" placeholder="your@email.com">
   <odac:validate rule="required" message="Email address is required"/>
   <odac:validate rule="email" message="Please enter a valid email address"/>
   <odac:validate rule="maxlen:100" message="Email is too long"/>
-</odac:field>
+</odac:input>
 
 <!-- Password input with strong validation -->
-<odac:field name="password" type="password" label="Password">
+<odac:input name="password" type="password" label="Password">
   <odac:validate rule="required" message="Password is required"/>
   <odac:validate rule="minlen:8" message="Password must be at least 8 characters long"/>
   <odac:validate rule="maxlen:50" message="Password is too long"/>
-</odac:field>
+</odac:input>
 
 <!-- Textarea with character limits -->
-<odac:field name="message" type="textarea" label="Your Message" placeholder="Tell us what you think...">
+<odac:input name="message" type="textarea" label="Your Message" placeholder="Tell us what you think...">
   <odac:validate rule="required" message="Please enter your message"/>
   <odac:validate rule="minlen:10" message="Message must be at least 10 characters"/>
   <odac:validate rule="maxlen:500" message="Message cannot exceed 500 characters"/>
-</odac:field>
+</odac:input>
 
 <!-- Checkbox for terms acceptance -->
-<odac:field name="agree" type="checkbox" label="I agree to the Terms of Service and Privacy Policy">
+<odac:input name="agree" type="checkbox" label="I agree to the Terms of Service and Privacy Policy">
   <odac:validate rule="accepted" message="You must accept the terms to continue"/>
-</odac:field>
+</odac:input>
 
 <!-- Number input with range -->
-<odac:field name="age" type="number" label="Your Age">
+<odac:input name="age" type="number" label="Your Age">
   <odac:validate rule="required" message="Age is required"/>
   <odac:validate rule="min:18" message="You must be at least 18 years old"/>
   <odac:validate rule="max:120" message="Please enter a valid age"/>
-</odac:field>
+</odac:input>
 
 <!-- Phone number -->
-<odac:field name="phone" type="text" label="Phone Number" placeholder="+1 (555) 123-4567">
+<odac:input name="phone" type="text" label="Phone Number" placeholder="+1 (555) 123-4567">
   <odac:validate rule="required" message="Phone number is required"/>
   <odac:validate rule="minlen:10" message="Phone number must be at least 10 digits"/>
-</odac:field>
+</odac:input>
 
 <!-- URL input -->
-<odac:field name="website" type="url" label="Website" placeholder="https://example.com">
+<odac:input name="website" type="url" label="Website" placeholder="https://example.com">
   <odac:validate rule="url" message="Please enter a valid URL"/>
-</odac:field>
+</odac:input>
 
 <!-- Name with alpha validation -->
-<odac:field name="full_name" type="text" label="Full Name" placeholder="John Doe">
+<odac:input name="full_name" type="text" label="Full Name" placeholder="John Doe">
   <odac:validate rule="required" message="Full name is required"/>
   <odac:validate rule="minlen:2" message="Name must be at least 2 characters"/>
   <odac:validate rule="maxlen:50" message="Name is too long"/>
-</odac:field>
+</odac:input>
 ```
 
 ### Field Attributes
@@ -121,9 +121,9 @@ Supports all standard HTML input types:
 Add validation rules to fields:
 
 ```html
-<odac:field name="username" type="text">
+<odac:input name="username" type="text">
   <odac:validate rule="required|minlen:3|maxlen:20" message="Username must be 3-20 characters"/>
-</odac:field>
+</odac:input>
 ```
 
 ### Available Rules
@@ -263,13 +263,13 @@ Forms can automatically insert data into database without writing a controller:
 
 ```html
 <odac:form table="waitlist" redirect="/" success="Thank you for joining!">
-  <odac:field name="email" type="email" label="Email">
+  <odac:input name="email" type="email" label="Email">
     <odac:validate rule="required|email|unique" message="Valid email required"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="name" type="text" label="Name">
+  <odac:input name="name" type="text" label="Name">
     <odac:validate rule="required|minlen:2" message="Name required"/>
-  </odac:field>
+  </odac:input>
   
   <odac:set name="created_at" compute="now"/>
   <odac:set name="ip" compute="ip"/>
@@ -313,21 +313,21 @@ That's it! No controller needed. The form will:
   <h1>Contact Us</h1>
   
   <odac:form action="/contact/submit" method="POST" class="contact-form">
-    <odac:field name="name" type="text" label="Your Name" placeholder="Enter your name">
+    <odac:input name="name" type="text" label="Your Name" placeholder="Enter your name">
       <odac:validate rule="required|minlen:3" message="Name must be at least 3 characters"/>
-    </odac:field>
+    </odac:input>
     
-    <odac:field name="email" type="email" label="Email" placeholder="your@email.com">
+    <odac:input name="email" type="email" label="Email" placeholder="your@email.com">
       <odac:validate rule="required|email" message="Please enter a valid email"/>
-    </odac:field>
+    </odac:input>
     
-    <odac:field name="subject" type="text" label="Subject" placeholder="What is this about?">
+    <odac:input name="subject" type="text" label="Subject" placeholder="What is this about?">
       <odac:validate rule="required|minlen:5" message="Subject must be at least 5 characters"/>
-    </odac:field>
+    </odac:input>
     
-    <odac:field name="message" type="textarea" label="Message" placeholder="Your message...">
+    <odac:input name="message" type="textarea" label="Message" placeholder="Your message...">
       <odac:validate rule="required|minlen:10" message="Message must be at least 10 characters"/>
-    </odac:field>
+    </odac:input>
     
     <odac:submit text="Send Message" loading="Sending..." class="btn btn-primary"/>
   </odac:form>
