@@ -285,6 +285,168 @@ class Auth {
     return true
   }
 
+  // --- MAGIC LINK START ---
+
+  async requestMagicLink(email, options = {}) {
+     if (!Odac.Config.auth) Odac.Config.auth = {}
+     this.#table = Odac.Config.auth.table || 'users'
+     const magicTable = Odac.Config.auth.magicTable || 'magic_links'
+     
+     // Ensure magic table exists
+     try {
+        await this.#ensureMagicLinkTable(magicTable)
+      } catch(e) {
+         console.error('Failed to ensure magic link table exists:', e);
+         // Consider returning an error here to prevent further execution.
+      }
+      
+      // Rate limiting: Check recent requests from this IP and email
+      // Magic link requires only email input, so rate limits should be very strict
+      const rateLimitWindow = Odac.Config.auth?.magicLinkRateLimit || 60 * 60 * 1000 // 1 hour default
+      const maxAttempts = Odac.Config.auth?.magicLinkMaxAttempts || 2 // Per email - very strict
+      const maxAttemptsPerIP = Odac.Config.auth?.magicLinkMaxAttemptsPerIP || 5 // Per IP
+      
+      try {
+          // Check email-based rate limit
+          const recentEmailRequests = await Odac.DB[magicTable]
+              .where('email', email)
+              .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
+          
+          if (recentEmailRequests && recentEmailRequests.length >= maxAttempts) {
+              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success to prevent enumeration
+          }
+          
+          // Check IP-based rate limit (prevents mass enumeration attacks)
+          const clientIP = this.#request.ip
+          const recentIPRequests = await Odac.DB[magicTable]
+              .where('ip', clientIP)
+              .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
+          
+          if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
+              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success
+          }
+      } catch(e) {
+          // Ignore rate limit check errors, proceed with request
+      }
+      
+      // Cleanup: Remove expired tokens periodically
+      this.#cleanupExpiredMagicLinks(magicTable)
+     
+     // 1. Check if user exists (or auto-register check if needed, but for now lets assume user must exist)
+     // If you want to support auto-register, we'd need more logic here.
+     // For security by default: only existing users.
+     const user = await Odac.DB[this.#table].where('email', email).first()
+     
+     // If user doesn't exist and auto-register is NOT enabled, we should probably pretend we sent it
+     // to avoid enumeration attacks, or return false. 
+     // Let's implement options.autoRegister later if requested.
+     if (!user) {
+         if (options.autoRegister) {
+             // TODO: Implement user auto-registration logic here.
+             // For now, return the same generic success message to prevent user enumeration.
+             return {success: true, message: 'If this email exists, a link has been sent.'}
+         }
+         // Fake success to prevent enumeration
+         return {success: true, message: 'If this email exists, a link has been sent.'}
+     }
+     
+     // 2. Generate secure token
+     const tokenRaw = nodeCrypto.randomBytes(32).toString('hex')
+     const tokenHash = Odac.Var(tokenRaw).hash() // Hash it for DB storage
+     
+     // 3. Save to DB
+     await Odac.DB[magicTable].insert({
+         email: email,
+         token_hash: tokenHash,
+         ip: this.#request.ip,
+         browser: this.#request.header('user-agent'),
+         expires_at: new Date(Date.now() + 15 * 60 * 1000) // 15 mins
+     })
+     
+     // 4. Send Email
+     let link = `${(this.#request.ssl ? 'https://' : 'http://') + this.#request.host}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
+     if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
+     
+     try {
+         await Odac.Mail(options.template || 'auth/magic-link')
+            .to(email)
+            .subject(options.subject || 'Login to our site')
+            .send({
+                link: link,
+                network: this.#request.host,
+                ip: this.#request.ip
+            })
+     } catch(e) {
+         console.error('Magic Link Email Error:', e)
+         return {success: false, error: 'Failed to send email'}
+     }
+     
+     return {success: true, message: 'Magic link sent!'}
+  }
+  
+  async verifyMagicLink(tokenRaw, email) {
+      if (!tokenRaw || !email) return {success: false, error: 'Invalid link'}
+      
+      const magicTable = Odac.Config.auth?.magicTable || 'magic_links'
+      this.#table = Odac.Config.auth?.table || 'users'
+      const primaryKey = Odac.Config.auth?.key || 'id'
+      
+      // 1. Find potential tokens for this email
+      const records = await Odac.DB[magicTable]
+        .where('email', email)
+        .where('expires_at', '>', new Date())
+        
+      if (!records || records.length === 0) return {success: false, error: 'Link expired or invalid'}
+      
+      // 2. Find the matching token (verify hash)
+      let validRecord = null
+      // Iterate through all records without an early exit to mitigate timing attacks.
+      for (const record of records) {
+          if (Odac.Var(record.token_hash).hashCheck(tokenRaw)) {
+              validRecord = record
+          }
+      }
+      
+      if (!validRecord) return {success: false, error: 'Invalid token'}
+      
+      // 3. Consume all tokens for this email to prevent reuse of other valid links.
+      await Odac.DB[magicTable].where('email', email).delete()
+      
+      // 4. Log in user
+      const user = await Odac.DB[this.#table].where('email', email).first()
+      
+      if (!user) return {success: false, error: 'User not found'}
+      
+      // Login logic similar to login()
+      const loginData = {}
+      loginData[primaryKey] = user[primaryKey]
+      await this.login(loginData)
+      
+      return {success: true, user: user}
+  }
+
+  async #ensureMagicLinkTable(tableName) {
+      await Odac.DB[tableName].schema(t => {
+          t.increments('id')
+          t.string('email').notNullable().index()
+          t.string('token_hash').notNullable()
+          t.string('ip')
+          t.string('browser')
+          t.timestamp('created_at').defaultTo(Odac.DB.fn.now())
+          t.timestamp('expires_at')
+      })
+  }
+
+  #cleanupExpiredMagicLinks(tableName) {
+      // Run cleanup asynchronously without awaiting (fire and forget)
+      Odac.DB[tableName]
+          .where('expires_at', '<', new Date())
+          .delete()
+          .catch(() => {}) // Silently ignore cleanup errors
+  }
+
+  // --- MAGIC LINK END ---
+
   // --- MIGRATION HELPERS (Code-First) ---
   
   async #ensureTokenTableV2(tableName) {

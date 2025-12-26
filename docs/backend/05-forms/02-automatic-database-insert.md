@@ -6,9 +6,9 @@ Forms can automatically insert data into your database without writing any contr
 
 ```html
 <odac:form table="waitlist">
-  <odac:field name="email" type="email" label="Email">
+  <odac:input name="email" type="email" label="Email">
     <odac:validate rule="required|email|unique"/>
-  </odac:field>
+  </odac:input>
   
   <odac:submit text="Join"/>
 </odac:form>
@@ -45,13 +45,13 @@ CREATE TABLE `waitlist` (
   <h1>Join Our Waitlist</h1>
   
   <odac:form table="waitlist" redirect="/" success="Thank you for joining!">
-    <odac:field name="email" type="email" label="Email" placeholder="your@email.com">
+    <odac:input name="email" type="email" label="Email" placeholder="your@email.com">
       <odac:validate rule="required|email|unique" message="Please enter a valid email"/>
-    </odac:field>
+    </odac:input>
     
-    <odac:field name="name" type="text" label="Name" placeholder="Your name">
+    <odac:input name="name" type="text" label="Name" placeholder="Your name">
       <odac:validate rule="required|minlen:2" message="Name is required"/>
-    </odac:field>
+    </odac:input>
     
     <odac:set name="created_at" compute="now"/>
     <odac:set name="ip" compute="ip"/>
@@ -110,9 +110,9 @@ Custom success message to display.
 Use `unique` rule to prevent duplicate entries:
 
 ```html
-<odac:field name="email" type="email">
+<odac:input name="email" type="email">
   <odac:validate rule="required|email|unique" message="This email is already registered"/>
-</odac:field>
+</odac:input>
 ```
 
 The system will:
@@ -163,9 +163,9 @@ Only set if field is empty:
 
 ```html
 <odac:form table="newsletter" success="Thanks for subscribing!">
-  <odac:field name="email" type="email">
+  <odac:input name="email" type="email">
     <odac:validate rule="required|email|unique"/>
-  </odac:field>
+  </odac:input>
   
   <odac:set name="subscribed_at" compute="now"/>
   <odac:set name="status" value="active"/>
@@ -178,13 +178,13 @@ Only set if field is empty:
 
 ```html
 <odac:form table="feedback" redirect="/" success="Thank you for your feedback!">
-  <odac:field name="rating" type="number" label="Rating (1-5)">
+  <odac:input name="rating" type="number" label="Rating (1-5)">
     <odac:validate rule="required|min:1|max:5"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="comment" type="textarea" label="Comment">
+  <odac:input name="comment" type="textarea" label="Comment">
     <odac:validate rule="required|minlen:10"/>
-  </odac:field>
+  </odac:input>
   
   <odac:set name="created_at" compute="now"/>
   <odac:set name="ip" compute="ip"/>
@@ -197,17 +197,17 @@ Only set if field is empty:
 
 ```html
 <odac:form table="beta_requests" success="You're on the list!">
-  <odac:field name="email" type="email">
+  <odac:input name="email" type="email">
     <odac:validate rule="required|email|unique"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="company" type="text">
+  <odac:input name="company" type="text">
     <odac:validate rule="required"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="use_case" type="textarea">
+  <odac:input name="use_case" type="textarea">
     <odac:validate rule="required|minlen:20"/>
-  </odac:field>
+  </odac:input>
   
   <odac:set name="requested_at" compute="now"/>
   <odac:set name="status" value="pending"/>
@@ -270,7 +270,7 @@ Odac.Route.post('/contact/submit', async Odac => {
   await sendEmail(Odac.formData.email, 'Thank you!')
   
   // Manually insert to database if needed
-  await Odac.Mysql.query('INSERT INTO contacts SET ?', Odac.formData)
+  await Odac.DB.contacts.insert(Odac.formData)
   
   return Odac.return({
     result: {success: true, message: 'Message sent!'}

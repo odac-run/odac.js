@@ -23,13 +23,13 @@ That's all you need! The `auth` configuration is optional.
 
 ```html
 <odac:login redirect="/dashboard">
-  <odac:field name="email" type="email" placeholder="Email">
+  <odac:input name="email" type="email" placeholder="Email">
     <odac:validate rule="required|email" message="Please enter a valid email"/>
-  </odac:field>
+  </odac:input>
   
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required" message="Password is required"/>
-  </odac:field>
+  </odac:input>
   
   <odac:submit>Login</odac:submit>
 </odac:login>
@@ -79,12 +79,12 @@ Main form container with configuration options:
 
 ## Field Types
 
-### `<odac:field>`
+### `<odac:input>`
 
 Defines an input field with validation rules:
 
 ```html
-<odac:field 
+<odac:input 
   name="email"              <!-- Field name (required) -->
   type="email"              <!-- Input type (default: text) -->
   placeholder="Email"       <!-- Placeholder text -->
@@ -93,7 +93,7 @@ Defines an input field with validation rules:
   id="email-field">         <!-- HTML ID (optional) -->
   
   <odac:validate rule="required|email" message="Valid email required"/>
-</odac:field>
+</odac:input>
 ```
 
 **Attributes:**
@@ -153,20 +153,20 @@ Defines validation rules for a field:
 You can add multiple `<odac:validate>` tags for different error messages:
 
 ```html
-<odac:field name="email" type="email">
+<odac:input name="email" type="email">
   <odac:validate rule="required" message="Email is required"/>
   <odac:validate rule="email" message="Please enter a valid email address"/>
-</odac:field>
+</odac:input>
 ```
 
 Or combine rules in a single tag:
 
 ```html
-<odac:field name="email" type="email">
+<odac:input name="email" type="email">
   <odac:validate 
     rule="required|email" 
     message="Please enter a valid email address"/>
-</odac:field>
+</odac:input>
 ```
 
 ## Message Placeholders
@@ -174,11 +174,11 @@ Or combine rules in a single tag:
 Use placeholders in error messages for dynamic values:
 
 ```html
-<odac:field name="username" type="text">
+<odac:input name="username" type="text">
   <odac:validate 
     rule="minlen:4" 
     message="Username '{value}' is too short. Minimum {min} characters required"/>
-</odac:field>
+</odac:input>
 ```
 
 **Available Placeholders:**
@@ -218,15 +218,15 @@ Or use content as button text:
 <odac:login redirect="/dashboard">
   
   <!-- Email Field -->
-  <odac:field name="email" type="email" placeholder="Email Address">
+  <odac:input name="email" type="email" placeholder="Email Address">
     <odac:validate rule="required" message="Email is required"/>
     <odac:validate rule="email" message="Please enter a valid email address"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Password Field -->
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required" message="Password is required"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Submit Button -->
   <odac:submit text="Login" loading="Logging in..."/>
@@ -240,15 +240,15 @@ Or use content as button text:
 <odac:login redirect="/dashboard">
   
   <!-- Username Field -->
-  <odac:field name="username" type="text" placeholder="Username">
+  <odac:input name="username" type="text" placeholder="Username">
     <odac:validate rule="required" message="Username is required"/>
     <odac:validate rule="minlen:4" message="Username must be at least {min} characters"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Password Field -->
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required" message="Password is required"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Submit Button -->
   <odac:submit>Login</odac:submit>
@@ -262,18 +262,18 @@ Or use content as button text:
 <odac:login redirect="/dashboard">
   
   <!-- Email Field -->
-  <odac:field name="email" type="email" placeholder="Email">
+  <odac:input name="email" type="email" placeholder="Email">
     <odac:validate rule="required|email" message="Please enter a valid email"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Password Field -->
-  <odac:field name="password" type="password" placeholder="Password">
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required" message="Password is required"/>
-  </odac:field>
+  </odac:input>
   
   <!-- Remember Me Checkbox -->
-  <odac:field name="remember" type="checkbox" label="Remember me">
-  </odac:field>
+  <odac:input name="remember" type="checkbox" label="Remember me">
+  </odac:input>
   
   <!-- Submit Button -->
   <odac:submit>Login</odac:submit>
@@ -290,30 +290,30 @@ Or use content as button text:
   <odac:login redirect="/dashboard">
     
     <div class="form-group">
-      <odac:field 
+      <odac:input 
         name="email" 
         type="email" 
         placeholder="Email Address"
         class="form-control">
         <odac:validate rule="required|email" message="Please enter a valid email"/>
-      </odac:field>
+      </odac:input>
       <span class="odac-form-error" odac-form-error="email"></span>
     </div>
     
     <div class="form-group">
-      <odac:field 
+      <odac:input 
         name="password" 
         type="password" 
         placeholder="Password"
         class="form-control">
         <odac:validate rule="required" message="Password is required"/>
-      </odac:field>
+      </odac:input>
       <span class="odac-form-error" odac-form-error="password"></span>
     </div>
     
     <div class="form-group">
-      <odac:field name="remember" type="checkbox" label="Remember me" class="form-check-input">
-      </odac:field>
+      <odac:input name="remember" type="checkbox" label="Remember me" class="form-check-input">
+      </odac:input>
     </div>
     
     <odac:submit class="btn btn-primary btn-block" text="Login" loading="Logging in..."/>
@@ -356,9 +356,9 @@ Odac automatically adds HTML5 validation attributes for better UX:
 
 ```html
 <!-- This field -->
-<odac:field name="email" type="email">
+<odac:input name="email" type="email">
   <odac:validate rule="required|email"/>
-</odac:field>
+</odac:input>
 
 <!-- Generates this HTML -->
 <input 
@@ -507,12 +507,12 @@ The login form supports multiple authentication methods:
 
 ```html
 <odac:login redirect="/dashboard">
-  <odac:field name="email" type="email" placeholder="Email">
+  <odac:input name="email" type="email" placeholder="Email">
     <odac:validate rule="required|email"/>
-  </odac:field>
-  <odac:field name="password" type="password" placeholder="Password">
+  </odac:input>
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required"/>
-  </odac:field>
+  </odac:input>
   <odac:submit>Login</odac:submit>
 </odac:login>
 ```
@@ -521,12 +521,12 @@ The login form supports multiple authentication methods:
 
 ```html
 <odac:login redirect="/dashboard">
-  <odac:field name="username" type="text" placeholder="Username">
+  <odac:input name="username" type="text" placeholder="Username">
     <odac:validate rule="required"/>
-  </odac:field>
-  <odac:field name="password" type="password" placeholder="Password">
+  </odac:input>
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required"/>
-  </odac:field>
+  </odac:input>
   <odac:submit>Login</odac:submit>
 </odac:login>
 ```
@@ -535,12 +535,12 @@ The login form supports multiple authentication methods:
 
 ```html
 <odac:login redirect="/dashboard">
-  <odac:field name="identifier" type="text" placeholder="Email or Username">
+  <odac:input name="identifier" type="text" placeholder="Email or Username">
     <odac:validate rule="required"/>
-  </odac:field>
-  <odac:field name="password" type="password" placeholder="Password">
+  </odac:input>
+  <odac:input name="password" type="password" placeholder="Password">
     <odac:validate rule="required"/>
-  </odac:field>
+  </odac:input>
   <odac:submit>Login</odac:submit>
 </odac:login>
 ```
@@ -567,7 +567,7 @@ The login form supports multiple authentication methods:
 ### Validation Not Working
 
 - Ensure validation rules are spelled correctly
-- Check that field names match between `<odac:field>` and validation
+- Check that field names match between `<odac:input>` and validation
 - Verify HTML5 validation isn't blocking submission
 
 ### Login Failing

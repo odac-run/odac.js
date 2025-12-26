@@ -91,7 +91,7 @@ module.exports = async (Odac) => {
 // controller/users/get/index.js
 module.exports = async (Odac) => {
   Odac.stream(async function* () {
-    const users = await Odac.Mysql.table('users').get()
+    const users = await Odac.DB.users.get()
     
     for (const user of users) {
       yield user
@@ -194,7 +194,7 @@ module.exports = async (Odac) => {
     let hasMore = true
     
     while (hasMore) {
-      const posts = await Odac.Mysql.table('posts')
+      const posts = await Odac.DB.posts
         .limit(10)
         .offset((page - 1) * 10)
         .get()

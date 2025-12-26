@@ -153,7 +153,7 @@ const email = Odac.Auth.user('email')  // Specific field
 - Manually clean old sessions if needed:
 ```javascript
 const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-await Odac.Mysql.table('user_tokens')
+await Odac.DB.user_tokens
   .where('active', '<', cutoffDate)
   .delete()
 ```

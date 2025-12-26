@@ -354,7 +354,7 @@ class Route {
     )
 
     this.set(
-      ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'],
+      'POST',
       '/_odac/form',
       async Odac => {
         const csrfToken = await Odac.request('_token')
@@ -373,6 +373,27 @@ class Route {
         })
       },
       {token: true}
+    )
+
+    this.set(
+      'POST',
+      '/_odac/magic-login',
+      async Odac => {
+        const csrfToken = await Odac.request('_token')
+        if (!csrfToken || !Odac.token(csrfToken)) {
+           return Odac.Request.abort(401)
+        }
+        return await Internal.magicLogin(Odac)
+      },
+      {token: true}
+    )
+
+    this.set(
+       'GET',
+       '/_odac/magic-verify',
+       async Odac => {
+         return await Internal.magicVerify(Odac)
+       }
     )
 
     delete Odac.Route.buff

@@ -1,7 +1,7 @@
 const nodeCrypto = require('crypto')
 
 class Form {
-  static FORM_TYPES = ['register', 'login', 'form']
+  static FORM_TYPES = ['register', 'login', 'magic-login', 'form']
 
   static parse(content, Odac) {
     for (const type of this.FORM_TYPES) {
@@ -33,6 +33,8 @@ class Form {
       return this.extractRegisterConfig(html, formToken)
     } else if (type === 'login') {
       return this.extractLoginConfig(html, formToken)
+    } else if (type === 'magic-login') {
+      return this.extractMagicLoginConfig(html, formToken)
     } else if (type === 'form') {
       return this.extractFormConfig(html, formToken)
     }
@@ -43,6 +45,8 @@ class Form {
       this.storeRegisterConfig(token, config, Odac)
     } else if (type === 'login') {
       this.storeLoginConfig(token, config, Odac)
+    } else if (type === 'magic-login') {
+      this.storeMagicLoginConfig(token, config, Odac)
     } else if (type === 'form') {
       this.storeFormConfig(token, config, Odac)
     }
@@ -53,6 +57,8 @@ class Form {
       return this.generateRegisterForm(originalHtml, config, formToken)
     } else if (type === 'login') {
       return this.generateLoginForm(originalHtml, config, formToken)
+    } else if (type === 'magic-login') {
+      return this.generateMagicLoginForm(originalHtml, config, formToken)
     } else if (type === 'form') {
       return this.generateCustomForm(originalHtml, config, formToken)
     }
@@ -97,10 +103,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -116,8 +122,8 @@ class Form {
     return config
   }
 
-  static parseField(html) {
-    const fieldTagMatch = html.match(/<odac:field([^>]*?)(?:\/>|>)/)
+  static parseInput(html) {
+    const fieldTagMatch = html.match(/<odac:input([^>]*?)(?:\/>|>)/)
     if (!fieldTagMatch) return null
 
     const fieldTag = fieldTagMatch[0]
@@ -166,6 +172,26 @@ class Form {
         }
       }
     }
+
+    // Capture generic attributes
+    const extraAttrs = {}
+    const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip']
+    const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+    let attrMatch
+    // Clean tag to just attributes part for safer regex matching if needed, 
+    // or just run on fieldTag from start
+    const attributesString = fieldTag.replace(/^<odac:input/, '').replace(/\/?>$/, '')
+    
+    while ((attrMatch = attrRegex.exec(attributesString))) {
+       const key = attrMatch[1]
+       // If value is undefined, it's a boolean attribute (e.g. required, autofocus) -> set as true (or empty string)
+       const value = attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4] !== undefined ? attrMatch[4] : ""
+       
+       if (!knownAttrs.includes(key)) {
+           extraAttrs[key] = value
+       }
+    }
+    field.extraAttributes = extraAttrs
 
     return field
   }
@@ -218,8 +244,8 @@ class Form {
 
     let innerContent = originalHtml.replace(/<odac:register[^>]*>/, '').replace(/<\/odac:register>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -275,6 +301,23 @@ class Form {
     }
 
     return html
+  }
+
+  static appendExtraAttributes(attrs, field) {
+      if (field.extraAttributes) {
+          for (const key in field.extraAttributes) {
+              const val = field.extraAttributes[key]
+               // If val is empty string, render as boolean attribute if typical, or key=""
+               // For HTML5 boolean attrs like autofocus, required, checked, readonly, disabled, multiple, selected
+               // presence is enough.
+               if (val === "") {
+                   attrs += ` ${key}`
+               } else {
+                   attrs += ` ${key}="${val.replace(/"/g, '&quot;')}"`
+               }
+          }
+      }
+      return attrs
   }
 
   static buildHtml5Attributes(field) {
@@ -363,6 +406,10 @@ class Form {
     if (errorMessages.pattern) attrs += ` data-error-pattern="${errorMessages.pattern.replace(/"/g, '&quot;')}"`
     if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
 
+
+    
+    attrs = this.appendExtraAttributes(attrs, field)
+
     return attrs
   }
 
@@ -401,10 +448,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -435,8 +482,8 @@ class Form {
 
     let innerContent = originalHtml.replace(/<odac:login[^>]*>/, '').replace(/<\/odac:login>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -519,10 +566,10 @@ class Form {
       if (idMatch) config.submitId = idMatch[1]
     }
 
-    const fieldMatches = html.match(/<odac:field[\s\S]*?<\/odac:field>/g)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
       for (const fieldHtml of fieldMatches) {
-        const field = this.parseField(fieldHtml)
+        const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
     }
@@ -558,13 +605,14 @@ class Form {
   static generateCustomForm(originalHtml, config, formToken) {
     const submitText = config.submitText || 'Submit'
     const submitLoading = config.submitLoading || 'Processing...'
-    const action = config.action || '/_odac/form'
+    // Always post to internal handler, real action is in session config
+    const formAction = '/_odac/form' 
     const method = config.method || 'POST'
 
     let innerContent = originalHtml.replace(/<odac:form[^>]*>/, '').replace(/<\/odac:form>/, '')
 
-    innerContent = innerContent.replace(/<odac:field[\s\S]*?<\/odac:field>/g, fieldMatch => {
-      const field = this.parseField(fieldMatch)
+    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+      const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
       return this.generateFieldHtml(field)
     })
@@ -584,11 +632,138 @@ class Form {
 
     innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
 
-    let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(action)}" novalidate`
+    let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(formAction)}" novalidate`
     if (config.id) formAttrs += ` id="${escapeHtml(config.id)}"`
 
     let html = `<form ${formAttrs}>\n`
     html += `  <input type="hidden" name="_odac_form_token" value="${escapeHtml(formToken)}">\n`
+    html += innerContent
+    html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
+    html += `</form>`
+
+    return html
+  }
+
+  static extractMagicLoginConfig(html, formToken) {
+    const config = {
+      token: formToken,
+      redirect: null,
+      submitText: 'Send Magic Link',
+      submitLoading: 'Sending...',
+      fields: []
+    }
+
+    const tagMatch = html.match(/<odac:magic-login([^>]*)>/)
+    if (!tagMatch) return config
+
+    const tag = tagMatch[0]
+    const redirectMatch = tag.match(/redirect=["']([^"']+)["']/)
+    const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
+
+    if (redirectMatch) config.redirect = redirectMatch[1]
+    
+    // Auto-add email field if not manually specified (simplified usage)
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
+    
+    if (fieldMatches) {
+        // Custom fields included
+        for (const fieldHtml of fieldMatches) {
+            const field = this.parseInput(fieldHtml)
+            if (field) config.fields.push(field)
+        }
+    } else {
+        // Default Email Field
+        config.fields.push({
+            name: 'email',
+            type: 'email',
+            placeholder: 'e.g. user@example.com',
+            label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
+            class: '',
+            id: null,
+            unique: false,
+            skip: false,
+            validations: [{rule: 'required', message: 'Email is required'}, {rule: 'email', message: 'Invalid email format'}]
+        })
+    }
+
+    const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    if (submitMatch) {
+      const submitTag = submitMatch[1]
+      const textMatch = submitTag.match(/text=["']([^"']+)["']/)
+      const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
+      const classMatch = submitTag.match(/class=["']([^"']+)["']/)
+      const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
+      const idMatch = submitTag.match(/id=["']([^"']+)["']/)
+
+      if (textMatch) config.submitText = textMatch[1]
+      else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
+
+      if (loadingMatch) config.submitLoading = loadingMatch[1]
+      if (classMatch) config.submitClass = classMatch[1]
+      if (styleMatch) config.submitStyle = styleMatch[1]
+      if (idMatch) config.submitId = idMatch[1]
+    } else {
+        // Check for submit-text attribute on main tag if no submit tag
+        const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
+        if (submitTextAttr) config.submitText = submitTextAttr[1]
+    }
+
+    return config
+  }
+
+  static storeMagicLoginConfig(token, config, Odac) {
+    if (!Odac.View) Odac.View = {}
+    if (!Odac.View.magicLoginForms) Odac.View.magicLoginForms = {}
+
+    const formData = {
+      config: config,
+      created: Date.now(),
+      expires: Date.now() + 30 * 60 * 1000,
+      sessionId: Odac.Request.session('_client'),
+      userAgent: Odac.Request.header('user-agent'),
+      ip: Odac.Request.ip
+    }
+
+    Odac.View.magicLoginForms[token] = formData
+    Odac.Request.session(`_magic_login_form_${token}`, formData)
+  }
+
+  static generateMagicLoginForm(originalHtml, config, formToken) {
+    const submitText = config.submitText || 'Send Magic Link'
+    const submitLoading = config.submitLoading || 'Sending...'
+
+    let innerContent = originalHtml.replace(/<odac:magic-login[^>]*>/, '').replace(/<\/odac:magic-login>/, '')
+    
+    // If no custom fields were present in HTML but we added default email in config
+    if (!originalHtml.includes('<odac:input')) {
+        const emailField = config.fields.find(f => f.name === 'email')
+        if (emailField) {
+            innerContent += this.generateFieldHtml(emailField)
+        }
+    } else {
+         innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+          const field = this.parseInput(fieldMatch)
+          if (!field) return fieldMatch
+          return this.generateFieldHtml(field)
+        })
+    }
+
+    const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
+    if (submitMatch) {
+      let submitAttrs = `type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}"`
+      if (config.submitClass) submitAttrs += ` class="${config.submitClass}"`
+      if (config.submitStyle) submitAttrs += ` style="${config.submitStyle}"`
+      if (config.submitId) submitAttrs += ` id="${config.submitId}"`
+      const submitButton = `<button ${submitAttrs}>${submitText}</button>`
+      innerContent = innerContent.replace(submitMatch[0], submitButton)
+    } else if (!innerContent.includes('type="submit"')) {
+       // Auto add submit button if missing
+       const submitButton = `<button type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}">${submitText}</button>`
+       innerContent += `\n${submitButton}`
+    }
+
+    let html = `<form class="odac-magic-login-form" data-odac-magic-login="${formToken}" method="POST" action="/_odac/magic-login" novalidate>\n`
+    html += `  <input type="hidden" name="_odac_magic_login_token" value="${formToken}">\n`
     html += innerContent
     html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
     html += `</form>`
