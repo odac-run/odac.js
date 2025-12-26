@@ -209,12 +209,20 @@
       "title": "Database",
       "children": [
         {
-          "file": "01-database-connection.md",
-          "title": "Database Connection"
+          "file": "01-getting-started.md",
+          "title": "Getting Started"
         },
         {
-          "file": "02-using-mysql.md",
-          "title": "Using MySQL"
+          "file": "02-basics.md",
+          "title": "Query Basics"
+        },
+        {
+          "file": "03-advanced.md",
+          "title": "Advanced Queries"
+        },
+        {
+          "file": "04-migrations.md",
+          "title": "Code-First Migrations"
         }
       ]
     },
