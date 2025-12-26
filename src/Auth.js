@@ -364,10 +364,10 @@ class Auth {
       
       // 2. Find the matching token (verify hash)
       let validRecord = null
+      // Iterate through all records without an early exit to mitigate timing attacks.
       for (const record of records) {
           if (Odac.Var(record.token_hash).hashCheck(tokenRaw)) {
               validRecord = record
-              break
           }
       }
       
