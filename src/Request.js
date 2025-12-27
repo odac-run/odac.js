@@ -36,11 +36,8 @@ class OdacRequest {
     }
     this.#data()
     if (!Odac.Request) Odac.Request = {}
-    if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
-      let client = nodeCrypto
-        .createHash('md5')
-        .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-        .digest('hex')
+      if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
+      let client = nodeCrypto.randomBytes(16).toString('hex')
       this.cookie('odac_client', client, {expires: null, httpOnly: false})
       this.session('_client', client)
     }
@@ -227,54 +224,52 @@ class OdacRequest {
 
   // - SESSION
   session(key, value) {
-    if (!Odac.Request.session) Odac.Request.session = {}
-    if (!Odac.Request.sessionLocks) Odac.Request.sessionLocks = {}
-
     let pri = nodeCrypto
-      .createHash('md5')
+      .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex')
     let pub = this.cookie('candy_session')
 
-    if (!pub || !Odac.Request.session[pub + '-' + pri]) {
-      const lockKey = `${this.ip}-${pri}`
+    if (!pub || !Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
+      const lockKey = `lock:${this.ip}:${pri}`
       const now = Date.now()
 
-      if (Odac.Request.sessionLocks[lockKey]) {
-        const lock = Odac.Request.sessionLocks[lockKey]
-        if (now - lock.timestamp < 5000 && Odac.Request.session[`${lock.sessionId}-${pri}`]) {
-          pub = lock.sessionId
+      // Check for existing lock in LMDB
+      const existingLock = Odac.Storage.get(lockKey)
+      if (existingLock) {
+        if (now - existingLock.timestamp < 2000 && Odac.Storage.get(`sess:${existingLock.sessionId}:${pri}:_created`)) {
+          pub = existingLock.sessionId
         } else {
-          delete Odac.Request.sessionLocks[lockKey]
+          // Lock expired, remove it
+          Odac.Storage.remove(lockKey)
         }
       }
 
       if (!pub) {
-        const sessionLockValues = Object.values(Odac.Request.sessionLocks)
-        const activeSessions = new Set(sessionLockValues.map(l => l.sessionId))
+        // Generate unique session ID
         do {
-          pub = nodeCrypto
-            .createHash('md5')
-            .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-            .digest('hex')
-        } while (Odac.Request.session[`${pub}-${pri}`] || activeSessions.has(pub))
+          pub = nodeCrypto.randomBytes(16).toString('hex')
+        } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
 
-        Odac.Request.sessionLocks[lockKey] = {sessionId: pub, timestamp: now}
-        Odac.Request.session[`${pub}-${pri}`] = {}
+        // Create lock and session in LMDB
+        Odac.Storage.put(lockKey, { sessionId: pub, timestamp: now })
+        Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
         this.cookie('candy_session', `${pub}`)
 
+        // Schedule lock cleanup (2 seconds)
         setTimeout(() => {
-          if (Odac.Request.sessionLocks[lockKey]?.timestamp === now) {
-            delete Odac.Request.sessionLocks[lockKey]
+          const lock = Odac.Storage.get(lockKey)
+          if (lock?.timestamp === now) {
+            Odac.Storage.remove(lockKey)
           }
-        }, 5000)
+        }, 2000)
       }
     }
 
-    if (!Odac.Request.session[pub + '-' + pri]) Odac.Request.session[pub + '-' + pri] = {}
-    if (value === undefined) return Odac.Request.session[pub + '-' + pri][key] ?? null
-    else if (value === null) delete Odac.Request.session[pub + '-' + pri][key]
-    else Odac.Request.session[pub + '-' + pri][key] = value
+    const dbKey = `sess:${pub}:${pri}:${key}`
+    if (value === undefined) return Odac.Storage.get(dbKey) ?? null
+    else if (value === null) Odac.Storage.remove(dbKey)
+    else Odac.Storage.put(dbKey, value)
   }
 
   // - SET

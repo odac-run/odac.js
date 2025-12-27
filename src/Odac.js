@@ -1,6 +1,9 @@
 module.exports = {
   init: async function () {
     global.Odac = this.instance()
+    global.Odac.Storage = require('./Storage.js')
+    global.Odac.Storage.init()
+    
     await global.Odac.Env.init()
     await global.Odac.Config.init()
     await global.Odac.Database.init()
