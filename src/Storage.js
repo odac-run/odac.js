@@ -68,29 +68,83 @@ class Storage {
       return null
     }
 
+    const BATCH_THRESHOLD = 10000
+    const BATCH_SIZE = 1000
+
     return setInterval(() => {
-      const now = Date.now()
-      let count = 0
-      
       try {
-        for (const { key, value } of this.db.getRange({ start: 'sess:', end: 'sess:~', snapshot: false })) {
-          if (key.endsWith(':_created')) {
-            if (now - value > expirationMs) {
-              const prefix = key.replace(':_created', '')
-              for (const subKey of this.db.getKeys({ start: prefix, end: prefix + '~' })) {
-                this.db.remove(subKey)
-              }
-              count++
-            }
-          }
+        // Count sessions to decide mode
+        let sessionCount = 0
+        for (const _ of this.db.getKeys({ start: 'sess:', end: 'sess:a', limit: BATCH_THRESHOLD + 1 })) {
+          sessionCount++
+          if (sessionCount > BATCH_THRESHOLD) break
         }
-        if (count > 0) {
-          console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions.`)
+
+        if (sessionCount > BATCH_THRESHOLD) {
+          this._cleanSessionsBatch(expirationMs, BATCH_SIZE)
+        } else {
+          this._cleanSessionsSimple(expirationMs)
         }
       } catch (error) {
         console.error('\x1b[31m[Storage GC Error]\x1b[0m', error.message)
       }
     }, intervalMs)
+  }
+
+  // Simple mode: Load all sessions at once (fast for small datasets)
+  _cleanSessionsSimple(expirationMs) {
+    const now = Date.now()
+    let count = 0
+
+    for (const { key, value } of this.db.getRange({ start: 'sess:', end: 'sess:~', snapshot: false })) {
+      if (key.endsWith(':_created') && now - value > expirationMs) {
+        const prefix = key.replace(':_created', '')
+        for (const subKey of this.db.getKeys({ start: prefix, end: prefix + '~' })) {
+          this.db.remove(subKey)
+        }
+        count++
+      }
+    }
+
+    if (count > 0) {
+      console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions.`)
+    }
+  }
+
+  // Batch mode: Process sessions in chunks (memory-safe for large datasets)
+  _cleanSessionsBatch(expirationMs, batchSize) {
+    const now = Date.now()
+    let count = 0
+    let cursor = 'sess:'
+    let hasMore = true
+
+    console.log('\x1b[36m[Storage GC]\x1b[0m Running in batch mode...')
+
+    while (hasMore) {
+      hasMore = false
+      let lastKey = null
+
+      for (const { key, value } of this.db.getRange({ start: cursor, end: 'sess:~', limit: batchSize, snapshot: false })) {
+        lastKey = key
+        hasMore = true
+
+        if (key.endsWith(':_created') && now - value > expirationMs) {
+          const prefix = key.replace(':_created', '')
+          for (const subKey of this.db.getKeys({ start: prefix, end: prefix + '~' })) {
+            this.db.remove(subKey)
+          }
+          count++
+        }
+      }
+
+      if (lastKey) {
+        cursor = lastKey + '\0'
+      }
+    }
+
+    if (count > 0) {
+      console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions (batch mode).`)
+    }
   }
 
   // --- Utility ---
