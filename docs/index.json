@@ -263,6 +263,10 @@
         {
           "file": "06-odac-login-forms.md",
           "title": "Odac Login Forms (Zero-Config)"
+        },
+        {
+          "file": "07-magic-links.md",
+          "title": "Magic Links"
         }
       ]
     },
