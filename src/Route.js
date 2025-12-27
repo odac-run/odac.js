@@ -270,18 +270,21 @@ class Route {
     if (this.loading) return
     this.loading = true
     this.#loadMiddlewares()
-    for (const file of fs.readdirSync(`${__dir}/controller/`)) {
-      if (!file.endsWith('.js')) continue
-      let name = file.replace('.js', '')
-      if (!Odac.Route.class) Odac.Route.class = {}
-      if (Odac.Route.class[name]) {
-        if (Odac.Route.class[name].mtime >= fs.statSync(Odac.Route.class[name].path).mtimeMs + 1000) continue
-        delete require.cache[require.resolve(Odac.Route.class[name].path)]
-      }
-      Odac.Route.class[name] = {
-        path: `${__dir}/controller/${file}`,
-        mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
-        module: require(`${__dir}/controller/${file}`)
+    const controllerDir = `${__dir}/controller/`
+    if (fs.existsSync(controllerDir)) {
+      for (const file of fs.readdirSync(controllerDir)) {
+        if (!file.endsWith('.js')) continue
+        let name = file.replace('.js', '')
+        if (!Odac.Route.class) Odac.Route.class = {}
+        if (Odac.Route.class[name]) {
+          if (Odac.Route.class[name].mtime >= fs.statSync(Odac.Route.class[name].path).mtimeMs + 1000) continue
+          delete require.cache[require.resolve(Odac.Route.class[name].path)]
+        }
+        Odac.Route.class[name] = {
+          path: `${__dir}/controller/${file}`,
+          mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
+          module: require(`${__dir}/controller/${file}`)
+        }
       }
     }
     let dir = fs.readdirSync(`${__dir}/route/`)
