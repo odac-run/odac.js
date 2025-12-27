@@ -9,7 +9,7 @@ The `Odac.Mail` class uses a builder pattern. You start by instantiating it with
 #### Syntax
 
 ```javascript
-await new Odac.Mail('template_name')
+await Odac.Mail('template_name')
   .from('sender@example.com', 'Sender Name')
   .to('recipient@example.com')
   .subject('Your Subject Here')
@@ -37,7 +37,7 @@ module.exports = async function (Odac) {
 
     try {
         // 2. Prepare and Send Email
-        const result = await new Odac.Mail('contact_form_notification')
+        const result = await Odac.Mail('contact_form_notification')
             .from('system@myapp.com', 'My App System')
             .to('admin@myapp.com')
             .subject('New Contact Form Submission')
