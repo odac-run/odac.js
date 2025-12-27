@@ -424,6 +424,15 @@ class _odac {
                 span.textContent = data.result.message
                 formElement.appendChild(span)
               }
+
+              // Update token if rotated
+              if (data.result._token) {
+                 const tokenInput = formElement.querySelector('input[name="_odac_form_token"]')
+                 if (tokenInput) tokenInput.value = data.result._token
+                 
+                 const formTokenAttr = formElement.getAttribute('data-odac-form')
+                 if (formTokenAttr) formElement.setAttribute('data-odac-form', data.result._token)
+              }
             } else if (!data.result.success && data.errors) {
               Object.entries(data.errors).forEach(([name, message]) => {
                 if (message) {

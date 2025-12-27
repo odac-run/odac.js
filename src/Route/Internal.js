@@ -1,3 +1,5 @@
+const crypto = require('crypto')
+
 class Internal {
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
@@ -558,8 +560,6 @@ class Internal {
 
          if (controllerModule) {
              try {
-                 // Clean up session
-                 Odac.Request.session(`_custom_form_${token}`, null)
                  
                  // Create Form Helper Object
                  const formHelper = {
@@ -573,45 +573,57 @@ class Internal {
                      },
                      
                      success: (message, redirect = null) => {
-                         return Odac.return({
-                             result: {
-                                 success: true,
-                                 message: message,
-                                 redirect: redirect || Odac.formConfig.redirect
-                             }
-                         })
-                     }
-                 }
+                          const finalRedirect = redirect || Odac.formConfig.redirect
+                          let newToken = null
 
-                 // Handle Class-based Controller
-                 if (typeof controllerModule === 'function' && controllerModule.prototype) {
-                     const instance = new controllerModule(Odac)
-                     if (typeof instance[methodName] === 'function') {
-                         return await instance[methodName](formHelper)
-                     }
-                 }
-                 // Handle Object-based Controller (Backwards Compatibility)
-                 else if (typeof controllerModule[methodName] === 'function') {
-                     // We pass formHelper as seconds arg for compatibility if needed, 
-                     // or developers can just use it.
-                     // But previously we changed it to just Odac.
-                     // Let's pass (Odac, formHelper) to object controllers to be safe/flexible
-                     return await controllerModule[methodName](Odac, formHelper)
-                 }
-             } catch (e) {
-                 console.error(e)
-                  return Odac.return({
-                    result: {success: false},
-                    errors: {_odac_form: 'An error occurred while processing your request.'}
-                  })
-             }
-         }
-         
-         return Odac.return({
-            result: {success: false},
-            errors: {_odac_form: `Action ${Odac.formConfig.action} not found or invalid.`}
-         })
-      }
+                          // Only rotate token if we are staying on the page (no redirect)
+                          if (!finalRedirect) {
+                              newToken = crypto.randomBytes(32).toString('hex')
+
+                              if (formData && formData.config) {
+                                  const newFormData = { ...formData, config: { ...formData.config, token: newToken }, created: Date.now(), expires: Date.now() + 30 * 60 * 1000 }
+                                  Odac.Request.session(`_custom_form_${newToken}`, newFormData)
+                              }
+                          }
+
+                          Odac.Request.session(`_custom_form_${token}`, null)
+
+                          return Odac.return({
+                              result: {
+                                  success: true,
+                                  message: message,
+                                  redirect: finalRedirect,
+                                  _token: newToken
+                              }
+                          })
+                      }
+                  }
+
+                  // Handle Class-based Controller
+                  if (typeof controllerModule === 'function' && controllerModule.prototype) {
+                      const instance = new controllerModule(Odac)
+                      if (typeof instance[methodName] === 'function') {
+                          return await instance[methodName](formHelper)
+                      }
+                  }
+                  // Handle Object-based Controller (Backwards Compatibility)
+                  else if (typeof controllerModule[methodName] === 'function') {
+                      return await controllerModule[methodName](Odac, formHelper)
+                  }
+              } catch (e) {
+                  console.error(e)
+                   return Odac.return({
+                     result: {success: false},
+                     errors: {_odac_form: 'An error occurred while processing your request.'}
+                   })
+              }
+          }
+          
+          return Odac.return({
+             result: {success: false},
+             errors: {_odac_form: `Action ${Odac.formConfig.action} not found or invalid.`}
+          })
+       }
     }
 
     Odac.Request.session(`_custom_form_${token}`, null)
