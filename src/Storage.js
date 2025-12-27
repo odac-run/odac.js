@@ -75,7 +75,7 @@ class Storage {
       try {
         // Count sessions to decide mode
         let sessionCount = 0
-        for (const _ of this.db.getKeys({ start: 'sess:', end: 'sess:a', limit: BATCH_THRESHOLD + 1 })) {
+        for (const _ of this.db.getKeys({ start: 'sess:', end: 'sess:~', limit: BATCH_THRESHOLD + 1 })) {
           sessionCount++
           if (sessionCount > BATCH_THRESHOLD) break
         }
