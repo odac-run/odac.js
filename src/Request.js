@@ -26,6 +26,7 @@ class OdacRequest {
     this.host = req.headers.host
     this.ssl = this.header('x-odac-connection-ssl') === 'true'
     this.ip = (this.header('x-odac-connection-remoteaddress') ?? req.connection.remoteAddress).replace('::ffff:', '')
+    this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'
     delete this.req.headers['x-odac-connection-ssl']
     delete this.req.headers['x-odac-connection-remoteaddress']
     let route = req.headers.host.split('.')[0]
