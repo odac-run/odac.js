@@ -12,25 +12,8 @@ module.exports = {
       const numCPUs = os.cpus().length
       console.log(`Odac Server running on \x1b]8;;http://127.0.0.1:${port}\x1b\\\x1b[4mhttp://127.0.0.1:${port}\x1b[0m\x1b]8;;\x1b\\.`)
 
-      // Garbage Collector: Remove sessions older than 7 days
-      setInterval(() => {
-        const now = Date.now()
-        const expiration = 7 * 24 * 60 * 60 * 1000
-        let count = 0
-        
-        for (const { key, value } of Odac.KV.getRange({ start: 'sess:', end: 'sess:~', snapshot: false })) {
-           if (key.endsWith(':_created')) {
-             if (now - value > expiration) {
-               const prefix = key.replace(':_created', '')
-               for (const subKey of Odac.KV.getKeys({ start: prefix, end: prefix + '~' })) {
-                 Odac.KV.remove(subKey)
-               }
-               count++
-             }
-           }
-        }
-        if (count > 0) console.log(`[GC] Cleaned ${count} expired sessions.`)
-      }, 1000 * 60 * 60) // Run every hour
+      // Start session garbage collector (runs every hour, expires after 7 days)
+      Odac.Storage.startSessionGC()
 
       for (let i = 0; i < numCPUs; i++) {
         cluster.fork()

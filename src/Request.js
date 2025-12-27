@@ -235,13 +235,13 @@ class OdacRequest {
       .digest('hex')
     let pub = this.cookie('candy_session')
 
-    if (!pub || !Odac.KV.get(`sess:${pub}:${pri}:_created`)) {
+    if (!pub || !Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
       const lockKey = `${this.ip}-${pri}`
       const now = Date.now()
 
       if (Odac.Request.sessionLocks[lockKey]) {
         const lock = Odac.Request.sessionLocks[lockKey]
-        if (now - lock.timestamp < 5000 && Odac.KV.get(`sess:${lock.sessionId}:${pri}:_created`)) {
+        if (now - lock.timestamp < 5000 && Odac.Storage.get(`sess:${lock.sessionId}:${pri}:_created`)) {
           pub = lock.sessionId
         } else {
           delete Odac.Request.sessionLocks[lockKey]
@@ -256,10 +256,10 @@ class OdacRequest {
             .createHash('md5')
             .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
             .digest('hex')
-        } while (Odac.KV.get(`sess:${pub}:${pri}:_created`) || activeSessions.has(pub))
+        } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`) || activeSessions.has(pub))
 
         Odac.Request.sessionLocks[lockKey] = {sessionId: pub, timestamp: now}
-        Odac.KV.put(`sess:${pub}:${pri}:_created`, now)
+        Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
         this.cookie('candy_session', `${pub}`)
 
         setTimeout(() => {
@@ -271,9 +271,9 @@ class OdacRequest {
     }
 
     const dbKey = `sess:${pub}:${pri}:${key}`
-    if (value === undefined) return Odac.KV.get(dbKey) ?? null
-    else if (value === null) Odac.KV.remove(dbKey)
-    else Odac.KV.put(dbKey, value)
+    if (value === undefined) return Odac.Storage.get(dbKey) ?? null
+    else if (value === null) Odac.Storage.remove(dbKey)
+    else Odac.Storage.put(dbKey, value)
   }
 
   // - SET
