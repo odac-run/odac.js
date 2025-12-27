@@ -25,6 +25,7 @@ module.exports = {
     _odac.DB = _odac.Database
     _odac.Route = global.Odac?.Route ?? new (require('./Route.js'))()
     _odac.Server = require('./Server.js')
+    _odac.Storage = require('./Storage.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
 
     if (req) {
