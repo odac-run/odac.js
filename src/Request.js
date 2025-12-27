@@ -36,11 +36,8 @@ class OdacRequest {
     }
     this.#data()
     if (!Odac.Request) Odac.Request = {}
-    if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
-      let client = nodeCrypto
-        .createHash('md5')
-        .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-        .digest('hex')
+      if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
+      let client = nodeCrypto.randomBytes(16).toString('hex')
       this.cookie('odac_client', client, {expires: null, httpOnly: false})
       this.session('_client', client)
     }
@@ -251,10 +248,7 @@ class OdacRequest {
       if (!pub) {
         // Generate unique session ID
         do {
-          pub = nodeCrypto
-            .createHash('md5')
-            .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-            .digest('hex')
+          pub = nodeCrypto.randomBytes(16).toString('hex')
         } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
 
         // Create lock and session in LMDB
