@@ -1,4 +1,5 @@
 const http = require('http')
+const nodeCrypto = require('crypto')
 const cluster = require('node:cluster')
 const os = require('node:os')
 
@@ -69,7 +70,7 @@ module.exports = {
       })
 
       server.on('upgrade', (req, socket, head) => {
-        const id = `${Date.now()}${Math.random().toString(36).substr(2, 9)}`
+        const id = nodeCrypto.randomBytes(16).toString('hex')
         const param = Odac.instance(id, req, null)
         Odac.Route.handleWebSocketUpgrade(req, socket, head, param)
       })
