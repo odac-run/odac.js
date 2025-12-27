@@ -1,4 +1,5 @@
-const axios = require('axios')
+const net = require('net')
+const crypto = require('crypto')
 const fs = require('fs')
 
 class Mail {
@@ -51,31 +52,40 @@ class Mail {
       if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
       let content = fs.readFileSync(__dir + '/view/mail/' + this.#template + '.html').toString()
       for (const iterator of Object.keys(data)) content = content.replace(new RegExp(`{${iterator}}`, 'g'), data[iterator])
-      axios
-        .post(
-          'http://127.0.0.1:1453',
+      const client = new net.Socket()
+      const payload = {
+        auth: process.env.ODAC_API_KEY,
+        action: 'mail.send',
+        data: [
           {
-            action: 'mail.send',
-            data: [
-              {
-                subject: this.#subject,
-                from: {value: [{address: this.#from.email, name: this.#from.name}]},
-                to: this.#to,
-                header: this.#header,
-                html: content,
-                text: content.replace(/<[^>]*>?/gm, '')
-              }
-            ]
-          },
-          {headers: {Authorization: Odac.Config.system.api.auth}}
-        )
-        .then(response => {
-          resolve(response.data)
-        })
-        .catch(error => {
+            subject: this.#subject,
+            from: {value: [{address: this.#from.email, name: this.#from.name}]},
+            to: this.#to,
+            header: this.#header,
+            html: content,
+            text: content.replace(/<[^>]*>?/gm, '')
+          }
+        ]
+      }
+
+      client.connect(process.env.ODAC_API_PORT || 1453, process.env.ODAC_API_HOST || '127.0.0.1', () => {
+        client.write(JSON.stringify(payload))
+      })
+
+      client.on('data', data => {
+        try {
+          resolve(JSON.parse(data.toString()))
+        } catch (error) {
           console.log(error)
           resolve(false)
-        })
+        }
+        client.destroy()
+      })
+
+      client.on('error', error => {
+        console.log(error)
+        resolve(false)
+      })
     })
   }
 }
