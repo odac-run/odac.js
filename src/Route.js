@@ -153,7 +153,6 @@ class Route {
       Odac.Request.clientSkeleton = Odac.Request.header('X-Odac-Skeleton')
     }
     if (Odac.Config && Odac.Config.route && Odac.Config.route[url]) {
-      Odac.Config.route[url] = Odac.Config.route[url].replace('${odac}', `${__dir}/node_modules/odac`)
       if (fs.existsSync(Odac.Config.route[url])) {
         let stat = fs.lstatSync(Odac.Config.route[url])
         if (stat.isFile()) {
