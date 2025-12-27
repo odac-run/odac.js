@@ -270,6 +270,15 @@ class _odac {
 
       e.preventDefault()
 
+      if (obj.messages !== false) {
+        if (obj.messages == undefined || obj.messages == true || obj.messages.includes('error')) {
+          formElement.querySelectorAll('*[odac-form-error]').forEach(el => (el.style.display = 'none'))
+        }
+        if (obj.messages == undefined || obj.messages == true || obj.messages.includes('success')) {
+          formElement.querySelectorAll('*[odac-form-success]').forEach(el => (el.style.display = 'none'))
+        }
+      }
+
       const inputs = formElement.querySelectorAll('input:not([type="hidden"]), textarea, select')
       let isValid = true
       let firstInvalidInput = null
@@ -367,14 +376,7 @@ class _odac {
           .forEach(el => el.classList.remove(invalidClass))
       }
 
-      if (obj.messages !== false) {
-        if (obj.messages == undefined || obj.messages == true || obj.messages.includes('error')) {
-          formElement.querySelectorAll('*[odac-form-error]').forEach(el => (el.style.display = 'none'))
-        }
-        if (obj.messages == undefined || obj.messages == true || obj.messages.includes('success')) {
-          formElement.querySelectorAll('*[odac-form-success]').forEach(el => (el.style.display = 'none'))
-        }
-      }
+
 
       let datastring, cache, contentType, processData
       if (formElement.querySelector('input[type=file]')) {
