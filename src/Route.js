@@ -187,12 +187,14 @@ class Route {
     }
     let authPageController = this.#controller(Odac.Request.route, '#page', url)
     if (authPageController && (await Odac.Auth.check())) {
-      Odac.Request.page = authPageController.cache?.file || authPageController.file
+      const page = authPageController.cache?.file || authPageController.file
+      if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, authPageController)
     }
     let pageController = this.#controller(Odac.Request.route, 'page', url)
     if (pageController) {
-      Odac.Request.page = pageController.cache?.file || pageController.file
+      const page = pageController.cache?.file || pageController.file
+      if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, pageController)
     }
     if (url && !url.includes('/../') && fs.existsSync(`${__dir}/public${url}`)) {
@@ -503,7 +505,7 @@ class Route {
   }
 
   authPage(path, authFile, file) {
-    if (typeof authFile === 'object' && !Array.isArray(authFile)) {
+    if (typeof authFile === 'object' && authFile !== null && !Array.isArray(authFile)) {
       this.set('#page', path, _odac => {
         _odac.View.set(authFile)
         return
