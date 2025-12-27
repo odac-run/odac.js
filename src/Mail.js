@@ -90,4 +90,8 @@ class Mail {
   }
 }
 
-module.exports = Mail
+module.exports = new Proxy(Mail, {
+  apply(target, thisArg, args) {
+    return new target(...args)
+  }
+})
