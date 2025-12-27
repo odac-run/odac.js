@@ -431,7 +431,20 @@ class _odac {
                  if (tokenInput) tokenInput.value = data.result._token
                  
                  const formTokenAttr = formElement.getAttribute('data-odac-form')
-                 if (formTokenAttr) formElement.setAttribute('data-odac-form', data.result._token)
+                 if (formTokenAttr) {
+                   formElement.setAttribute('data-odac-form', data.result._token)
+
+                   if (!formElement.matches(formSelector)) {
+                     if (this.#formSubmitHandlers.has(formSelector)) {
+                       const oldHandler = this.#formSubmitHandlers.get(formSelector)
+                       document.removeEventListener('submit', oldHandler)
+                       this.#formSubmitHandlers.delete(formSelector)
+                     }
+                     const newObj = {...obj}
+                     newObj.form = `form[data-odac-form="${data.result._token}"]`
+                     this.form(newObj, callback)
+                   }
+                 }
               }
             } else if (!data.result.success && data.errors) {
               Object.entries(data.errors).forEach(([name, message]) => {
