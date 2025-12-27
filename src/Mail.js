@@ -34,7 +34,7 @@ class Mail {
     return this
   }
 
-  send(data) {
+  send(data = {}) {
     return new Promise(resolve => {
       if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) return console.log('Template not found') && false
       if (!this.#from || !this.#subject || !this.#to) return console.log('From, Subject and To fields are required') && false
