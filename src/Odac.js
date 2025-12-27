@@ -1,6 +1,11 @@
 module.exports = {
   init: async function () {
+    const { open } = require('lmdb')
     global.Odac = this.instance()
+    global.Odac.KV = open({
+      path: global.__dir + '/storage/sessions.db',
+      compression: true,
+    })
     await global.Odac.Env.init()
     await global.Odac.Config.init()
     await global.Odac.Database.init()

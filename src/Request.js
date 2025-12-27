@@ -227,7 +227,6 @@ class OdacRequest {
 
   // - SESSION
   session(key, value) {
-    if (!Odac.Request.session) Odac.Request.session = {}
     if (!Odac.Request.sessionLocks) Odac.Request.sessionLocks = {}
 
     let pri = nodeCrypto
@@ -236,13 +235,13 @@ class OdacRequest {
       .digest('hex')
     let pub = this.cookie('candy_session')
 
-    if (!pub || !Odac.Request.session[pub + '-' + pri]) {
+    if (!pub || !Odac.KV.get(`sess:${pub}:${pri}:_created`)) {
       const lockKey = `${this.ip}-${pri}`
       const now = Date.now()
 
       if (Odac.Request.sessionLocks[lockKey]) {
         const lock = Odac.Request.sessionLocks[lockKey]
-        if (now - lock.timestamp < 5000 && Odac.Request.session[`${lock.sessionId}-${pri}`]) {
+        if (now - lock.timestamp < 5000 && Odac.KV.get(`sess:${lock.sessionId}:${pri}:_created`)) {
           pub = lock.sessionId
         } else {
           delete Odac.Request.sessionLocks[lockKey]
@@ -257,10 +256,10 @@ class OdacRequest {
             .createHash('md5')
             .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
             .digest('hex')
-        } while (Odac.Request.session[`${pub}-${pri}`] || activeSessions.has(pub))
+        } while (Odac.KV.get(`sess:${pub}:${pri}:_created`) || activeSessions.has(pub))
 
         Odac.Request.sessionLocks[lockKey] = {sessionId: pub, timestamp: now}
-        Odac.Request.session[`${pub}-${pri}`] = {}
+        Odac.KV.put(`sess:${pub}:${pri}:_created`, now)
         this.cookie('candy_session', `${pub}`)
 
         setTimeout(() => {
@@ -271,10 +270,10 @@ class OdacRequest {
       }
     }
 
-    if (!Odac.Request.session[pub + '-' + pri]) Odac.Request.session[pub + '-' + pri] = {}
-    if (value === undefined) return Odac.Request.session[pub + '-' + pri][key] ?? null
-    else if (value === null) delete Odac.Request.session[pub + '-' + pri][key]
-    else Odac.Request.session[pub + '-' + pri][key] = value
+    const dbKey = `sess:${pub}:${pri}:${key}`
+    if (value === undefined) return Odac.KV.get(dbKey) ?? null
+    else if (value === null) Odac.KV.remove(dbKey)
+    else Odac.KV.put(dbKey, value)
   }
 
   // - SET
