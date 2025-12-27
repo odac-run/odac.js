@@ -225,7 +225,7 @@ class OdacRequest {
   // - SESSION
   session(key, value) {
     let pri = nodeCrypto
-      .createHash('md5')
+      .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex')
     let pub = this.cookie('candy_session')
