@@ -287,7 +287,7 @@ class Auth {
 
   // --- MAGIC LINK START ---
 
-  async requestMagicLink(email, options = {}) {
+  async magic(email, options = {}) {
      if (!Odac.Config.auth) Odac.Config.auth = {}
      this.#table = Odac.Config.auth.table || 'users'
      const magicTable = Odac.Config.auth.magicTable || 'magic_links'

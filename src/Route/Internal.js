@@ -333,7 +333,7 @@ class Internal {
           })
       }
       
-      const result = await Odac.Auth.requestMagicLink(email, {
+      const result = await Odac.Auth.magic(email, {
           autoRegister: false, // config.autoRegister
           redirect: config.redirect
       })

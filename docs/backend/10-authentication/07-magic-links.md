@@ -50,7 +50,7 @@ For more complex requirements, such as building a custom API or integrating with
 
 ### Requesting a Magic Link
 
-Use `requestMagicLink` to generate a token and send the email.
+Use `magic` to generate a token and send the email.
 
 ```javascript
 // In your controller (e.g., AuthController.js)
@@ -59,7 +59,7 @@ async sendLink(req, res) {
     const email = req.input('email');
     
     // Returns { success: boolean, message: string, error?: string }
-    const result = await Odac.Auth.requestMagicLink(email, {
+    const result = await Odac.Auth.magic(email, {
         redirect: '/dashboard',       // Redirect after verification
         subject: 'Log in to MyApp',   // Email subject
         template: 'auth/magic-link'   // View path for the email template
@@ -98,7 +98,7 @@ Magic links usage is configured in your `config.json` file under the `auth` obje
 1.  **Rate Limiting**: Odac enforces strict rate limits (by IP and Email) to prevent spam and abuse. These can be adjusted in the configuration.
 2.  **Token Security**: Tokens are hashed in the database (`token_hash`) using secure hashing algorithms. The raw token is only sent to the user's email and never stored.
 3.  **One-Time Use**: Tokens are immediately deleted upon successful verification or expiration.
-4.  **User Enumeration**: To prevent attackers from checking if an email exists in your system, the `requestMagicLink` method (and the form) will return a "success" message even if the user does not exist.
+4.  **User Enumeration**: To prevent attackers from checking if an email exists in your system, the `magic` method (and the form) will return a "success" message even if the user does not exist.
 
 ## Email Template
 
