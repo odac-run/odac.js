@@ -61,6 +61,19 @@ const latestPosts = await Odac.DB.posts
   .limit(5);
 ```
 
+### Counting Rows
+
+ODAC simplifies counting rows. Unlike standard Knex behavior which might return objects or strings, `count()` directly returns a `Number` for simple queries.
+
+```javascript
+const totalUsers = await Odac.DB.users.count(); // Returns: 150 (Number)
+
+const activeAdmins = await Odac.DB.users
+    .where('role', 'admin')
+    .where('active', true)
+    .count(); // Returns: 5 (Number)
+```
+
 ---
 
 ## Inserting Data
