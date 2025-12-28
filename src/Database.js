@@ -96,7 +96,7 @@ const tableProxyHandler = {
             if (keys.length === 1) {
               const val = result[0][keys[0]]
               // Parse string numbers (common in Postgres for count)
-              if (!isNaN(val) && val !== '') {
+              if (val != null && String(val).trim() !== '' && !isNaN(val)) {
                 resolve(Number(val))
                 return
               }
