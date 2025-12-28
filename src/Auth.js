@@ -306,26 +306,36 @@ class Auth {
       const rateLimitWindow = Odac.Config.auth?.magicLinkRateLimit || 60 * 60 * 1000 // 1 hour default
       const maxAttempts = Odac.Config.auth?.magicLinkMaxAttempts || 2 // Per email - very strict
       const maxAttemptsPerIP = Odac.Config.auth?.magicLinkMaxAttemptsPerIP || 5 // Per IP
+      const sessionCooldown = Odac.Config.auth?.magicLinkSessionCooldown || 30 * 1000 // 30 seconds default
+      
+      // 1. Session Rate Limit (Fastest, no DB access)
+      const lastRequestTime = this.#request.session('magic_last_request')
+      if (lastRequestTime && (Date.now() - lastRequestTime < sessionCooldown)) {
+          const remaining = Math.ceil((sessionCooldown - (Date.now() - lastRequestTime)) / 1000)
+          return {success: false, error: `Please wait ${remaining} seconds before requesting another link.`}
+      }
+      this.#request.session('magic_last_request', Date.now())
       
       try {
+          // 2. Database Rate Limits
           // Check email-based rate limit
           const recentEmailRequests = await Odac.DB[magicTable]
               .where('email', email)
               .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
           
           if (recentEmailRequests && recentEmailRequests.length >= maxAttempts) {
-              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success to prevent enumeration
-          }
-          
-          // Check IP-based rate limit (prevents mass enumeration attacks)
-          const clientIP = this.#request.ip
-          const recentIPRequests = await Odac.DB[magicTable]
-              .where('ip', clientIP)
-              .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
-          
-          if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
-              return {success: true, message: 'If this email exists, a link has been sent.'} // Fake success
-          }
+            return {success: false, error: 'Too many login attempts. Please wait a while before trying again.'}
+        }
+        
+        // Check IP-based rate limit (prevents mass enumeration attacks)
+        const clientIP = this.#request.ip
+        const recentIPRequests = await Odac.DB[magicTable]
+            .where('ip', clientIP)
+            .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
+        
+        if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
+            return {success: false, error: 'Too many requests from this IP. Please wait a while.'}
+        }
       } catch(e) {
           // Ignore rate limit check errors, proceed with request
       }

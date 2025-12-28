@@ -89,6 +89,7 @@ Magic links usage is configured in your `config.json` file under the `auth` obje
     "magicLinkRateLimit": 3600000,      // Rate limit window in ms (Default: 1 hour)
     "magicLinkMaxAttempts": 2,          // Max emails per address per window
     "magicLinkMaxAttemptsPerIP": 5,     // Max requests per IP per window
+    "magicLinkSessionCooldown": 30000,  // Session cooldown in ms (Default: 30s)
     "passwordless": true,               // Optimization: Skip generating passwords for new users (Default: false)
     "passwordField": "password"         // Column name for password (Default: password)
   }
@@ -107,11 +108,14 @@ Magic links usage is configured in your `config.json` file under the `auth` obje
  Even without this setting, Odac is smart enough to retry registration without a password if the database rejects the initial attempt due to a missing password column.
  
  ## Security & Best Practices
-
-1.  **Rate Limiting**: Odac enforces strict rate limits (by IP and Email) to prevent spam and abuse. These can be adjusted in the configuration.
-2.  **Token Security**: Tokens are hashed in the database (`token_hash`) using secure hashing algorithms. The raw token is only sent to the user's email and never stored.
-3.  **One-Time Use**: Tokens are immediately deleted upon successful verification or expiration.
-4.  **User Enumeration**: To prevent attackers from checking if an email exists in your system, the `magic` method (and the form) will return a "success" message even if the user does not exist.
+ 
+ 1.  **Rate Limiting**: Odac enforces a 3-layer defense system:
+     *   **Session Cooldown**: immediate cookie-based block for rapid clicks (Default: 30s).
+     *   **IP Limit**: prevents mass attacks from a single source.
+     *   **Email Limit**: prevents spamming a specific user.
+ 2.  **Token Security**: Tokens are hashed in the database (`token_hash`) using secure hashing algorithms. The raw token is only sent to the user's email and never stored.
+ 3.  **One-Time Use**: Tokens are immediately deleted upon successful verification or expiration.
+ 4.  **User Enumeration**: To prevent attackers from checking if an email exists in your system, the `magic` method (and the form) will return a "success" message even if the user does not exist.
 
 ## Email Template
 
