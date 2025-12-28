@@ -94,7 +94,10 @@ class OdacRequest {
       } else {
         if (body.length > 0 && body.indexOf('Content-Disposition') === -1) return
         if (body.indexOf('Content-Disposition') > -1) {
-          let boundary = body.split('\r\n')[0].split('; ')[1].split('=')[1]
+          let boundary = body.split('\r\n')[0]
+          if (boundary.includes('boundary=')) {
+             try { boundary = boundary.split('boundary=')[1].split(';')[0].trim() } catch(e) {}
+          }
           let data = body.split(boundary)
           for (let i = 0; i < data.length; i++) {
             if (data[i].indexOf('Content-Disposition') === -1) continue
