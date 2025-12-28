@@ -418,12 +418,12 @@ class _odac {
             if (data.result.success && (obj.messages == undefined || obj.messages.includes('success') || obj.messages == true)) {
               const successEl = formElement.querySelector('*[odac-form-success]')
               if (successEl) {
-                successEl.innerHTML = data.result.message
+                successEl.innerHTML = this.textToHtml(data.result.message)
                 this.#fadeIn(successEl)
               } else {
                 const span = document.createElement('span')
                 span.setAttribute('odac-form-success', obj.form)
-                span.textContent = data.result.message
+                span.innerHTML = this.textToHtml(data.result.message)
                 formElement.appendChild(span)
               }
 
@@ -453,14 +453,14 @@ class _odac {
                 if (message) {
                   let errorEl = formElement.querySelector(`[odac-form-error="${name}"]`)
                   if (errorEl) {
-                    errorEl.textContent = message
+                    errorEl.innerHTML = this.textToHtml(message)
                     errorEl.style.cssText = 'display:block;color:#dc3545;font-size:0.875rem;margin-top:0.25rem'
                   } else {
                     const inputEl = formElement.querySelector(`*[name="${name}"]`)
                     if (inputEl) {
                       errorEl = document.createElement('span')
                       errorEl.setAttribute('odac-form-error', name)
-                      errorEl.textContent = message
+                      errorEl.innerHTML = this.textToHtml(message)
                       errorEl.style.cssText = 'display:block;color:#dc3545;font-size:0.875rem;margin-top:0.25rem'
 
                       if ((inputEl.type === 'checkbox' || inputEl.type === 'radio') && inputEl.id) {
@@ -476,7 +476,7 @@ class _odac {
                     } else if (name === '_odac_form') {
                       errorEl = document.createElement('div')
                       errorEl.setAttribute('odac-form-error', name)
-                      errorEl.textContent = message
+                      errorEl.innerHTML = this.textToHtml(message)
                       errorEl.style.cssText =
                         'display:block;color:#dc3545;background-color:#f8d7da;border:1px solid #f5c2c7;border-radius:0.375rem;padding:0.75rem 1rem;margin-bottom:1rem;font-size:0.875rem'
                       formElement.insertBefore(errorEl, formElement.firstChild)
@@ -604,6 +604,17 @@ class _odac {
         }
       })
     return return_token
+  }
+
+  textToHtml(str) {
+    if (typeof str !== 'string') return str
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+      .replace(/\n/g, '<br>')
   }
 
   load(url, callback, push = true) {
