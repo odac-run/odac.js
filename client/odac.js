@@ -448,6 +448,15 @@ class _odac {
                    }
                  }
               }
+               
+               // Clear form inputs if success and no redirect (unless explicitly disabled via JS config or HTML attribute)
+               if (obj.clear !== false && formElement.getAttribute('clear') !== 'false' && !data.result.redirect) {
+                  formElement.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([readonly]), textarea, select').forEach(el => {
+                      if (el.type === 'checkbox' || el.type === 'radio') el.checked = false
+                      else if (el.tagName === 'SELECT') el.selectedIndex = 0
+                      else el.value = ''
+                  })
+               }
             } else if (!data.result.success && data.errors) {
               Object.entries(data.errors).forEach(([name, message]) => {
                 if (message) {

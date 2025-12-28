@@ -25,6 +25,7 @@ Odac provides an automatic form system with built-in validation, CSRF protection
 - `success` - Success message (optional)
 - `class` - Additional CSS classes
 - `id` - Form ID attribute
+- `clear` - Set to `false` to disable auto-clearing inputs on success (optional)
 
 ```html
 <!-- With custom controller action -->
@@ -386,6 +387,7 @@ Odac.Route.page('/contact', 'contact')
 - **Loading States** - Automatic button state management
 - **Error Display** - Automatic error message rendering
 - **Success Messages** - Built-in success message handling
+- **Auto-Clear** - Clears inputs on success (disable with `clear="false"`)
 - **Redirect Support** - Optional redirect after successful submission
 
 ## Security
