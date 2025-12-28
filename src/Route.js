@@ -276,7 +276,8 @@ class Route {
         let name = file.replace('.js', '')
         if (!Odac.Route.class) Odac.Route.class = {}
         if (Odac.Route.class[name]) {
-          if (Odac.Route.class[name].mtime >= fs.statSync(Odac.Route.class[name].path).mtimeMs + 1000) continue
+          const fileStat = fs.statSync(Odac.Route.class[name].path)
+          if (Odac.Route.class[name].mtime >= fileStat.mtimeMs || Date.now() < fileStat.mtimeMs + 1000) continue
           delete require.cache[require.resolve(Odac.Route.class[name].path)]
         }
         Odac.Route.class[name] = {
