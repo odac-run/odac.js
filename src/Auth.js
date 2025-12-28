@@ -1,3 +1,4 @@
+const nodeCrypto = require('crypto')
 class Auth {
   #request = null
   #table = null
@@ -345,18 +346,8 @@ class Auth {
         }
      }
      
-     // If user doesn't exist and auto-register is NOT enabled, we should probably pretend we sent it
-     // to avoid enumeration attacks, or return false. 
-     // Let's implement options.autoRegister later if requested.
-     if (!user) {
-         if (options.autoRegister) {
-             // TODO: Implement user auto-registration logic here.
-             // For now, return the same generic success message to prevent user enumeration.
-             return {success: true, message: 'If this email exists, a link has been sent.'}
-         }
-         // Fake success to prevent enumeration
-         return {success: true, message: 'If this email exists, a link has been sent.'}
-     }
+     // If user doesn't exist, we still proceed to send the link to allow for "Sign Up via Magic Link" (Passwordless Signup)
+     // The user will be created upon verification.
      
      // 2. Generate secure token
      const tokenRaw = nodeCrypto.randomBytes(32).toString('hex')
@@ -420,10 +411,25 @@ class Auth {
       // 3. Consume all tokens for this email to prevent reuse of other valid links.
       await Odac.DB[magicTable].where('email', email).delete()
       
-      // 4. Log in user
-      const user = await Odac.DB[this.#table].where('email', email).first()
+      // 4. Log in user (or Register if new)
+      let user = await Odac.DB[this.#table].where('email', email).first()
       
-      if (!user) return {success: false, error: 'User not found'}
+      if (!user) {
+          // Auto-Register the user
+          // Generate a random high-entropy password since they are using passwordless auth
+          const randomPassword = nodeCrypto.randomBytes(32).toString('hex') 
+          
+          const regResult = await this.register({
+              email: email,
+              password: randomPassword
+          })
+          
+          if (!regResult.success) {
+              return {success: false, error: 'Registration failed: ' + regResult.error}
+          }
+          
+          user = regResult.user
+      }
       
       // Login logic similar to login()
       const loginData = {}
