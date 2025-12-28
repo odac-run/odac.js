@@ -43,14 +43,20 @@ class Mail {
     return new Promise(resolve => {
       if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
         console.log(`[Mail Debug] Template not found: ${__dir}/view/mail/${this.#template}.html`)
-        return false
+        return resolve(false)
       }
       if (!this.#from || !this.#subject || !this.#to) {
         console.log('[Mail Debug] Missing required fields: From, Subject, or To')
-        return false
+        return resolve(false)
       }
-      if (!Odac.Var(this.#from.email).is('email')) return console.log('From field is not a valid e-mail address') && false
-      if (!Odac.Var(this.#to.value[0].address).is('email')) return console.log('To field is not a valid e-mail address') && false
+      if (!Odac.Var(this.#from.email).is('email')) {
+        console.log('From field is not a valid e-mail address')
+        return resolve(false)
+      }
+      if (!Odac.Var(this.#to.value[0].address).is('email')) {
+        console.log('To field is not a valid e-mail address')
+        return resolve(false)
+      }
       if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
       if (!this.#header['To']) {
         const t = this.#to.value[0]
