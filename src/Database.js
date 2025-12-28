@@ -138,7 +138,12 @@ const rootProxy = new Proxy(manager, {
     // Direct access to raw/fn/schema/table on default connection
     if (target.connections['default'] && (prop === 'raw' || prop === 'fn' || prop === 'schema' || prop === 'table')) {
         if (prop === 'table') return function(tableName) { return target.connections['default'](tableName) }
-        return target.connections['default'][prop].bind(target.connections['default']);
+        
+        const val = target.connections['default'][prop]
+        if (typeof val === 'function') {
+            return val.bind(target.connections['default'])
+        }
+        return val
     }
 
     // Default connection fallback: Odac.DB.users -> default.users
