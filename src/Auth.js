@@ -335,7 +335,15 @@ class Auth {
      // 1. Check if user exists (or auto-register check if needed, but for now lets assume user must exist)
      // If you want to support auto-register, we'd need more logic here.
      // For security by default: only existing users.
-     const user = await Odac.DB[this.#table].where('email', email).first()
+     let user = null
+     try {
+        user = await Odac.DB[this.#table].where('email', email).first()
+     } catch (e) {
+        // Ignore table not found error, treat as user not found
+        if (e.code !== '42P01' && !e.message.includes('no such table')) {
+             throw e
+        }
+     }
      
      // If user doesn't exist and auto-register is NOT enabled, we should probably pretend we sent it
      // to avoid enumeration attacks, or return false. 
