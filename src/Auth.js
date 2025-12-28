@@ -141,9 +141,9 @@ class Auth {
     this.#request.cookie('odac_x', cookie.token_x, {
       httpOnly: true,
       secure: true,
-      sameSite: 'Strict'
+      sameSite: 'Lax'
     })
-    this.#request.cookie('odac_y', token_y, {httpOnly: true, secure: true, sameSite: 'Strict'})
+    this.#request.cookie('odac_y', token_y, {httpOnly: true, secure: true, sameSite: 'Lax'})
     
     // Knex insert returns ids on some dbs, promise resolves to result
     const result = await Odac.DB[token].insert(cookie)

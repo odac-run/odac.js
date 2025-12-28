@@ -379,8 +379,8 @@ class Internal {
           redirectUrl = '/'
       }
       
-      Odac.Request.header('Location', redirectUrl)
-      Odac.Request.end('', 302)
+      Odac.Request.redirect(redirectUrl)
+      Odac.Request.end('')
   }
 
   static async processForm(Odac) {
