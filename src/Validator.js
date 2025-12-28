@@ -151,9 +151,12 @@ class Validator {
           } else {
             for (const rule of rules.includes('|') ? rules.split('|') : [rules]) {
               let vars = rule.split(':')
-              let inverse = vars[0].startsWith('!')
+              let ruleName = vars[0].trim()
+              let inverse = ruleName.startsWith('!')
+              if (inverse) ruleName = ruleName.substr(1)
+
               if (!error) {
-                switch (inverse ? vars[0].substr(1) : vars[0]) {
+                switch (ruleName) {
                   case 'required':
                     error = value === undefined || value === '' || value === null
                     break
