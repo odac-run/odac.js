@@ -18,6 +18,7 @@ module.exports = {
     auto: true,
     maxResources: 5
   },
+  debug: false,
 
   init: function () {
     try {

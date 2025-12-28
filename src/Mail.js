@@ -97,15 +97,15 @@ class Mail {
 
         const socketPath = process.env.ODAC_API_SOCKET || '/var/run/odac.sock'
         
-        console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
+        if (Odac.Config.debug) console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
         
         client.connect(socketPath, () => {
-          console.log('[Mail] Connected to Odac Core. Sending payload...')
+          if (Odac.Config.debug) console.log('[Mail] Connected to Odac Core. Sending payload...')
           client.write(JSON.stringify(payload))
         })
 
         client.on('data', data => {
-          console.log('[Mail] Received data from server:', data.toString())
+          if (Odac.Config.debug) console.log('[Mail] Received data from server:', data.toString())
           try {
             const response = JSON.parse(data.toString())
             resolve(response)
@@ -122,7 +122,7 @@ class Mail {
         })
 
         client.on('close', () => {
-          console.log('[Mail] Connection closed')
+          if (Odac.Config.debug) console.log('[Mail] Connection closed')
         })
       } catch (error) {
         console.error('[Mail] Unexpected error:', error)
