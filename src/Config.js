@@ -18,6 +18,7 @@ module.exports = {
     auto: true,
     maxResources: 5
   },
+  debug: false,
 
   init: function () {
     try {
@@ -44,7 +45,7 @@ module.exports = {
       return obj.replace(/\$\{(\w+)\}/g, (_, key) => {
         // Special variables
         if (key === 'odac') {
-          return __dirname.replace(/\/src$/, '')
+          return __dirname.replace(/\/src$/, '/client')
         }
         // Environment variables
         return process.env[key] || ''

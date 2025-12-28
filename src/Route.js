@@ -153,7 +153,6 @@ class Route {
       Odac.Request.clientSkeleton = Odac.Request.header('X-Odac-Skeleton')
     }
     if (Odac.Config && Odac.Config.route && Odac.Config.route[url]) {
-      Odac.Config.route[url] = Odac.Config.route[url].replace('${odac}', `${__dir}/node_modules/odac`)
       if (fs.existsSync(Odac.Config.route[url])) {
         let stat = fs.lstatSync(Odac.Config.route[url])
         if (stat.isFile()) {
@@ -270,18 +269,22 @@ class Route {
     if (this.loading) return
     this.loading = true
     this.#loadMiddlewares()
-    for (const file of fs.readdirSync(`${__dir}/controller/`)) {
-      if (!file.endsWith('.js')) continue
-      let name = file.replace('.js', '')
-      if (!Odac.Route.class) Odac.Route.class = {}
-      if (Odac.Route.class[name]) {
-        if (Odac.Route.class[name].mtime >= fs.statSync(Odac.Route.class[name].path).mtimeMs + 1000) continue
-        delete require.cache[require.resolve(Odac.Route.class[name].path)]
-      }
-      Odac.Route.class[name] = {
-        path: `${__dir}/controller/${file}`,
-        mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
-        module: require(`${__dir}/controller/${file}`)
+    const controllerDir = `${__dir}/controller/`
+    if (fs.existsSync(controllerDir)) {
+      for (const file of fs.readdirSync(controllerDir)) {
+        if (!file.endsWith('.js')) continue
+        let name = file.replace('.js', '')
+        if (!Odac.Route.class) Odac.Route.class = {}
+        if (Odac.Route.class[name]) {
+          const fileStat = fs.statSync(Odac.Route.class[name].path)
+          if (Odac.Route.class[name].mtime >= fileStat.mtimeMs || Date.now() < fileStat.mtimeMs + 1000) continue
+          delete require.cache[require.resolve(Odac.Route.class[name].path)]
+        }
+        Odac.Route.class[name] = {
+          path: `${__dir}/controller/${file}`,
+          mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
+          module: require(`${__dir}/controller/${file}`)
+        }
       }
     }
     let dir = fs.readdirSync(`${__dir}/route/`)

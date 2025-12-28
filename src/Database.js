@@ -77,6 +77,37 @@ const tableProxyHandler = {
     // Create the Query Builder
     const qb = knexInstance(prop)
 
+    // Odac DX Improvement: Wrap count() to return a clean number
+    const originalCount = qb.count
+    qb.count = function(...args) {
+      this._odacIsCount = true
+      return originalCount.apply(this, args)
+    }
+
+    const originalThen = qb.then
+    qb.then = function(resolve, reject) {
+      if (this._odacIsCount) {
+        return originalThen.call(this, (result) => {
+          // If the result is a single row with a single key, treat it as a scalar count usually
+          const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
+          
+          if (isScalar) {
+            const keys = Object.keys(result[0])
+            if (keys.length === 1) {
+              const val = result[0][keys[0]]
+              // Parse string numbers (common in Postgres for count)
+              if (val != null && String(val).trim() !== '' && !isNaN(val)) {
+                resolve(Number(val))
+                return
+              }
+            }
+          }
+          resolve(result)
+        }, reject)
+      }
+      return originalThen.call(this, resolve, reject)
+    }
+
     // 4. Extend the Query Builder with ODAC specific methods
     
     // .schema(callback) for "Code-First" migrations

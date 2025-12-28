@@ -161,6 +161,15 @@ const nodeEnv = process.env.NODE_ENV
 }
 ```
 
+**Debug Mode:**
+Enable verbose logging for development. This helps in troubleshooting by inspecting detailed logs for system actions like sending emails (e.g., SMTP connection details, server responses). Default is `false`.
+
+```json
+{
+  "debug": true
+}
+```
+
 Early Hints is a performance optimization feature that works automatically without any configuration. The server sends preliminary HTTP headers to the browser before the final response, allowing browsers to start preloading critical resources (CSS, JavaScript, fonts) earlier. This is completely zero-config - it detects resources from your HTML automatically and sends hints on subsequent requests.
 
 See individual documentation sections for detailed configuration options.

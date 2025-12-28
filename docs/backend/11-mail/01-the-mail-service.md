@@ -1,42 +1,96 @@
 ## ✉️ The `Mail` Service
 
-The `Odac.Mail` service is your friendly neighborhood postal worker. It provides a super simple way to send emails using the mail server settings you've already configured in the Odac core.
+The `Odac.Mail` service provides a fluent, chainable interface to send emails. **It is a zero-config service** designed to work exclusively with the **ODAC Core** server. If you are running Odac, the mail service works out of the box without any additional setup.
 
-#### How to Send an Email
+### How to Send an Email
 
-`Odac.Mail.send(to, subject, htmlBody)`
+The `Odac.Mail` class uses a builder pattern. You start by instantiating it with a template name, set various properties, and finally call `send()`.
 
-*   `to`: The email address of the person you're sending it to.
-*   `subject`: The subject line for your email.
-*   `htmlBody`: The main content of your email. You can even use HTML tags to make it look fancy!
+#### Syntax
 
-Just like the database service, `send` is an `async` method, so using it with `async/await` is the way to go.
+```javascript
+await Odac.Mail('template_name')
+  .from('sender@example.com', 'Sender Name')
+  .to('recipient@example.com')
+  .subject('Your Subject Here')
+  .send({
+    variable1: 'value1',
+    variable2: 'value2'
+  });
+```
 
-#### Example: A Simple Contact Form
+*   **Template**: The constructor takes the name of the HTML template file located in `view/mail/`.
+*   **Data**: The object passed to `send()` contains key-value pairs that replace `{key}` placeholders in your HTML template.
 
-Let's imagine you have a controller that handles a contact form on your website.
+#### Example: Contact Form Controller
+
+Here is a complete example of how to use the Mail service inside a controller:
 
 ```javascript
 module.exports = async function (Odac) {
-  const { recipient, subject, message } = Odac.Request.post;
+    const { name, email, message } = Odac.Request.post;
 
-  // It's always a good idea to check your data first!
-  if (!recipient || !subject || !message) {
-    return { error: 'Oops! You missed a required field.' };
-  }
+    // 1. Validate Input
+    if (!name || !email || !message) {
+        return { error: 'Please fill in all fields.' };
+    }
 
-  try {
-    // Let's try to send the email
-    await Odac.Mail.send(recipient, subject, `<p>${message}</p>`);
+    try {
+        // 2. Prepare and Send Email
+        const result = await Odac.Mail('contact_form_notification')
+            .from('system@myapp.com', 'My App System')
+            .to('admin@myapp.com')
+            .subject('New Contact Form Submission')
+            .send({
+                user_name: name,
+                user_email: email,
+                user_message: message,
+                timestamp: new Date().toISOString()
+            });
 
-    // If we get here, it worked!
-    return { success: true, message: 'Email sent successfully!' };
-  } catch (error) {
-    // If something went wrong...
-    console.error('Oh no, the email failed to send:', error);
-    return { error: 'Something went wrong while trying to send the email.' };
-  }
+        // 3. Check Result
+        if (result) {
+            return { success: true, message: 'Thank you! We received your message.' };
+        } else {
+            return { error: 'Failed to send email.' };
+        }
+
+    } catch (e) {
+        console.error(e);
+        return { error: 'An unexpected error occurred.' };
+    }
 }
 ```
 
-And that's all there is to it. You're now a master of email!
+### Template File
+
+Create your HTML template in `view/mail/contact_form_notification.html`:
+
+```html
+<h1>New Contact Message</h1>
+<p><strong>From:</strong> {user_name} ({user_email})</p>
+<p><strong>Time:</strong> {timestamp}</p>
+<hr>
+<p>{user_message}</p>
+```
+
+### Advanced Usage
+
+#### Custom Headers
+
+You can inject custom headers into the email using the `header()` method:
+
+```javascript
+.header({
+    'X-Custom-Header': 'CustomValue',
+    'Reply-To': 'support@example.com'
+})
+```
+
+#### Chainable Methods
+
+*   `from(email, name)`: Sets the sender.
+*   `to(email)`: Sets the recipient.
+*   `subject(text)`: Sets the subject line.
+*   `header(object)`: Merges custom headers.
+*   `send(data)`: Compiles the template with `data`, connects to the Odac Core, and sends the email payload. Returns a `Promise`.

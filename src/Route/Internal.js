@@ -619,9 +619,10 @@ class Internal {
               }
           }
           
+          console.error(`Action ${Odac.formConfig.action} not found or invalid.`)
           return Odac.return({
              result: {success: false},
-             errors: {_odac_form: `Action ${Odac.formConfig.action} not found or invalid.`}
+             errors: {_odac_form: 'An error occurred while processing your request.'}
           })
        }
     }
