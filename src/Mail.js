@@ -110,14 +110,14 @@ class Mail {
             const response = JSON.parse(data.toString())
             resolve(response)
           } catch (error) {
-            console.error('[Mail Error] Error parsing response:', error)
+            console.error('[Mail] Error parsing response:', error)
             resolve(false)
           }
           client.destroy()
         })
 
         client.on('error', error => {
-          console.error('[Mail Error] Socket Error:', error)
+          console.error('[Mail] Socket Error:', error)
           resolve(false)
         })
 
@@ -125,7 +125,7 @@ class Mail {
           console.log('[Mail] Connection closed')
         })
       } catch (error) {
-        console.error('[Mail Error] Unexpected error:', error)
+        console.error('[Mail] Unexpected error:', error)
         resolve(false)
       }
     })
