@@ -88,10 +88,10 @@ const tableProxyHandler = {
     qb.then = function(resolve, reject) {
       if (this._odacIsCount) {
         return originalThen.call(this, (result) => {
-          // Detect if grouping is used
-          const hasGroup = this._statements && this._statements.some(s => s.grouping === 'group')
+          // If the result is a single row with a single key, treat it as a scalar count usually
+          const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
           
-          if (!hasGroup && Array.isArray(result) && result.length === 1) {
+          if (isScalar) {
             const keys = Object.keys(result[0])
             if (keys.length === 1) {
               const val = result[0][keys[0]]
