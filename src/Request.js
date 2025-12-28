@@ -79,8 +79,8 @@ class OdacRequest {
       let data = split[1].split('&')
       for (let i = 0; i < data.length; i++) {
         if (data[i].indexOf('=') === -1) continue
-        let key = data[i].split('=')[0]
-        let val = data[i].split('=')[1]
+        let key = decodeURIComponent(data[i].split('=')[0])
+        let val = decodeURIComponent(data[i].split('=')[1] || '')
         this.data.get[key] = val
       }
     }

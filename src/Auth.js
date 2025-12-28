@@ -391,7 +391,9 @@ class Auth {
   }
   
   async verifyMagicLink(tokenRaw, email) {
-      if (!tokenRaw || !email) return {success: false, error: 'Invalid link'}
+      if (!tokenRaw || !email) {
+          return {success: false, error: 'Invalid link'}
+      }
       
       const magicTable = Odac.Config.auth?.magicTable || 'magic_links'
       this.#table = Odac.Config.auth?.table || 'users'
@@ -402,7 +404,9 @@ class Auth {
         .where('email', email)
         .where('expires_at', '>', new Date())
         
-      if (!records || records.length === 0) return {success: false, error: 'Link expired or invalid'}
+      if (!records || records.length === 0) {
+          return {success: false, error: 'Link expired or invalid'}
+      }
       
       // 2. Find the matching token (verify hash)
       let validRecord = null
@@ -413,7 +417,9 @@ class Auth {
           }
       }
       
-      if (!validRecord) return {success: false, error: 'Invalid token'}
+      if (!validRecord) {
+          return {success: false, error: 'Invalid token'}
+      }
       
       // 3. Consume all tokens for this email to prevent reuse of other valid links.
       await Odac.DB[magicTable].where('email', email).delete()
@@ -423,13 +429,31 @@ class Auth {
       
       if (!user) {
           // Auto-Register the user
-          // Generate a random high-entropy password since they are using passwordless auth
-          const randomPassword = nodeCrypto.randomBytes(32).toString('hex') 
           
-          const regResult = await this.register({
-              email: email,
-              password: randomPassword
-          })
+          const passwordField = Odac.Config.auth?.passwordField || 'password'
+          // Optimization: If explicitly configured as passwordless, skip password generation overhead
+          const isPasswordless = Odac.Config.auth?.passwordless === true
+          
+          const registerData = {
+              email: email
+          }
+          
+          if (!isPasswordless) {
+              // Generate a random high-entropy password since they are using passwordless auth but DB might require password
+              registerData[passwordField] = nodeCrypto.randomBytes(32).toString('hex')
+          }
+          
+          let regResult = await this.register(registerData)
+          
+          // Fallback: If we tried to be secure (sent password) but DB failed because column doesn't exist, retry without password
+          if (!isPasswordless && !regResult.success && regResult.error && 
+             (regResult.error.includes(`column "${passwordField}"`) || regResult.error.includes(`Unknown column '${passwordField}'`)) && 
+             (regResult.error.includes('does not exist') || regResult.error.includes('field list'))) {
+                
+                regResult = await this.register({
+                    email: email
+                })
+          }
           
           if (!regResult.success) {
               return {success: false, error: 'Registration failed: ' + regResult.error}

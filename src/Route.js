@@ -401,7 +401,8 @@ class Route {
        '/_odac/magic-verify',
        async Odac => {
          return await Internal.magicVerify(Odac)
-       }
+       },
+       {token: false}
     )
 
     delete Odac.Route.buff

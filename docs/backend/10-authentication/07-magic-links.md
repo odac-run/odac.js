@@ -88,12 +88,25 @@ Magic links usage is configured in your `config.json` file under the `auth` obje
     "magicTable": "magic_links",        // Table to store tokens (auto-created)
     "magicLinkRateLimit": 3600000,      // Rate limit window in ms (Default: 1 hour)
     "magicLinkMaxAttempts": 2,          // Max emails per address per window
-    "magicLinkMaxAttemptsPerIP": 5      // Max requests per IP per window
+    "magicLinkMaxAttemptsPerIP": 5,     // Max requests per IP per window
+    "passwordless": true,               // Optimization: Skip generating passwords for new users (Default: false)
+    "passwordField": "password"         // Column name for password (Default: password)
   }
 }
 ```
 
-## Security & Best Practices
+## Auto-Registration & Passwordless Mode
+ 
+ When a user verifies a magic link:
+ 
+ 1. **Existing User**: They are logged in immediately.
+ 2. **New User**: An account is automatically created for them (Auto-Registration).
+ 
+ By default, Odac attempts to generate a secure random password for new users to satisfy typical database constraints. However, if your application is purely passwordless (e.g. your storage schema doesn't have a `password` column at all), you should set `"passwordless": true` in your config. This optimizes performance by skipping the password generation step.
+ 
+ Even without this setting, Odac is smart enough to retry registration without a password if the database rejects the initial attempt due to a missing password column.
+ 
+ ## Security & Best Practices
 
 1.  **Rate Limiting**: Odac enforces strict rate limits (by IP and Email) to prevent spam and abuse. These can be adjusted in the configuration.
 2.  **Token Security**: Tokens are hashed in the database (`token_hash`) using secure hashing algorithms. The raw token is only sent to the user's email and never stored.
