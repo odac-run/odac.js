@@ -45,7 +45,7 @@ module.exports = async function (Odac) {
                 user_name: name,
                 user_email: email,
                 user_message: message,
-                timestamp: new Date().toLocaleString()
+                timestamp: new Date().toISOString()
             });
 
         // 3. Check Result
