@@ -43,19 +43,19 @@ class Mail {
     return new Promise(async resolve => {
       try {
         if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
-          console.log(`[Mail Debug] Template not found: ${__dir}/view/mail/${this.#template}.html`)
+          console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
           return resolve(false)
         }
         if (!this.#from || !this.#subject || !this.#to) {
-          console.log('[Mail Debug] Missing required fields: From, Subject, or To')
+          console.error('[Mail] Missing required fields: From, Subject, or To')
           return resolve(false)
         }
         if (!Odac.Var(this.#from.email).is('email')) {
-          console.log('From field is not a valid e-mail address')
+          console.error('[Mail] From field is not a valid e-mail address')
           return resolve(false)
         }
         if (!Odac.Var(this.#to.value[0].address).is('email')) {
-          console.log('To field is not a valid e-mail address')
+          console.error('[Mail] To field is not a valid e-mail address')
           return resolve(false)
         }
         if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
@@ -97,35 +97,35 @@ class Mail {
 
         const socketPath = process.env.ODAC_API_SOCKET || '/var/run/odac.sock'
         
-        console.log(`[Mail Debug] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
+        console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
         
         client.connect(socketPath, () => {
-          console.log('[Mail Debug] Connected to Odac Core. Sending payload...')
+          console.log('[Mail] Connected to Odac Core. Sending payload...')
           client.write(JSON.stringify(payload))
         })
 
         client.on('data', data => {
-          console.log('[Mail Debug] Received data from server:', data.toString())
+          console.log('[Mail] Received data from server:', data.toString())
           try {
             const response = JSON.parse(data.toString())
             resolve(response)
           } catch (error) {
-            console.log('[Mail Debug] Error parsing response:', error)
+            console.error('[Mail Error] Error parsing response:', error)
             resolve(false)
           }
           client.destroy()
         })
 
         client.on('error', error => {
-          console.log('[Mail Debug] Socket Error:', error)
+          console.error('[Mail Error] Socket Error:', error)
           resolve(false)
         })
 
         client.on('close', () => {
-          console.log('[Mail Debug] Connection closed')
+          console.log('[Mail] Connection closed')
         })
       } catch (error) {
-        console.log('[Mail Debug] Unexpected error:', error)
+        console.error('[Mail Error] Unexpected error:', error)
         resolve(false)
       }
     })
