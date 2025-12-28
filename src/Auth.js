@@ -367,14 +367,21 @@ class Auth {
      if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
      
      try {
-         await Odac.Mail(options.template || 'auth/magic-link')
+         let mail = Odac.Mail(options.template || 'auth/magic-link')
             .to(email)
             .subject(options.subject || 'Login to our site')
-            .send({
-                link: link,
-                network: this.#request.host,
-                ip: this.#request.ip
-            })
+
+         if (options.from) {
+             if (typeof options.from === 'object') mail.from(options.from.email, options.from.name)
+             else mail.from(options.from)
+         }
+
+         const mailResult = await mail.send({
+                 link: link,
+                 magic_link: link,
+                 network: this.#request.host,
+                 ip: this.#request.ip
+             })
      } catch(e) {
          console.error('Magic Link Email Error:', e)
          return {success: false, error: 'Failed to send email'}

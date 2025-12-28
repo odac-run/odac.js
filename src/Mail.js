@@ -1,6 +1,9 @@
 const net = require('net')
 const crypto = require('crypto')
 const fs = require('fs')
+const Form = require('./View/Form')
+
+const CACHE_DIR = './storage/.cache'
 
 class Mail {
   #header = {}
@@ -11,6 +14,259 @@ class Mail {
 
   constructor(template) {
     this.#template = template
+  }
+  
+  #functions = {
+    '{!!': {
+      function: '${await ',
+      close: '!!}',
+      end: '}'
+    },
+    '{{--': {
+      function: '`; /*',
+      close: '--}}',
+      end: '*/ html += `'
+    },
+    '{{': {
+      function: '${Odac.Var(await ',
+      close: '}}',
+      end: ').html().replace(/\\n/g, "<br>")}'
+    },
+    break: {
+      function: 'break;',
+      arguments: {}
+    },
+    component: {},
+    continue: {
+      function: 'continue;',
+      arguments: {}
+    },
+    mysql: {},
+    elseif: {
+      function: '} else if(await ($condition)){',
+      arguments: {
+        condition: true
+      }
+    },
+    else: {
+      function: '} else {'
+    },
+    fetch: {},
+    for: {
+      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
+      end: '}}',
+      arguments: {
+        var: null,
+        get: null,
+        key: 'key',
+        value: 'value'
+      }
+    },
+    if: {
+      function: 'if(await ($condition)){',
+      arguments: {
+        condition: true
+      }
+    },
+    '<odac:js>': {
+      end: ' html += `',
+      function: '`; ',
+      close: '</odac:js>'
+    },
+    lazy: {},
+    list: {
+      arguments: {
+        var: null,
+        get: null,
+        key: 'key',
+        value: 'value'
+      },
+      end: '}}',
+      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
+      replace: 'ul'
+    },
+    while: {
+      function: 'while(await ($condition)){',
+      arguments: {
+        condition: true
+      }
+    }
+  }
+
+  #parseOdacTag(content) {
+    // Parse backend comments
+    content = content.replace(/<!--odac([\s\S]*?)(?:odac-->|-->)/g, () => '')
+
+    // Parse <script:odac> tags
+    content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (fullMatch, attributes, jsContent) => {
+      return `<odac:js>${jsContent}</odac:js>`
+    })
+
+    content = content.replace(/<odac:else\s*\/>/g, '<odac:else>')
+    content = content.replace(/<odac:elseif\s+([^>]*?)\/>/g, '<odac:elseif $1>')
+
+    content = content.replace(/<odac([^>]*?)\/>/g, (fullMatch, attributes) => {
+      attributes = attributes.trim()
+      const attrs = {}
+      const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+      let match
+      while ((match = attrRegex.exec(attributes))) {
+        const key = match[1]
+        const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
+        attrs[key] = value
+      }
+
+      if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
+      else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
+      
+      return fullMatch
+    })
+
+    let depth = 0
+    let maxDepth = 10
+    while (depth < maxDepth && content.includes('<odac')) {
+      const before = content
+      content = content.replace(/<odac([^>]*)>((?:(?!<odac)[\s\S])*?)<\/odac>/g, (fullMatch, attributes, innerContent) => {
+        attributes = attributes.trim()
+        innerContent = innerContent.trim()
+        
+        const attrs = {}
+        const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+        let match
+        while ((match = attrRegex.exec(attributes))) {
+           const key = match[1]
+           const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
+           attrs[key] = value
+        }
+
+
+        if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
+        else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
+        else if (attrs.t || attrs.translate) return `{{ '${innerContent}' }}` // Simple fallback for mail
+        else return `{{ '${innerContent}' }}`
+      })
+      if (before === content) break
+      depth++
+    }
+
+    return content
+  }
+
+  async #render(file, data) {
+    let mtime = fs.statSync(file).mtimeMs
+    let content = fs.readFileSync(file, 'utf8')
+
+    // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile. 
+    // For performance in emails (usually background), re-compiling is okay, but caching is better.
+    // Let's use global Odac.View.cache if available or local.
+    if (!Odac.View) Odac.View = {}
+    if (!Odac.View.cache) Odac.View.cache = {}
+
+    if (Odac.View.cache[file]?.mtime !== mtime) {
+        
+      // No Form options needed normally for simplified email templates, but keeping Form.parse for consistency if needed
+      // content = Form.parse(content, {Request: {}, ...Odac}) // Partially mock if Form needs it, but Form usually needs full Request.
+      // Skipping Form.parse for mail for now unless requested, as it relies on Session/Request heavily. 
+      // User asked for "View file rendering", usually meaning logic tags.
+
+      const jsBlocks = []
+      content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
+        const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
+        jsBlocks.push(jsContent)
+        return `<script:odac${attrs}>${placeholder}</script:odac>`
+      })
+
+      content = this.#parseOdacTag(content)
+      content = content.replace(/`/g, '\\\\`').replace(/\$\{/g, '\\\\${')
+
+      jsBlocks.forEach((jsContent, index) => {
+        content = content.replace(`___ODAC_JS_BLOCK_${index}___`, jsContent)
+      })
+
+      let result = 'html += `\n' + content + '\n`'
+      content = content.split('\n')
+      
+      for (let key in this.#functions) {
+        let att = ''
+        let func = this.#functions[key]
+        let matches = func.close
+          ? result.match(new RegExp(`${key}[\\s\\S]*?${func.close}`, 'g'))
+          : result.match(new RegExp(`<odac:${key}(?:\\s+[^>]*?(?:"[^"]*"|'[^']*'|[^"'>])*)?>`, 'g'))
+        if (!matches) continue
+        for (let match of matches) {
+          let matchForParsing = match
+          if (!func.close) matchForParsing = matchForParsing.replace(/^<odac:/, '').replace(/>$/, '')
+          const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+          let attrMatch
+          const args = []
+          while ((attrMatch = attrRegex.exec(matchForParsing))) {
+            args.push(attrMatch[0])
+          }
+          let vars = {}
+          if (func.arguments)
+            for (let arg of args) {
+              const argRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/
+              const argMatch = argRegex.exec(arg)
+              if (!argMatch) continue
+              const argKey = argMatch[1]
+              const value = argMatch[3] !== undefined ? argMatch[3] : argMatch[4] !== undefined ? argMatch[4] : true
+              if (func.arguments[argKey] === undefined) {
+                att += `${argKey}="${value}"`
+                continue
+              }
+              vars[argKey] = value
+            }
+          if (!func.function) continue
+          let fun = func.function
+
+          // Simplified logic for loop
+           if (key === 'for' || key === 'list') {
+             let constructor
+            if (vars.var) {
+              constructor = `await ${vars.var}`
+              delete vars.var
+            }
+            fun = fun.replace(/\$constructor/g, constructor)
+          }
+
+          for (let argKey in func.arguments) {
+            if (argKey === 'var' || argKey === 'get') continue
+            if (vars[argKey] === undefined) vars[argKey] = func.arguments[argKey]
+            fun = fun.replace(new RegExp(`\\$${argKey}`, 'g'), vars[argKey])
+          }
+          if (func.close) {
+            result = result.replace(match, fun + match.substring(key.length, match.length - func.close.length) + func.end)
+          } else {
+            result = result.replace(match, (func.replace ? `<${[func.replace, att].join(' ')}>` : '') + '`; ' + fun + ' html += `')
+            result = result.replace(`</odac:${key}>`, '`; ' + (func.end ?? '}') + ' html += `' + (func.replace ? `</${func.replace}>` : ''))
+          }
+        }
+      }
+      
+      let cache = `${crypto.createHash('md5').update(file).digest('hex')}`
+      if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, {recursive: true})
+      fs.writeFileSync(
+        `${CACHE_DIR}/${cache}`,
+        `module.exports = async (Odac, data, get, __) => {\n
+           // Destructure data keys into local scope variables
+           ${Object.keys(data).map(k => `let ${k} = data['${k}'];`).join('\n')}
+           let html = '';\n${result}\nreturn html.trim()\n}`
+      )
+      delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
+      Odac.View.cache[file] = { mtime: mtime, cache: cache }
+    }
+    
+    try {
+      return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
+        Odac,
+        data,
+        (key) => data[key],
+        (...args) => Odac.Lang ? Odac.Lang.get(...args) : args[0]
+      )
+    } catch (e) {
+      console.error(e)
+      return ''
+    }
   }
 
   header(header) {
@@ -71,8 +327,7 @@ class Mail {
           this.#header['Content-Type'] = 'multipart/alternative; charset=UTF-8; boundary="----=' + crypto.randomBytes(32).toString('hex') + '"'
         if (!this.#header['X-Mailer']) this.#header['X-Mailer'] = 'ODAC'
         if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
-        let content = await fs.promises.readFile(__dir + '/view/mail/' + this.#template + '.html', 'utf-8')
-        for (const iterator of Object.keys(data)) content = content.replace(new RegExp(`{${iterator}}`, 'g'), data[iterator])
+        let content = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
         const client = new net.Socket()
         const payload = {
           auth: process.env.ODAC_API_KEY,
