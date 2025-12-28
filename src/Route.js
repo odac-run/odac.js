@@ -173,6 +173,7 @@ class Route {
       if (controller) {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+          Odac.Request.setSession()
           if (
             ['post', 'get'].includes(Odac.Request.method) &&
             controller.token &&
@@ -186,12 +187,14 @@ class Route {
     }
     let authPageController = this.#controller(Odac.Request.route, '#page', url)
     if (authPageController && (await Odac.Auth.check())) {
+      Odac.Request.setSession()
       const page = authPageController.cache?.file || authPageController.file
       if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, authPageController)
     }
     let pageController = this.#controller(Odac.Request.route, 'page', url)
     if (pageController) {
+      Odac.Request.setSession()
       const page = pageController.cache?.file || pageController.file
       if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, pageController)
