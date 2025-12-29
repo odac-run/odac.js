@@ -1,7 +1,8 @@
 class MiddlewareChain {
-  constructor(route, middlewares) {
+  constructor(route, middlewares, isAuth = false) {
     this._route = route
     this._middlewares = middlewares
+    this._isAuth = isAuth
     this.auth = {
       page: (path, authFile, file) => this.authPage(path, authFile, file),
       post: (path, authFile, file) => this.authPost(path, authFile, file),
@@ -15,7 +16,8 @@ class MiddlewareChain {
     return this
   }
 
-  page(path, file) {
+  page(path, file, fallback) {
+    if (this._isAuth) return this.authPage(path, file, fallback)
     this._route._pendingMiddlewares = [...this._middlewares]
     this._route.page(path, file)
     this._route._pendingMiddlewares = []
@@ -23,6 +25,7 @@ class MiddlewareChain {
   }
 
   post(path, file, options) {
+    if (this._isAuth) return this.authPost(path, file, options)
     this._route._pendingMiddlewares = [...this._middlewares]
     this._route.post(path, file, options)
     this._route._pendingMiddlewares = []
@@ -30,6 +33,7 @@ class MiddlewareChain {
   }
 
   get(path, file, options) {
+    if (this._isAuth) return this.authGet(path, file, options)
     this._route._pendingMiddlewares = [...this._middlewares]
     this._route.get(path, file, options)
     this._route._pendingMiddlewares = []
@@ -37,6 +41,7 @@ class MiddlewareChain {
   }
 
   ws(path, handler, options) {
+    if (this._isAuth) return this.authWs(path, handler, options)
     this._route._pendingMiddlewares = [...this._middlewares]
     this._route.ws(path, handler, options)
     this._route._pendingMiddlewares = []

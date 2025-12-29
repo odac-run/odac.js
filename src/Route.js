@@ -74,7 +74,7 @@ class Route {
     post: (path, authFile, file) => this.authPost(path, authFile, file),
     get: (path, authFile, file) => this.authGet(path, authFile, file),
     ws: (path, handler, options) => this.authWs(path, handler, options),
-    use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()])
+    use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()], true)
   }
 
   async #runMiddlewares(Odac, middlewares) {
