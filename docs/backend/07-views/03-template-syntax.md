@@ -112,6 +112,22 @@ Iterate over arrays and objects:
 
 **[→ Learn more about Loops](./06-loops.md)**
 
+### Components
+
+Build reusable UI elements with dynamic props and slots:
+
+```html
+<!-- Component with props -->
+<odac:component name="alert" type="warning" message="Check this out!" />
+
+<!-- Component with inner content (slot) -->
+<odac:component name="modal" title="Login">
+  <form>...</form>
+</odac:component>
+```
+
+**[→ Learn more about Components](./10-components.md)**
+
 ### Backend JavaScript
 
 Execute JavaScript on the server during template rendering:
@@ -159,6 +175,7 @@ Full access to the Odac object in templates:
 | While | `<odac:while condition="x">` | [Loops](./06-loops.md) |
 | Break | `<odac:break />` | [Loops](./06-loops.md) |
 | Continue | `<odac:continue />` | [Loops](./06-loops.md) |
+| Component | `<odac:component name="x">` | [Components](./10-components.md) |
 | JavaScript | `<script:odac>...</script:odac>` | [Backend JavaScript](./08-backend-javascript.md) |
 | Comment | `<!--odac ... odac-->` | [Comments](./09-comments.md) |
 

@@ -29,8 +29,9 @@ class View {
       arguments: {}
     },
     component: {
-      // TODO: Implement component
-      //   <odac:component name="navbar" title="Dashboard"/>
+      function: 'html += await $component($name, $props, async () => { let html = \'\';',
+      end: 'return html; });',
+      close: '</odac:component>'
     },
     continue: {
       function: 'continue;',
@@ -241,17 +242,24 @@ class View {
         attrs[key] = value
       }
 
-      if (attrs.get) {
-        return `{{ get('${attrs.get}') || '' }}`
-      } else if (attrs.var) {
-        if (attrs.raw) {
-          return `{!! ${attrs.var} !!}`
-        } else {
-          return `{{ ${attrs.var} }}`
+        if (attrs.get) {
+          return `{{ get('${attrs.get}') || '' }}`
+        } else if (attrs.var) {
+          if (attrs.raw) {
+            return `{!! ${attrs.var} !!}`
+          } else {
+            return `{{ ${attrs.var} }}`
+          }
+        } else if (fullMatch.startsWith('<odac:component')) {
+          // Convert self-closing component to block for unified parsing
+          let propString = ''
+          for (let key in attrs) {
+            propString += ` ${key}="${attrs[key]}"`
+          }
+          return `<odac:component${propString}></odac:component>`
         }
-      }
-      return fullMatch
-    })
+        return fullMatch
+      })
 
     let depth = 0
     let maxDepth = 10
@@ -317,7 +325,28 @@ class View {
     return content
   }
 
-  async #render(file) {
+  async #renderComponent(name, props = {}, slot = null) {
+    // Check possible paths for components
+    // 1. view/components/{name}.html
+    // 2. view/components/{name}/index.html (optional, good for structure)
+    let componentPath = `view/components/${name}.html`
+    
+    // Support nested folders in name: 'ui/button' -> view/components/ui/button.html
+    
+    if (!fs.existsSync(componentPath)) {
+        console.error(`Component not found: ${name} (${componentPath})`)
+        return ''
+    }
+
+    // Merge props with slot if exists
+    if (slot) {
+        props.slot = await slot()
+    }
+
+    return await this.#render(componentPath, props)
+  }
+
+  async #render(file, data = {}) {
     let mtime = fs.statSync(file).mtimeMs
     let content = fs.readFileSync(file, 'utf8')
 
@@ -344,11 +373,17 @@ class View {
         let att = ''
         let func = this.#functions[key]
         let matches = func.close
-          ? result.match(new RegExp(`${key}[\\s\\S]*?${func.close}`, 'g'))
+          ? result.match(new RegExp(`${key.startsWith('{') ? '' : '<odac:'}${key}[\\s\\S]*?${func.close}`, 'g'))
           : result.match(new RegExp(`<odac:${key}(?:\\s+[^>]*?(?:"[^"]*"|'[^']*'|[^"'>])*)?>`, 'g'))
         if (!matches) continue
         for (let match of matches) {
           let matchForParsing = match
+          if (func.close) {
+             let firstTagEnd = match.indexOf('>')
+             if (firstTagEnd !== -1) {
+                matchForParsing = match.substring(0, firstTagEnd) 
+             }
+          }
           if (!func.close) matchForParsing = matchForParsing.replace(/^<odac:/, '').replace(/>$/, '')
           const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
           let attrMatch
@@ -357,7 +392,34 @@ class View {
             args.push(attrMatch[0])
           }
           let vars = {}
-          if (func.arguments)
+          
+          // Special handling for component dynamic props
+          if (key === 'component') {
+            let propsObj = []
+            let componentName = 'null'
+            for (let arg of args) {
+              const argRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/
+              const argMatch = argRegex.exec(arg)
+              if (!argMatch) continue
+              const argKey = argMatch[1]
+              if (argKey === 'component') continue
+              let value = argMatch[3] !== undefined ? argMatch[3] : argMatch[4] !== undefined ? argMatch[4] : true
+              
+              if (argKey === 'name') {
+                componentName = `'${value}'`
+              } else {
+                // If value is wrapped in {}, treat as variable/expression
+                if (typeof value === 'string' && value.startsWith('{') && value.endsWith('}')) {
+                   value = value.substring(1, value.length - 1)
+                } else if (typeof value === 'string') {
+                   value = `'${value}'`
+                }
+                propsObj.push(`${argKey}: ${value}`)
+              }
+            }
+            vars['name'] = componentName
+            vars['props'] = `{${propsObj.join(', ')}}`
+          } else if (func.arguments)
             for (let arg of args) {
               const argRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/
               const argMatch = argRegex.exec(arg)
@@ -389,16 +451,24 @@ class View {
             fun = fun.replace(/\$constructor/g, constructor)
           }
 
-          for (let argKey in func.arguments) {
+          for (let argKey in (key === 'component' ? {name:1, props:1} : func.arguments)) {
             if (argKey === 'var' || argKey === 'get') continue
             if (vars[argKey] === undefined) {
-              if (func.arguments[argKey] === null) console.error(`"${argKey}" is required for "${match}"\n  in "${file}"`)
-              vars[argKey] = func.arguments[argKey]
+              if (func.arguments && func.arguments[argKey] === null) console.error(`"${argKey}" is required for "${match}"\n  in "${file}"`)
+              vars[argKey] = func.arguments ? func.arguments[argKey] : 'null'
             }
             fun = fun.replace(new RegExp(`\\$${argKey}`, 'g'), vars[argKey])
           }
           if (func.close) {
-            result = result.replace(match, fun + match.substring(key.length, match.length - func.close.length) + func.end)
+            if (key === 'component') {
+                let contentStart = match.indexOf('>') + 1
+                let innerContent = match.substring(contentStart, match.length - func.close.length)
+                result = result.replace(match, '`; ' + fun + ' html += `' + innerContent + '`; ' + func.end + ' html += `')
+            } else if (key.startsWith('{')) {
+                result = result.replace(match, fun + match.substring(key.length, match.length - func.close.length) + func.end)
+            } else {
+                result = result.replace(match, '`; ' + fun + match.substring(key.length, match.length - func.close.length) + func.end + ' html += `')
+            }
           } else {
             result = result.replace(match, (func.replace ? `<${[func.replace, att].join(' ')}>` : '') + '`; ' + fun + ' html += `')
             result = result.replace(`</odac:${key}>`, '`; ' + (func.end ?? '}') + ' html += `' + (func.replace ? `</${func.replace}>` : ''))
@@ -409,7 +479,7 @@ class View {
       if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, {recursive: true})
       fs.writeFileSync(
         `${CACHE_DIR}/${cache}`,
-        `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
+        `module.exports = async (Odac, get, __, $component, _data) => {\n for(let k in _data){ eval('var ' + k + ' = _data[k];'); } \nlet html = '';\n${result}\nreturn html.trim()\n}`
       )
       delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
       if (!Odac.View) Odac.View = {}
@@ -422,13 +492,15 @@ class View {
     try {
       return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
         this.#odac,
-        key => this.#odac.Request.get(key),
-        (...args) => this.#odac.Lang.get(...args)
+        key => (data && data[key] !== undefined) ? data[key] : this.#odac.Request.get(key),
+        (...args) => this.#odac.Lang.get(...args),
+        (name, props, slot) => this.#renderComponent(name, props, slot),
+        data
       )
     } catch (e) {
       let stackLine = e.stack.split('\n')[1].match(/:(\d+):\d+/)
       let line = stackLine ? parseInt(stackLine[1]) - 3 : e.lineNumber ? e.lineNumber - 3 : 'unknown'
-      console.error(e.toString().split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
+      console.error(e.toString().split('\n')[0] + `\n  in line ${line}\n  of "${file}"\n  Cache: ${CACHE_DIR}/${Odac.View.cache[file].cache}`)
     }
     return ''
   }
