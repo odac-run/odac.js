@@ -499,6 +499,7 @@ class Route {
   page(path, file) {
     if (typeof file === 'object' && !Array.isArray(file)) {
       this.set('page', path, _odac => {
+        _odac.set(file)
         _odac.View.set(file)
         return
       })
@@ -521,11 +522,13 @@ class Route {
   authPage(path, authFile, file) {
     if (typeof authFile === 'object' && authFile !== null && !Array.isArray(authFile)) {
       this.set('#page', path, _odac => {
+        _odac.set(authFile)
         _odac.View.set(authFile)
         return
       })
       if (typeof file === 'object' && !Array.isArray(file)) {
         this.set('page', path, _odac => {
+          _odac.set(file)
           _odac.View.set(file)
           return
         })
@@ -536,6 +539,7 @@ class Route {
     if (file) {
       if (typeof file === 'object' && !Array.isArray(file)) {
         this.set('page', path, _odac => {
+          _odac.set(file)
           _odac.View.set(file)
           return
         })

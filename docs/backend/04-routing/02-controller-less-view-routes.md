@@ -3,18 +3,24 @@
 For simple pages that don't require complex logic in a controller, you can render a view directly from your route file by passing a view configuration object as the second parameter.
 
 #### `page(path, { ... })`
-This defines a page and immediately tells it which view components to render.
+This defines a page and immediately tells it which view components to render. You can also pass variables directly in the object, which will be available in your views.
 
 ```javascript
 Odac.Route.page("/users", {
+    // View Configuration
     skeleton: "dashboard",
     header: "dashboard.main",
     sidebar: "dashboard.main",
     footer: "dashboard.main",
-    content: "users"
+    content: "users",
+
+    // Page Variables
+    title: "User Management",
+    description: "Manage your platform users here"
 });
 ```
-This example tells Odac to render the `/users` page by assembling a view from multiple parts, likely using a main `dashboard` skeleton and filling it with different content blocks.
+
+This example tells Odac to render the `/users` page using the `dashboard` skeleton. Additionally, `title` and `description` are set as variables and can be accessed in your views using `<odac var="title" />`.
 
 **Page Identifier:** When using view objects, the page identifier (accessible via `Odac.page()` in frontend) is automatically set to the `content` or `all` value. In this example, the page identifier would be `"users"`, allowing you to run page-specific JavaScript:
 
