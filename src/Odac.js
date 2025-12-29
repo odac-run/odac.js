@@ -66,12 +66,7 @@ module.exports = {
         _odac._timeouts = []
       }
 
-      if (global.Odac?.Route?.class) {
-        for (const name in global.Odac.Route.class) {
-          const Module = global.Odac.Route.class[name].module
-          _odac[name] = typeof Module === 'function' ? new Module(_odac) : Module
-        }
-      }
+
 
       _odac.__ = function (...args) {
         return _odac.Lang.get(...args)
@@ -109,6 +104,20 @@ module.exports = {
       _odac.stream = function (input) {
         _odac.Request.clearTimeout()
         return new (require('./Stream'))(_odac.Request.req, _odac.Request.res, input, _odac)
+      }
+
+      if (global.Odac?.Route?.class) {
+        _odac.App = {}
+        for (const name in global.Odac.Route.class) {
+          const Module = global.Odac.Route.class[name].module
+          const instance = typeof Module === 'function' ? new Module(_odac) : Module
+
+          if (_odac[name]) {
+            _odac.App[name] = instance
+          } else {
+            _odac[name] = instance
+          }
+        }
       }
     }
 

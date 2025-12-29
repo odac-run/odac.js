@@ -1,13 +1,15 @@
-## 🎓 Controller Classes
+## 🧩 Service Classes
 
-While simple function exports work great for basic controllers, you can also organize your code using classes. This is especially useful when you want to share logic between multiple methods or keep related functionality together.
+You can organize your business logic into reusable classes. This is especially useful when you want to share logic between multiple methods or keep related functionality together.
 
-#### Creating a Controller Class
+We recommend placing these files in the `class/` directory.
 
-A controller class receives the `Odac` object in its constructor, giving you access to all services throughout your class methods:
+#### Creating a Service Class
+
+Any class file placed in the `class/` directory will be automatically loaded and available on the `Odac` object. The class receives the global `Odac` request instance in its constructor, giving you access to all request-scoped services:
 
 ```javascript
-// controller/User.js
+// class/User.js
 class User {
   constructor(Odac) {
     this.Odac = Odac
@@ -15,10 +17,10 @@ class User {
 
   async getProfile() {
     const user = await this.Odac.Auth.user()
-    return this.Odac.return({
+    return {
       success: true,
       user: user
-    })
+    }
   }
 
   async updateProfile() {
@@ -39,54 +41,39 @@ class User {
         email: email
     })
 
-    return this.Odac.return({
+    return {
       success: true,
       message: 'Profile updated successfully'
-    })
+    }
   }
 }
 
 module.exports = User
 ```
 
-#### Using Controller Classes in Routes
+#### Naming Collisions
 
-Once you've created a controller class, you can use it in your routes just like any other controller:
+If your class name conflicts with a built-in Odac service (like `Mail`, `DB`, `Auth`), it will be automatically placed under `Odac.App` namespace to prevent errors.
 
-```javascript
-// route/www.js
-Odac.Route.buff = 'www'
+Example: `class/Mail.js` (conflicts with core Mail) -> `Odac.App.Mail`
 
-// Access class methods using dot notation
-Odac.Route.get('/profile', 'User.getProfile')
-Odac.Route.post('/profile/update', 'User.updateProfile')
-```
+#### Accessing Services in Controllers
 
-#### Accessing Classes in Controllers
-
-Controller classes are automatically instantiated for each request and attached to the `Odac` object. You can access them from any controller:
+Service classes are automatically instantiated for each request and attached to the `Odac` object using the file name. You can access them from any controller:
 
 ```javascript
+// controller/get/profile.js
 module.exports = async function (Odac) {
-  // Access your User class
+  // Access your User class via Odac.User
   const profile = await Odac.User.getProfile()
   
   return Odac.return(profile)
 }
 ```
 
-#### Benefits of Controller Classes
+#### Benefits of Service Classes
 
-- **Organization**: Group related methods together
-- **Reusability**: Share logic between different routes
-- **Maintainability**: Easier to manage complex controllers
-- **Context**: The `Odac` object is always available via `this.Odac`
-
-#### Class vs Function Controllers
-
-Both approaches work perfectly fine. Use what makes sense for your project:
-
-- **Functions**: Great for simple, single-purpose controllers
-- **Classes**: Better for complex logic with multiple related methods
-
-The framework automatically detects whether your export is a class or a function and handles it accordingly.
+- **Organization**: Group related business logic together in `class/`
+- **Reusability**: Share logic between different controllers and routes
+- **Context**: The `Odac` object is injected, providing access to `Auht`, `DB`, `Request`, etc.
+- **Separation of Concerns**: Keep your Controllers lightweight by moving heavy logic to Services.

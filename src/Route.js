@@ -171,18 +171,18 @@ class Route {
     for (let method of ['#' + Odac.Request.method, Odac.Request.method]) {
       let controller = this.#controller(Odac.Request.route, method, url)
       if (controller) {
-        if (!method.startsWith('#') || (await Odac.Auth.check())) {
-          Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-          Odac.Request.setSession()
-          if (
-            ['post', 'get'].includes(Odac.Request.method) &&
-            controller.token &&
-            (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
-          )
-            return Odac.Request.abort(401)
+          if (!method.startsWith('#') || (await Odac.Auth.check())) {
+            Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+            Odac.Request.setSession()
+            if (
+              ['post', 'get'].includes(Odac.Request.method) &&
+              controller.token &&
+              (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
+            )
+              return Odac.Request.abort(401)
 
-          return await this.#executeController(Odac, controller)
-        }
+            return await this.#executeController(Odac, controller)
+          }
       }
     }
     let authPageController = this.#controller(Odac.Request.route, '#page', url)
@@ -273,9 +273,9 @@ class Route {
     if (this.loading) return
     this.loading = true
     this.#loadMiddlewares()
-    const controllerDir = `${__dir}/controller/`
-    if (fs.existsSync(controllerDir)) {
-      for (const file of fs.readdirSync(controllerDir)) {
+    const classDir = `${__dir}/class/`
+    if (fs.existsSync(classDir)) {
+      for (const file of fs.readdirSync(classDir)) {
         if (!file.endsWith('.js')) continue
         let name = file.replace('.js', '')
         if (!Odac.Route.class) Odac.Route.class = {}
@@ -285,9 +285,9 @@ class Route {
           delete require.cache[require.resolve(Odac.Route.class[name].path)]
         }
         Odac.Route.class[name] = {
-          path: `${__dir}/controller/${file}`,
-          mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
-          module: require(`${__dir}/controller/${file}`)
+          path: `${__dir}/class/${file}`,
+          mtime: fs.statSync(`${__dir}/class/${file}`).mtimeMs,
+          module: require(`${__dir}/class/${file}`)
         }
       }
     }
@@ -489,6 +489,7 @@ class Route {
       this.routes[Odac.Route.buff][type][url].path = path
       this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
       this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+      
       this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
     }
 
