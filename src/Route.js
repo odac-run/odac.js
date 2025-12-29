@@ -210,9 +210,10 @@ class Route {
         Odac.Request.header('Content-Type', type)
         Odac.Request.header('Cache-Control', 'public, max-age=31536000')
         Odac.Request.header('Content-Length', stat.size)
-        return fs.readFileSync(`${__dir}/public${url}`)
+        return fs.createReadStream(`${__dir}/public${url}`)
       }
     }
+
     return Odac.Request.abort(404)
   }
 
@@ -417,6 +418,11 @@ class Route {
       if (result instanceof Promise) result = await result
       const Stream = require('./Stream.js')
       if (result instanceof Stream) return
+      if (result && typeof result.pipe === 'function') {
+        param.Request.print()
+        result.pipe(param.Request.res)
+        return
+      }
       if (param.Request.res.finished || param.Request.res.writableEnded) {
         param.cleanup()
         return
