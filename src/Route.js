@@ -90,8 +90,13 @@ class Route {
 
       const result = await middleware(Odac)
 
+      if (Odac.Request.res.finished) {
+        return false
+      }
+
       if (result === false) {
-        return Odac.Request.abort(403)
+        await Odac.Request.abort(403)
+        return false
       }
 
       if (result !== undefined && result !== true) {
@@ -174,6 +179,9 @@ class Route {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
           Odac.Request.setSession()
+          const page = controller.cache?.file || controller.file
+          if (typeof page === 'string') Odac.Request.page = page
+
           if (
             ['post', 'get'].includes(Odac.Request.method) &&
             controller.token &&
@@ -242,7 +250,8 @@ class Route {
           params: params,
           cache: this.routes[route][method][key].cache,
           token: this.routes[route][method][key].token,
-          middlewares: this.routes[route][method][key].middlewares
+          middlewares: this.routes[route][method][key].middlewares,
+          file: this.routes[route][method][key].file
         }
     }
     return false

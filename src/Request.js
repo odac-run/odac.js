@@ -207,6 +207,7 @@ class OdacRequest {
   redirect(url) {
     this.header('Location', url)
     this.status(302)
+    this.end()
   }
 
   // - GET REQUEST
