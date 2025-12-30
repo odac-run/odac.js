@@ -564,7 +564,7 @@ class _odac {
 
   page() {
     if (!this.#page) {
-      this.#page = document.documentElement.dataset.candyPage || ''
+      this.#page = document.documentElement.dataset.odacPage || ''
     }
     return this.#page
   }
@@ -638,7 +638,7 @@ class _odac {
 
     this.#isNavigating = true
 
-    const currentSkeleton = document.documentElement.dataset.candySkeleton
+    const currentSkeleton = document.documentElement.dataset.odacSkeleton
     const elements = Object.entries(this.#loader.elements)
 
     // Collect elements to update
@@ -672,7 +672,7 @@ class _odac {
       const newPage = ajaxXhr.getResponseHeader('X-Odac-Page')
       if (newPage !== null) {
         this.#page = newPage
-        document.documentElement.dataset.candyPage = newPage
+        document.documentElement.dataset.odacPage = newPage
       }
 
       if (elementsToUpdate.length === 0) {
@@ -768,7 +768,7 @@ class _odac {
     this.#loader.elements = elements
     this.#loader.callback = callback
 
-    const candyInstance = this
+    const odacInstance = this
 
     // Handle link clicks
     this.#on(document, 'click', selector, function (e) {
@@ -787,7 +787,7 @@ class _odac {
 
       if ((target === null || target === '_self') && !isExternal) {
         e.preventDefault()
-        candyInstance.load(url, callback)
+        odacInstance.load(url, callback)
       }
     })
 
