@@ -3,7 +3,7 @@ module.exports = {
     global.Odac = this.instance()
     global.Odac.Storage = require('./Storage.js')
     global.Odac.Storage.init()
-    
+
     await global.Odac.Env.init()
     await global.Odac.Config.init()
     await global.Odac.Database.init()
@@ -65,8 +65,6 @@ module.exports = {
         _odac._intervals = []
         _odac._timeouts = []
       }
-
-
 
       _odac.__ = function (...args) {
         return _odac.Lang.get(...args)

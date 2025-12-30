@@ -1,27 +1,27 @@
 const fs = require('fs')
 const path = require('path')
 
-class Storage {
+class OdacStorage {
   constructor() {
     this.db = null
     this.ready = false
   }
 
   init() {
-    const { open } = require('lmdb')
-    
+    const {open} = require('lmdb')
+
     const storagePath = path.join(global.__dir, 'storage')
     const dbPath = path.join(storagePath, 'sessions.db')
-    
+
     try {
       // Ensure storage directory exists
       if (!fs.existsSync(storagePath)) {
-        fs.mkdirSync(storagePath, { recursive: true })
+        fs.mkdirSync(storagePath, {recursive: true})
       }
-      
+
       this.db = open({
         path: dbPath,
-        compression: true,
+        compression: true
       })
       this.ready = true
     } catch (error) {
@@ -32,7 +32,7 @@ class Storage {
   }
 
   // --- Basic KV Operations ---
-  
+
   get(key) {
     if (!this.ready) return null
     return this.db.get(key) ?? null
@@ -49,7 +49,7 @@ class Storage {
   }
 
   // --- Range Operations ---
-  
+
   getRange(options = {}) {
     if (!this.ready) return []
     return this.db.getRange(options)
@@ -61,7 +61,7 @@ class Storage {
   }
 
   // --- Session Garbage Collector ---
-  
+
   startSessionGC(intervalMs = 60 * 60 * 1000, expirationMs = 7 * 24 * 60 * 60 * 1000) {
     if (!this.ready) {
       console.warn('[Storage] GC not started: Storage not ready')
@@ -75,7 +75,8 @@ class Storage {
       try {
         // Count sessions to decide mode
         let sessionCount = 0
-        for (const _ of this.db.getKeys({ start: 'sess:', end: 'sess:~', limit: BATCH_THRESHOLD + 1 })) {
+        // eslint-disable-next-line
+        for (const _ of this.db.getKeys({start: 'sess:', end: 'sess:~', limit: BATCH_THRESHOLD + 1})) {
           sessionCount++
           if (sessionCount > BATCH_THRESHOLD) break
         }
@@ -96,10 +97,10 @@ class Storage {
     const now = Date.now()
     let count = 0
 
-    for (const { key, value } of this.db.getRange({ start: 'sess:', end: 'sess:~', snapshot: false })) {
+    for (const {key, value} of this.db.getRange({start: 'sess:', end: 'sess:~', snapshot: false})) {
       if (key.endsWith(':_created') && now - value > expirationMs) {
         const prefix = key.replace(':_created', '')
-        for (const subKey of this.db.getKeys({ start: prefix, end: prefix + '~' })) {
+        for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
           this.db.remove(subKey)
         }
         count++
@@ -124,13 +125,13 @@ class Storage {
       hasMore = false
       let lastKey = null
 
-      for (const { key, value } of this.db.getRange({ start: cursor, end: 'sess:~', limit: batchSize, snapshot: false })) {
+      for (const {key, value} of this.db.getRange({start: cursor, end: 'sess:~', limit: batchSize, snapshot: false})) {
         lastKey = key
         hasMore = true
 
         if (key.endsWith(':_created') && now - value > expirationMs) {
           const prefix = key.replace(':_created', '')
-          for (const subKey of this.db.getKeys({ start: prefix, end: prefix + '~' })) {
+          for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
             this.db.remove(subKey)
           }
           count++
@@ -148,7 +149,7 @@ class Storage {
   }
 
   // --- Utility ---
-  
+
   close() {
     if (this.db) {
       this.db.close()
@@ -161,4 +162,4 @@ class Storage {
   }
 }
 
-module.exports = new Storage()
+module.exports = new OdacStorage()

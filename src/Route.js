@@ -171,18 +171,18 @@ class Route {
     for (let method of ['#' + Odac.Request.method, Odac.Request.method]) {
       let controller = this.#controller(Odac.Request.route, method, url)
       if (controller) {
-          if (!method.startsWith('#') || (await Odac.Auth.check())) {
-            Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
-            Odac.Request.setSession()
-            if (
-              ['post', 'get'].includes(Odac.Request.method) &&
-              controller.token &&
-              (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
-            )
-              return Odac.Request.abort(401)
+        if (!method.startsWith('#') || (await Odac.Auth.check())) {
+          Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+          Odac.Request.setSession()
+          if (
+            ['post', 'get'].includes(Odac.Request.method) &&
+            controller.token &&
+            (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
+          )
+            return Odac.Request.abort(401)
 
-            return await this.#executeController(Odac, controller)
-          }
+          return await this.#executeController(Odac, controller)
+        }
       }
     }
     let authPageController = this.#controller(Odac.Request.route, '#page', url)
@@ -390,7 +390,7 @@ class Route {
       async Odac => {
         const csrfToken = await Odac.request('_token')
         if (!csrfToken || !Odac.token(csrfToken)) {
-           return Odac.Request.abort(401)
+          return Odac.Request.abort(401)
         }
         return await Internal.magicLogin(Odac)
       },
@@ -398,12 +398,12 @@ class Route {
     )
 
     this.set(
-       'GET',
-       '/_odac/magic-verify',
-       async Odac => {
-         return await Internal.magicVerify(Odac)
-       },
-       {token: false}
+      'GET',
+      '/_odac/magic-verify',
+      async Odac => {
+        return await Internal.magicVerify(Odac)
+      },
+      {token: false}
     )
 
     delete Odac.Route.buff
@@ -489,7 +489,7 @@ class Route {
       this.routes[Odac.Route.buff][type][url].path = path
       this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
       this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-      
+
       this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
     }
 

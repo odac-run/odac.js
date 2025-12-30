@@ -178,18 +178,18 @@ class Form {
     const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip']
     const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
     let attrMatch
-    // Clean tag to just attributes part for safer regex matching if needed, 
+    // Clean tag to just attributes part for safer regex matching if needed,
     // or just run on fieldTag from start
     const attributesString = fieldTag.replace(/^<odac:input/, '').replace(/\/?>$/, '')
-    
+
     while ((attrMatch = attrRegex.exec(attributesString))) {
-       const key = attrMatch[1]
-       // If value is undefined, it's a boolean attribute (e.g. required, autofocus) -> set as true (or empty string)
-       const value = attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4] !== undefined ? attrMatch[4] : ""
-       
-       if (!knownAttrs.includes(key)) {
-           extraAttrs[key] = value
-       }
+      const key = attrMatch[1]
+      // If value is undefined, it's a boolean attribute (e.g. required, autofocus) -> set as true (or empty string)
+      const value = attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4] !== undefined ? attrMatch[4] : ''
+
+      if (!knownAttrs.includes(key)) {
+        extraAttrs[key] = value
+      }
     }
     field.extraAttributes = extraAttrs
 
@@ -304,20 +304,20 @@ class Form {
   }
 
   static appendExtraAttributes(attrs, field) {
-      if (field.extraAttributes) {
-          for (const key in field.extraAttributes) {
-              const val = field.extraAttributes[key]
-               // If val is empty string, render as boolean attribute if typical, or key=""
-               // For HTML5 boolean attrs like autofocus, required, checked, readonly, disabled, multiple, selected
-               // presence is enough.
-               if (val === "") {
-                   attrs += ` ${key}`
-               } else {
-                   attrs += ` ${key}="${val.replace(/"/g, '&quot;')}"`
-               }
-          }
+    if (field.extraAttributes) {
+      for (const key in field.extraAttributes) {
+        const val = field.extraAttributes[key]
+        // If val is empty string, render as boolean attribute if typical, or key=""
+        // For HTML5 boolean attrs like autofocus, required, checked, readonly, disabled, multiple, selected
+        // presence is enough.
+        if (val === '') {
+          attrs += ` ${key}`
+        } else {
+          attrs += ` ${key}="${val.replace(/"/g, '&quot;')}"`
+        }
       }
-      return attrs
+    }
+    return attrs
   }
 
   static buildHtml5Attributes(field) {
@@ -406,8 +406,6 @@ class Form {
     if (errorMessages.pattern) attrs += ` data-error-pattern="${errorMessages.pattern.replace(/"/g, '&quot;')}"`
     if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
 
-
-    
     attrs = this.appendExtraAttributes(attrs, field)
 
     return attrs
@@ -606,7 +604,7 @@ class Form {
     const submitText = config.submitText || 'Submit'
     const submitLoading = config.submitLoading || 'Processing...'
     // Always post to internal handler, real action is in session config
-    const formAction = '/_odac/form' 
+    const formAction = '/_odac/form'
     const method = config.method || 'POST'
 
     let innerContent = originalHtml.replace(/<odac:form[^>]*>/, '').replace(/<\/odac:form>/, '')
@@ -661,29 +659,32 @@ class Form {
     const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
 
     if (redirectMatch) config.redirect = redirectMatch[1]
-    
+
     // Auto-add email field if not manually specified (simplified usage)
     const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
-    
+
     if (fieldMatches) {
-        // Custom fields included
-        for (const fieldHtml of fieldMatches) {
-            const field = this.parseInput(fieldHtml)
-            if (field) config.fields.push(field)
-        }
+      // Custom fields included
+      for (const fieldHtml of fieldMatches) {
+        const field = this.parseInput(fieldHtml)
+        if (field) config.fields.push(field)
+      }
     } else {
-        // Default Email Field
-        config.fields.push({
-            name: 'email',
-            type: 'email',
-            placeholder: 'e.g. user@example.com',
-            label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
-            class: '',
-            id: null,
-            unique: false,
-            skip: false,
-            validations: [{rule: 'required', message: 'Email is required'}, {rule: 'email', message: 'Invalid email format'}]
-        })
+      // Default Email Field
+      config.fields.push({
+        name: 'email',
+        type: 'email',
+        placeholder: 'e.g. user@example.com',
+        label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
+        class: '',
+        id: null,
+        unique: false,
+        skip: false,
+        validations: [
+          {rule: 'required', message: 'Email is required'},
+          {rule: 'email', message: 'Invalid email format'}
+        ]
+      })
     }
 
     const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
@@ -703,9 +704,9 @@ class Form {
       if (styleMatch) config.submitStyle = styleMatch[1]
       if (idMatch) config.submitId = idMatch[1]
     } else {
-        // Check for submit-text attribute on main tag if no submit tag
-        const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
-        if (submitTextAttr) config.submitText = submitTextAttr[1]
+      // Check for submit-text attribute on main tag if no submit tag
+      const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
+      if (submitTextAttr) config.submitText = submitTextAttr[1]
     }
 
     return config
@@ -733,19 +734,19 @@ class Form {
     const submitLoading = config.submitLoading || 'Sending...'
 
     let innerContent = originalHtml.replace(/<odac:magic-login[^>]*>/, '').replace(/<\/odac:magic-login>/, '')
-    
+
     // If no custom fields were present in HTML but we added default email in config
     if (!originalHtml.includes('<odac:input')) {
-        const emailField = config.fields.find(f => f.name === 'email')
-        if (emailField) {
-            innerContent += this.generateFieldHtml(emailField)
-        }
+      const emailField = config.fields.find(f => f.name === 'email')
+      if (emailField) {
+        innerContent += this.generateFieldHtml(emailField)
+      }
     } else {
-         innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
-          const field = this.parseInput(fieldMatch)
-          if (!field) return fieldMatch
-          return this.generateFieldHtml(field)
-        })
+      innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+        const field = this.parseInput(fieldMatch)
+        if (!field) return fieldMatch
+        return this.generateFieldHtml(field)
+      })
     }
 
     const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
@@ -757,9 +758,9 @@ class Form {
       const submitButton = `<button ${submitAttrs}>${submitText}</button>`
       innerContent = innerContent.replace(submitMatch[0], submitButton)
     } else if (!innerContent.includes('type="submit"')) {
-       // Auto add submit button if missing
-       const submitButton = `<button type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}">${submitText}</button>`
-       innerContent += `\n${submitButton}`
+      // Auto add submit button if missing
+      const submitButton = `<button type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}">${submitText}</button>`
+      innerContent += `\n${submitButton}`
     }
 
     let html = `<form class="odac-magic-login-form" data-odac-magic-login="${formToken}" method="POST" action="/_odac/magic-login" novalidate>\n`

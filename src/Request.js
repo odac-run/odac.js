@@ -96,7 +96,11 @@ class OdacRequest {
         if (body.indexOf('Content-Disposition') > -1) {
           let boundary = body.split('\r\n')[0]
           if (boundary.includes('boundary=')) {
-             try { boundary = boundary.split('boundary=')[1].split(';')[0].trim() } catch(e) {}
+            try {
+              boundary = boundary.split('boundary=')[1].split(';')[0].trim()
+            } catch {
+              // ignore
+            }
           }
           let data = body.split(boundary)
           for (let i = 0; i < data.length; i++) {
@@ -221,7 +225,7 @@ class OdacRequest {
     })
   }
 
-  setSession(de){
+  setSession() {
     if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
       let client = nodeCrypto.randomBytes(16).toString('hex')
       this.cookie('odac_client', client, {expires: null, httpOnly: false})
@@ -253,7 +257,7 @@ class OdacRequest {
         do {
           pub = nodeCrypto.randomBytes(16).toString('hex')
         } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
-        Odac.Storage.put(lockKey, { sessionId: pub, timestamp: now })
+        Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
         Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
         this.cookie('candy_session', `${pub}`)
         setTimeout(() => {
@@ -267,7 +271,7 @@ class OdacRequest {
 
     const dbKey = `sess:${pub}:${pri}:${key}`
     if (value === undefined) {
-      if (this.#sessions.hasOwnProperty(dbKey)) return this.#sessions[dbKey]
+      if (Object.prototype.hasOwnProperty.call(this.#sessions, dbKey)) return this.#sessions[dbKey]
       const dbValue = Odac.Storage.get(dbKey) ?? null
       return dbValue
     } else if (value === null) {

@@ -5,7 +5,8 @@ const path = require('path')
 
 let disposableDomains = null
 const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
-const SOURCE_URL = 'https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf'
+const SOURCE_URL =
+  'https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf'
 
 async function loadDisposableDomains() {
   if (disposableDomains instanceof Set) return
@@ -27,21 +28,21 @@ async function loadDisposableDomains() {
     if (shouldUpdate) {
       try {
         content = await new Promise((resolve, reject) => {
-          const req = https.get(SOURCE_URL, (res) => {
+          const req = https.get(SOURCE_URL, res => {
             if (res.statusCode !== 200) {
               res.resume()
               reject(new Error(`Failed to fetch: ${res.statusCode}`))
               return
             }
             let data = ''
-            res.on('data', chunk => data += chunk)
+            res.on('data', chunk => (data += chunk))
             res.on('end', () => resolve(data))
           })
           req.on('error', reject)
           req.end()
         })
         fs.writeFileSync(CACHE_FILE, content)
-      } catch (err) {
+      } catch {
         if (fs.existsSync(CACHE_FILE)) {
           content = fs.readFileSync(CACHE_FILE, 'utf8')
         }
@@ -273,7 +274,6 @@ class Validator {
                   case 'disposable':
                     error = value && value !== '' && !(await Validator.isDisposable(value))
                     break
-
                 }
                 if (inverse) error = !error
               }
@@ -296,8 +296,6 @@ class Validator {
     const domain = email.split('@').pop().toLowerCase()
     return disposableDomains && disposableDomains.has(domain)
   }
-
-
 
   var(name, value = null) {
     if (this.#completed) this.#completed = false

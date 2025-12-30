@@ -1,7 +1,7 @@
 const net = require('net')
-const crypto = require('crypto')
+const nodeCrypto = require('crypto')
 const fs = require('fs')
-const Form = require('./View/Form')
+// const Form = require('./View/Form')
 
 const CACHE_DIR = './storage/.cache'
 
@@ -15,7 +15,7 @@ class Mail {
   constructor(template) {
     this.#template = template
   }
-  
+
   #functions = {
     '{!!': {
       function: '${await ',
@@ -118,7 +118,7 @@ class Mail {
 
       if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
       else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
-      
+
       return fullMatch
     })
 
@@ -129,20 +129,20 @@ class Mail {
       content = content.replace(/<odac([^>]*)>((?:(?!<odac)[\s\S])*?)<\/odac>/g, (fullMatch, attributes, innerContent) => {
         attributes = attributes.trim()
         innerContent = innerContent.trim()
-        
+
         const attrs = {}
         const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
         let match
         while ((match = attrRegex.exec(attributes))) {
-           const key = match[1]
-           const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-           attrs[key] = value
+          const key = match[1]
+          const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
+          attrs[key] = value
         }
-
 
         if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
         else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
-        else if (attrs.t || attrs.translate) return `{{ '${innerContent}' }}` // Simple fallback for mail
+        else if (attrs.t || attrs.translate)
+          return `{{ '${innerContent}' }}` // Simple fallback for mail
         else return `{{ '${innerContent}' }}`
       })
       if (before === content) break
@@ -156,17 +156,16 @@ class Mail {
     let mtime = fs.statSync(file).mtimeMs
     let content = fs.readFileSync(file, 'utf8')
 
-    // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile. 
+    // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile.
     // For performance in emails (usually background), re-compiling is okay, but caching is better.
     // Let's use global Odac.View.cache if available or local.
     if (!Odac.View) Odac.View = {}
     if (!Odac.View.cache) Odac.View.cache = {}
 
     if (Odac.View.cache[file]?.mtime !== mtime) {
-        
       // No Form options needed normally for simplified email templates, but keeping Form.parse for consistency if needed
       // content = Form.parse(content, {Request: {}, ...Odac}) // Partially mock if Form needs it, but Form usually needs full Request.
-      // Skipping Form.parse for mail for now unless requested, as it relies on Session/Request heavily. 
+      // Skipping Form.parse for mail for now unless requested, as it relies on Session/Request heavily.
       // User asked for "View file rendering", usually meaning logic tags.
 
       const jsBlocks = []
@@ -185,7 +184,7 @@ class Mail {
 
       let result = 'html += `\n' + content + '\n`'
       content = content.split('\n')
-      
+
       for (let key in this.#functions) {
         let att = ''
         let func = this.#functions[key]
@@ -220,8 +219,8 @@ class Mail {
           let fun = func.function
 
           // Simplified logic for loop
-           if (key === 'for' || key === 'list') {
-             let constructor
+          if (key === 'for' || key === 'list') {
+            let constructor
             if (vars.var) {
               constructor = `await ${vars.var}`
               delete vars.var
@@ -242,26 +241,28 @@ class Mail {
           }
         }
       }
-      
-      let cache = `${crypto.createHash('md5').update(file).digest('hex')}`
+
+      let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
       if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, {recursive: true})
       fs.writeFileSync(
         `${CACHE_DIR}/${cache}`,
         `module.exports = async (Odac, data, get, __) => {\n
            // Destructure data keys into local scope variables
-           ${Object.keys(data).map(k => `let ${k} = data['${k}'];`).join('\n')}
+           ${Object.keys(data)
+             .map(k => `let ${k} = data['${k}'];`)
+             .join('\n')}
            let html = '';\n${result}\nreturn html.trim()\n}`
       )
       delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
-      Odac.View.cache[file] = { mtime: mtime, cache: cache }
+      Odac.View.cache[file] = {mtime: mtime, cache: cache}
     }
-    
+
     try {
       return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
         Odac,
         data,
-        (key) => data[key],
-        (...args) => Odac.Lang ? Odac.Lang.get(...args) : args[0]
+        key => data[key],
+        (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0])
       )
     } catch (e) {
       console.error(e)
@@ -291,98 +292,102 @@ class Mail {
 
   #encode(text) {
     if (!text) return ''
+    // eslint-disable-next-line
     if (/^[\x00-\x7F]*$/.test(text)) return text
     return '=?UTF-8?B?' + Buffer.from(text).toString('base64') + '?='
   }
 
   send(data = {}) {
-    return new Promise(async resolve => {
-      try {
-        if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
-          console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
-          return resolve(false)
-        }
-        if (!this.#from || !this.#subject || !this.#to) {
-          console.error('[Mail] Missing required fields: From, Subject, or To')
-          return resolve(false)
-        }
-        if (!Odac.Var(this.#from.email).is('email')) {
-          console.error('[Mail] From field is not a valid e-mail address')
-          return resolve(false)
-        }
-        if (!Odac.Var(this.#to.value[0].address).is('email')) {
-          console.error('[Mail] To field is not a valid e-mail address')
-          return resolve(false)
-        }
-        if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
-        if (!this.#header['To']) {
-          const t = this.#to.value[0]
-          this.#header['To'] = t.name ? `${this.#encode(t.name)} <${t.address}>` : t.address
-        }
-        if (!this.#header['Subject']) this.#header['Subject'] = this.#encode(this.#subject)
-        if (!this.#header['Message-ID']) this.#header['Message-ID'] = `<${crypto.randomBytes(16).toString('hex')}-${Date.now()}@odac>`
-
-        if (!this.#header['Date']) this.#header['Date'] = new Date().toUTCString()
-        if (!this.#header['Content-Type'])
-          this.#header['Content-Type'] = 'multipart/alternative; charset=UTF-8; boundary="----=' + crypto.randomBytes(32).toString('hex') + '"'
-        if (!this.#header['X-Mailer']) this.#header['X-Mailer'] = 'ODAC'
-        if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
-        let content = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
-        const client = new net.Socket()
-        const payload = {
-          auth: process.env.ODAC_API_KEY,
-          action: 'mail.send',
-          data: [
-            {
-              subject: this.#subject,
-              from: {value: [{address: this.#from.email, name: this.#from.name}]},
-              to: this.#to,
-              header: this.#header,
-              html: content,
-              text: content
-                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                .replace(/<[^>]+>/g, '')
-                .replace(/\s+/g, ' ')
-                .trim(),
-              attachments: []
-            }
-          ]
-        }
-
-        const socketPath = process.env.ODAC_API_SOCKET || '/var/run/odac.sock'
-        
-        if (Odac.Config.debug) console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
-        
-        client.connect(socketPath, () => {
-          if (Odac.Config.debug) console.log('[Mail] Connected to Odac Core. Sending payload...')
-          client.write(JSON.stringify(payload))
-        })
-
-        client.on('data', data => {
-          if (Odac.Config.debug) console.log('[Mail] Received data from server:', data.toString())
-          try {
-            const response = JSON.parse(data.toString())
-            resolve(response)
-          } catch (error) {
-            console.error('[Mail] Error parsing response:', error)
-            resolve(false)
+    return new Promise(resolve => {
+      ;(async () => {
+        try {
+          if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
+            console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
+            return resolve(false)
           }
-          client.destroy()
-        })
+          if (!this.#from || !this.#subject || !this.#to) {
+            console.error('[Mail] Missing required fields: From, Subject, or To')
+            return resolve(false)
+          }
+          if (!Odac.Var(this.#from.email).is('email')) {
+            console.error('[Mail] From field is not a valid e-mail address')
+            return resolve(false)
+          }
+          if (!Odac.Var(this.#to.value[0].address).is('email')) {
+            console.error('[Mail] To field is not a valid e-mail address')
+            return resolve(false)
+          }
+          if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
+          if (!this.#header['To']) {
+            const t = this.#to.value[0]
+            this.#header['To'] = t.name ? `${this.#encode(t.name)} <${t.address}>` : t.address
+          }
+          if (!this.#header['Subject']) this.#header['Subject'] = this.#encode(this.#subject)
+          if (!this.#header['Message-ID']) this.#header['Message-ID'] = `<${nodeCrypto.randomBytes(16).toString('hex')}-${Date.now()}@odac>`
 
-        client.on('error', error => {
-          console.error('[Mail] Socket Error:', error)
+          if (!this.#header['Date']) this.#header['Date'] = new Date().toUTCString()
+          if (!this.#header['Content-Type'])
+            this.#header['Content-Type'] =
+              'multipart/alternative; charset=UTF-8; boundary="----=' + nodeCrypto.randomBytes(32).toString('hex') + '"'
+          if (!this.#header['X-Mailer']) this.#header['X-Mailer'] = 'ODAC'
+          if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
+          let content = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
+          const client = new net.Socket()
+          const payload = {
+            auth: process.env.ODAC_API_KEY,
+            action: 'mail.send',
+            data: [
+              {
+                subject: this.#subject,
+                from: {value: [{address: this.#from.email, name: this.#from.name}]},
+                to: this.#to,
+                header: this.#header,
+                html: content,
+                text: content
+                  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                  .replace(/<[^>]+>/g, '')
+                  .replace(/\s+/g, ' ')
+                  .trim(),
+                attachments: []
+              }
+            ]
+          }
+
+          const socketPath = process.env.ODAC_API_SOCKET || '/var/run/odac.sock'
+
+          if (Odac.Config.debug) console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
+
+          client.connect(socketPath, () => {
+            if (Odac.Config.debug) console.log('[Mail] Connected to Odac Core. Sending payload...')
+            client.write(JSON.stringify(payload))
+          })
+
+          client.on('data', data => {
+            if (Odac.Config.debug) console.log('[Mail] Received data from server:', data.toString())
+            try {
+              const response = JSON.parse(data.toString())
+              resolve(response)
+            } catch (error) {
+              console.error('[Mail] Error parsing response:', error)
+              resolve(false)
+            }
+            client.destroy()
+          })
+
+          client.on('error', error => {
+            console.error('[Mail] Socket Error:', error)
+            resolve(false)
+          })
+
+          client.on('close', () => {
+            if (Odac.Config.debug) console.log('[Mail] Connection closed')
+          })
+        } catch (error) {
+          console.error('[Mail] Unexpected error:', error)
           resolve(false)
-        })
-
-        client.on('close', () => {
-          if (Odac.Config.debug) console.log('[Mail] Connection closed')
-        })
-      } catch (error) {
-        console.error('[Mail] Unexpected error:', error)
-        resolve(false)
-      }
+        }
+      })()
     })
   }
 }

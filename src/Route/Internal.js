@@ -1,4 +1,4 @@
-const crypto = require('crypto')
+const nodeCrypto = require('crypto')
 
 class Internal {
   static #validateField(validator, field, validation, value) {
@@ -275,112 +275,114 @@ class Internal {
   }
 
   static async magicLogin(Odac) {
-      const token = await Odac.request('_odac_magic_login_token')
-      if (!token) {
-        return Odac.return({
-          result: {success: false},
-          errors: {_odac_form: 'Invalid request'}
-        })
-      }
-
-      const formData = Odac.Request.session(`_magic_login_form_${token}`)
-      if (!formData) {
-        return Odac.return({
-          result: {success: false},
-          errors: {_odac_form: 'Form session expired. Please refresh the page.'}
-        })
-      }
-
-      if (formData.expires < Date.now()) {
-          Odac.Request.session(`_magic_login_form_${token}`, null)
-          return Odac.return({
-            result: {success: false},
-            errors: {_odac_form: 'Form session expired. Please refresh the page.'}
-          })
-      }
-      
-      // Basic security checks
-      if (formData.sessionId !== Odac.Request.session('_client') ||
-          formData.userAgent !== Odac.Request.header('user-agent') ||
-          formData.ip !== Odac.Request.ip) {
-          return Odac.return({
-             result: {success: false},
-             errors: {_odac_form: 'Invalid request security token'}
-          })
-      }
-      
-      const config = formData.config
-      const validator = Odac.validator()
-      let email = ''
-      
-      // Validate inputs (expecting email)
-      for (const field of config.fields) {
-          const value = await Odac.request(field.name)
-          for (const validation of field.validations) {
-             this.#validateField(validator, field, validation, value)
-          }
-          if (field.name === 'email') email = value
-      }
-      
-      if (await validator.error()) {
-          return validator.result()
-      }
-      
-      if (!email) {
-          return Odac.return({
-              result: {success: false},
-              errors: {email: 'Email is required'}
-          })
-      }
-      
-      const result = await Odac.Auth.magic(email, {
-          autoRegister: false, // config.autoRegister
-          redirect: config.redirect
-      })
-      
-      if (!result.success) {
-          return Odac.return({
-              result: {success: false},
-              errors: {_odac_form: result.error || 'Failed to send magic link'}
-          })
-      }
-      
-      Odac.Request.session(`_magic_login_form_${token}`, null)
-      
+    const token = await Odac.request('_odac_magic_login_token')
+    if (!token) {
       return Odac.return({
-          result: {
-              success: true,
-              message: result.message || 'Magic link sent! Please check your email.',
-              // We might want to keep them on page or redirect to a "check email" page
-              redirect: config.redirect
-          }
+        result: {success: false},
+        errors: {_odac_form: 'Invalid request'}
       })
+    }
+
+    const formData = Odac.Request.session(`_magic_login_form_${token}`)
+    if (!formData) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+      })
+    }
+
+    if (formData.expires < Date.now()) {
+      Odac.Request.session(`_magic_login_form_${token}`, null)
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+      })
+    }
+
+    // Basic security checks
+    if (
+      formData.sessionId !== Odac.Request.session('_client') ||
+      formData.userAgent !== Odac.Request.header('user-agent') ||
+      formData.ip !== Odac.Request.ip
+    ) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Invalid request security token'}
+      })
+    }
+
+    const config = formData.config
+    const validator = Odac.validator()
+    let email = ''
+
+    // Validate inputs (expecting email)
+    for (const field of config.fields) {
+      const value = await Odac.request(field.name)
+      for (const validation of field.validations) {
+        this.#validateField(validator, field, validation, value)
+      }
+      if (field.name === 'email') email = value
+    }
+
+    if (await validator.error()) {
+      return validator.result()
+    }
+
+    if (!email) {
+      return Odac.return({
+        result: {success: false},
+        errors: {email: 'Email is required'}
+      })
+    }
+
+    const result = await Odac.Auth.magic(email, {
+      autoRegister: false, // config.autoRegister
+      redirect: config.redirect
+    })
+
+    if (!result.success) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: result.error || 'Failed to send magic link'}
+      })
+    }
+
+    Odac.Request.session(`_magic_login_form_${token}`, null)
+
+    return Odac.return({
+      result: {
+        success: true,
+        message: result.message || 'Magic link sent! Please check your email.',
+        // We might want to keep them on page or redirect to a "check email" page
+        redirect: config.redirect
+      }
+    })
   }
-  
+
   static async magicVerify(Odac) {
-      const token = await Odac.request('token')
-      const email = await Odac.request('email')
-      
-      if (!token || !email) {
-          return Odac.Request.end('Invalid verification link.')
-      }
-      
-      const result = await Odac.Auth.verifyMagicLink(token, email)
-      
-      if (!result.success) {
-          return Odac.Request.end(`Verification failed: ${result.error}`)
-      }
-      
-      // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
-      let redirectUrl = await Odac.request('redirect_url') || Odac.Config.auth?.magicLinkRedirect || '/';
-      
-      // Security: Prevent open redirect attacks by only allowing relative paths
-      if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
-          redirectUrl = '/'
-      }
-      
-      Odac.Request.redirect(redirectUrl)
-      Odac.Request.end('')
+    const token = await Odac.request('token')
+    const email = await Odac.request('email')
+
+    if (!token || !email) {
+      return Odac.Request.end('Invalid verification link.')
+    }
+
+    const result = await Odac.Auth.verifyMagicLink(token, email)
+
+    if (!result.success) {
+      return Odac.Request.end(`Verification failed: ${result.error}`)
+    }
+
+    // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
+    let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
+
+    // Security: Prevent open redirect attacks by only allowing relative paths
+    if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
+      redirectUrl = '/'
+    }
+
+    Odac.Request.redirect(redirectUrl)
+    Odac.Request.end('')
   }
 
   static async processForm(Odac) {
@@ -540,91 +542,95 @@ class Internal {
     if (Odac.formConfig.action) {
       const actionParts = Odac.formConfig.action.split('.')
       if (actionParts.length === 2) {
-         const controllerName = actionParts[0]
-         const methodName = actionParts[1]
-         
-         // Dynamically load controller
-         // We need to access Odac.Route.class to find the controller path/module
-         // Or use require directly if we know the path structure. 
-         // Since we are in framework/src/Route/Internal.js, controllers are in framework/controller/ OR app/controller/
-         // Ideally Odac.Route.class has the loaded controllers.
-         
-         let controllerModule = null
-         
-         if (Odac.Route && Odac.Route.class && Odac.Route.class[controllerName]) {
-             controllerModule = Odac.Route.class[controllerName].module
-         } else {
-             // Try to require it if not loaded (though Route.js should have loaded it)
-             // This fallback might be tricky with absolute paths, relying on Route.class is safer.
-         }
+        const controllerName = actionParts[0]
+        const methodName = actionParts[1]
 
-         if (controllerModule) {
-             try {
-                 
-                 // Create Form Helper Object
-                 const formHelper = {
-                     data: Odac.formData,
-                     
-                     error: (field, message) => {
-                         return Odac.return({
-                             result: { success: false },
-                             errors: { [field]: message }
-                         })
-                     },
-                     
-                     success: (message, redirect = null) => {
-                          const finalRedirect = redirect || Odac.formConfig.redirect
-                          let newToken = null
+        // Dynamically load controller
+        // We need to access Odac.Route.class to find the controller path/module
+        // Or use require directly if we know the path structure.
+        // Since we are in framework/src/Route/Internal.js, controllers are in framework/controller/ OR app/controller/
+        // Ideally Odac.Route.class has the loaded controllers.
 
-                          // Only rotate token if we are staying on the page (no redirect)
-                          if (!finalRedirect) {
-                              newToken = crypto.randomBytes(32).toString('hex')
+        let controllerModule = null
 
-                              if (formData && formData.config) {
-                                  const newFormData = { ...formData, config: { ...formData.config, token: newToken }, created: Date.now(), expires: Date.now() + 30 * 60 * 1000 }
-                                  Odac.Request.session(`_custom_form_${newToken}`, newFormData)
-                              }
-                          }
+        if (Odac.Route && Odac.Route.class && Odac.Route.class[controllerName]) {
+          controllerModule = Odac.Route.class[controllerName].module
+        } else {
+          // Try to require it if not loaded (though Route.js should have loaded it)
+          // This fallback might be tricky with absolute paths, relying on Route.class is safer.
+        }
 
-                          Odac.Request.session(`_custom_form_${token}`, null)
+        if (controllerModule) {
+          try {
+            // Create Form Helper Object
+            const formHelper = {
+              data: Odac.formData,
 
-                          return Odac.return({
-                              result: {
-                                  success: true,
-                                  message: message,
-                                  redirect: finalRedirect,
-                                  _token: newToken
-                              }
-                          })
-                      }
+              error: (field, message) => {
+                return Odac.return({
+                  result: {success: false},
+                  errors: {[field]: message}
+                })
+              },
+
+              success: (message, redirect = null) => {
+                const finalRedirect = redirect || Odac.formConfig.redirect
+                let newToken = null
+
+                // Only rotate token if we are staying on the page (no redirect)
+                if (!finalRedirect) {
+                  newToken = nodeCrypto.randomBytes(32).toString('hex')
+
+                  if (formData && formData.config) {
+                    const newFormData = {
+                      ...formData,
+                      config: {...formData.config, token: newToken},
+                      created: Date.now(),
+                      expires: Date.now() + 30 * 60 * 1000
+                    }
+                    Odac.Request.session(`_custom_form_${newToken}`, newFormData)
                   }
+                }
 
-                  // Handle Class-based Controller
-                  if (typeof controllerModule === 'function' && controllerModule.prototype) {
-                      const instance = new controllerModule(Odac)
-                      if (typeof instance[methodName] === 'function') {
-                          return await instance[methodName](formHelper)
-                      }
+                Odac.Request.session(`_custom_form_${token}`, null)
+
+                return Odac.return({
+                  result: {
+                    success: true,
+                    message: message,
+                    redirect: finalRedirect,
+                    _token: newToken
                   }
-                  // Handle Object-based Controller (Backwards Compatibility)
-                  else if (typeof controllerModule[methodName] === 'function') {
-                      return await controllerModule[methodName](Odac, formHelper)
-                  }
-              } catch (e) {
-                  console.error(e)
-                   return Odac.return({
-                     result: {success: false},
-                     errors: {_odac_form: 'An error occurred while processing your request.'}
-                   })
+                })
               }
+            }
+
+            // Handle Class-based Controller
+            if (typeof controllerModule === 'function' && controllerModule.prototype) {
+              const instance = new controllerModule(Odac)
+              if (typeof instance[methodName] === 'function') {
+                return await instance[methodName](formHelper)
+              }
+            }
+            // Handle Object-based Controller (Backwards Compatibility)
+            else if (typeof controllerModule[methodName] === 'function') {
+              return await controllerModule[methodName](Odac, formHelper)
+            }
+          } catch (e) {
+            console.error(e)
+            return Odac.return({
+              result: {success: false},
+              errors: {_odac_form: 'An error occurred while processing your request.'}
+            })
           }
-          
-          console.error(`Action ${Odac.formConfig.action} not found or invalid.`)
-          return Odac.return({
-             result: {success: false},
-             errors: {_odac_form: 'An error occurred while processing your request.'}
-          })
-       }
+        }
+
+        console.error(`Action ${Odac.formConfig.action} not found or invalid.`)
+        return Odac.return({
+          result: {success: false},
+          errors: {_odac_form: 'An error occurred while processing your request.'}
+        })
+      }
     }
 
     Odac.Request.session(`_custom_form_${token}`, null)
