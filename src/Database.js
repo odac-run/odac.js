@@ -50,8 +50,24 @@ class DatabaseManager {
       } catch (e) {
         console.error(`Odac Database Error: Failed to connect to '${key}' database.`)
         console.error(e.message)
-      }
     }
+  }
+
+  nanoid(size = 21) {
+    const nodeCrypto = require('crypto')
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    let id = ''
+    while (id.length < size) {
+        const bytes = nodeCrypto.randomBytes(size + 5)
+        for (let i = 0; i < bytes.length; i++) {
+            const byte = bytes[i] & 63
+            if (byte < 62) {
+                id += alphabet[byte]
+                if (id.length === size) break
+            }
+        }
+    }
+    return id
   }
 }
 
@@ -145,6 +161,9 @@ const rootProxy = new Proxy(manager, {
         }
         return val
     }
+
+    // Expose nanoid helper directly on Odac.DB.nanoid()
+    if (prop === 'nanoid') return target.nanoid.bind(target)
 
     // Default connection fallback: Odac.DB.users -> default.users
     if (target.connections['default']) {

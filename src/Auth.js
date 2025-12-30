@@ -131,7 +131,7 @@ class Auth {
     let token_y = Odac.Var(Math.random().toString() + Date.now().toString() + this.#request.id + this.#request.ip).md5()
     
     let cookie = {
-      id: this.#nanoid(),
+      id: Odac.DB.nanoid(),
       user: user[key],
       token_x: Odac.Var(Math.random().toString() + Date.now().toString()).md5(),
       token_y: Odac.Var(token_y).hash(),
@@ -234,7 +234,7 @@ class Auth {
 
     try {
        if (shouldGenerateId && !data[primaryKey]) {
-            data[primaryKey] = this.#nanoid()
+            data[primaryKey] = Odac.DB.nanoid()
        }
 
        const insertResult = await Odac.DB[this.#table].insert(data)
@@ -509,22 +509,6 @@ class Auth {
 
   // --- MIGRATION HELPERS (Code-First) ---
   
-  #nanoid(size = 21) {
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    let id = ''
-    while (id.length < size) {
-        const bytes = nodeCrypto.randomBytes(size + 5) // Generate a bit more to minimize retries
-        for (let i = 0; i < bytes.length; i++) {
-            const byte = bytes[i] & 63
-            if (byte < 62) {
-                id += alphabet[byte]
-                if (id.length === size) break
-            }
-        }
-    }
-    return id
-  }
-
   async #ensureTokenTableV2(tableName) {
       // Using .schema helper
       await Odac.DB[tableName].schema(t => {

@@ -109,6 +109,28 @@ await Odac.DB.users
 
 ## Deleting Data
 
-```javascript
 await Odac.DB.users.where('id', 1).delete();
+```
+
+---
+
+## ID Generation (NanoID)
+
+ODAC includes a built-in helper for generating robust, unique string IDs (NanoID) without needing external packages. Secure, URL-friendly, and collision-resistant.
+
+```javascript
+// Generate a standard 21-character ID (e.g., "V1StGXR8_Z5jdHi6B-myT")
+const id = Odac.DB.nanoid();
+
+// Generate a custom length ID
+const shortId = Odac.DB.nanoid(10);
+```
+
+This is particularly useful when inserting records into tables that use string-based Primary Keys instead of auto-increment integers.
+
+```javascript
+await Odac.DB.posts.insert({
+    id: Odac.DB.nanoid(),
+    title: 'My First Post'
+});
 ```
