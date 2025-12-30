@@ -127,9 +127,9 @@ Make sure your `config.json` has the auth configuration:
 ```
 
 ### ID Generation Strategy
-Odac automatically detects your preferred ID strategy:
+ODAC automatically detects your preferred ID strategy:
 1.  **NanoID (Default)**: Generates secure, URL-friendly 21-character string IDs. Recommended for modern apps.
-2.  **Auto-Increment**: If your database table uses `INTEGER` or `SERIAL` primary keys, Odac detects this and lets the database handle ID generation.
+2.  **Auto-Increment**: If your database table uses `INTEGER` or `SERIAL` primary keys, ODAC detects this and lets the database handle ID generation.
 3.  **Manual Override**: You can force a specific behavior using the `idType` config setting.
 
 ## Security Notes
