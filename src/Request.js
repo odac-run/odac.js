@@ -44,7 +44,11 @@ class OdacRequest {
   async abort(code) {
     this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
-    if (Odac.Route.routes[this.route].error && Odac.Route.routes[this.route].error[code])
+    if (
+      Odac.Route.routes[this.route].error &&
+      Odac.Route.routes[this.route].error[code] &&
+      typeof Odac.Route.routes[this.route].error[code].cache === 'function'
+    )
       result = await Odac.Route.routes[this.route].error[code].cache(this.#odac)
     this.end(result)
   }
