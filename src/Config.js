@@ -5,7 +5,7 @@ const os = require('os')
 module.exports = {
   auth: {
     key: 'id',
-    token: 'candy_auth'
+    token: 'odac_auth'
   },
   request: {
     timeout: 10000
