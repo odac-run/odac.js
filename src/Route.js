@@ -491,6 +491,8 @@ class Route {
       this.routes[Odac.Route.buff][type][url].token = options.token ?? true
 
       this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+    } else if (file && typeof file === 'string') {
+      console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
     }
 
     return this
