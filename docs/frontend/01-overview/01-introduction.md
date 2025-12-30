@@ -131,7 +131,11 @@ odac.get('/api/users', function(data) {
 ## Other Utility Functions
 
 -   **`Odac.client()`**: Returns a unique client identifier from a cookie.
--   **`Odac.data()`**: Returns data from the `odac_data` cookie, which is set by the backend. This data includes the current page and the initial CSRF token.
+-   **`Odac.data(key)`**: Returns shared data passed from the backend via `Odac.share`. You can get the full data object or a specific key:
+    ```javascript
+    let allData = odac.data();
+    let user = odac.data('user'); // Returns null if not exists
+    ```
 -   **`Odac.page()`**: Returns the identifier of the current page. This is the controller name (e.g., `'user'`) or view name (e.g., `'dashboard'`) set by the backend. Use this to conditionally run code for specific pages.
 -   **`Odac.storage()`**: A wrapper for `localStorage`.
     ```javascript
