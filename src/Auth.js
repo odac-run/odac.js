@@ -294,7 +294,7 @@ class Auth {
   async magic(email, options = {}) {
     if (!Odac.Config.auth) Odac.Config.auth = {}
     this.#table = Odac.Config.auth.table || 'users'
-    const magicTable = Odac.Config.auth.magicTable || 'magic_links'
+    const magicTable = Odac.Config.auth.magicTable || 'odac_magic'
 
     // Ensure magic table exists
     try {
@@ -412,7 +412,7 @@ class Auth {
       return {success: false, error: 'Invalid link'}
     }
 
-    const magicTable = Odac.Config.auth?.magicTable || 'magic_links'
+    const magicTable = Odac.Config.auth?.magicTable || 'odac_magic'
     this.#table = Odac.Config.auth?.table || 'users'
     const primaryKey = Odac.Config.auth?.key || 'id'
 
