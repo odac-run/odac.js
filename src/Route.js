@@ -106,14 +106,14 @@ class Route {
   }
 
   async #executeController(Odac, controller) {
-    const middlewareResult = await this.#runMiddlewares(Odac, controller.middlewares)
-    if (middlewareResult !== undefined) return middlewareResult
-
     if (controller.params) {
       for (let key in controller.params) {
         Odac.Request.data.url[key] = controller.params[key]
       }
     }
+
+    const middlewareResult = await this.#runMiddlewares(Odac, controller.middlewares)
+    if (middlewareResult !== undefined) return middlewareResult
 
     if (typeof controller.cache === 'function') {
       return controller.cache(Odac)
