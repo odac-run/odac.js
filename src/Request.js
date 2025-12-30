@@ -244,7 +244,7 @@ class OdacRequest {
       .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex')
-    let pub = this.cookie('candy_session')
+    let pub = this.cookie('odac_session')
     if (!pub || !Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
       const lockKey = `lock:${this.ip}:${pri}`
       const now = Date.now()
@@ -264,7 +264,7 @@ class OdacRequest {
         } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
         Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
         Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
-        this.cookie('candy_session', `${pub}`)
+        this.cookie('odac_session', `${pub}`)
         setTimeout(() => {
           const lock = Odac.Storage.get(lockKey)
           if (lock?.timestamp === now) {
