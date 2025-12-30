@@ -131,6 +131,7 @@ class Auth {
     let token_y = Odac.Var(Math.random().toString() + Date.now().toString() + this.#request.id + this.#request.ip).md5()
     
     let cookie = {
+      id: this.#nanoid(),
       user: user[key],
       token_x: Odac.Var(Math.random().toString() + Date.now().toString()).md5(),
       token_y: Odac.Var(token_y).hash(),
@@ -202,39 +203,43 @@ class Auth {
       }
     }
 
+    // Auto-detect ID strategy (NanoID vs Auto-Increment)
+    let shouldGenerateId = true
+
+    // 1. Check User Config Preference
+    if (Odac.Config.auth.idType === 'int' || Odac.Config.auth.idType === 'auto') shouldGenerateId = false
+    else if (Odac.Config.auth.idType === 'string' || Odac.Config.auth.idType === 'nanoid') shouldGenerateId = true
+    else {
+        // 2. Detect from Database Schema (and Cache it)
+        if (!Odac.Config.auth._viewedPkType) {
+            try {
+                // Determine column type of primary key
+                const colInfo = await Odac.DB[this.#table].columnInfo(primaryKey)
+                const type = colInfo?.type ? colInfo.type.toLowerCase() : 'string'
+                
+                // Common integer types in various SQL dialects
+                if (type.includes('int') || type.includes('serial') || type.includes('number')) {
+                    Odac.Config.auth._viewedPkType = 'int'
+                } else {
+                    Odac.Config.auth._viewedPkType = 'string'
+                }
+            } catch(e) {
+                // If table doesn't exist yet or error, default to string (NanoID) as per our new standard
+                Odac.Config.auth._viewedPkType = 'string'
+            }
+        }
+        
+        if (Odac.Config.auth._viewedPkType === 'int') shouldGenerateId = false
+    }
+
     try {
-      // Insert returns [id] in mysql/sqlite if standard knex, or result object
-      // But we are using a proxy that might not standardise this yet? 
-      // Actually standard Knex insert returns:
-      // - MySQL: [id] (array with insertId)
-      // - PG: [result] if returning used
-      
+       if (shouldGenerateId && !data[primaryKey]) {
+            data[primaryKey] = this.#nanoid()
+       }
+
        const insertResult = await Odac.DB[this.#table].insert(data)
        
-       // Handle return result (Knex returns array of IDs usually)
-       let userId
-       if (Array.isArray(insertResult) && insertResult.length > 0) {
-           userId = insertResult[0]
-       } else if (insertResult && insertResult.insertId) { // mysql2 raw
-           userId = insertResult.insertId
-       } else {
-           // Try to query by unique field if ID not returned
-           // Fallback
-       }
-       
-       // If no userId, create fallback query to find user
-       // Actually most modern Knex invocations return [id] for auto-increment.
-       
-       if (!userId) {
-           // Fallback: try finding the user we just inserted
-           // Not 100% safe but better than failure
-            for (const field of uniqueFields) {
-               if (data[field]) {
-                   const u = await Odac.DB[this.#table].where(field, data[field]).first()
-                   if (u) userId = u[primaryKey]
-               }
-            }
-       }
+       let userId = data[primaryKey]
        
        if (!userId) {
              console.error('Odac Auth Error: Could not determine new user ID')
@@ -504,11 +509,27 @@ class Auth {
 
   // --- MIGRATION HELPERS (Code-First) ---
   
+  #nanoid(size = 21) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    let id = ''
+    while (id.length < size) {
+        const bytes = nodeCrypto.randomBytes(size + 5) // Generate a bit more to minimize retries
+        for (let i = 0; i < bytes.length; i++) {
+            const byte = bytes[i] & 63
+            if (byte < 62) {
+                id += alphabet[byte]
+                if (id.length === size) break
+            }
+        }
+    }
+    return id
+  }
+
   async #ensureTokenTableV2(tableName) {
       // Using .schema helper
       await Odac.DB[tableName].schema(t => {
-          t.increments('id')
-          t.integer('user').notNullable()
+          t.string('id', 21).primary()
+          t.string('user', 21).notNullable()
           t.string('token_x').notNullable()
           t.string('token_y').notNullable()
           t.string('browser').notNullable()
@@ -520,7 +541,7 @@ class Auth {
   
   async #ensureUserTableV2(tableName, primaryKey, passwordField, uniqueFields, sampleData) {
       await Odac.DB[tableName].schema(t => {
-          t.increments(primaryKey)
+          t.string(primaryKey, 21).primary()
           
           for (const field of uniqueFields) {
               if (field !== primaryKey) t.string(field).notNullable().unique()
