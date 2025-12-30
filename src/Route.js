@@ -532,6 +532,8 @@ class Route {
           _odac.View.set(file)
           return
         })
+      } else if (file) {
+        this.set('page', path, file)
       }
       return this
     }
