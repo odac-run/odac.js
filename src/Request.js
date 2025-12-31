@@ -12,6 +12,7 @@ class OdacRequest {
   #earlyHints = null
   #sessions = {}
   variables = {}
+  sharedData = {}
   isAjaxLoad = false
   ajaxLoad = null
   clientSkeleton = null
@@ -293,6 +294,15 @@ class OdacRequest {
   set(key, value, ajax = false) {
     if (typeof key === 'object') for (const k in key) this.variables[k] = {value: key[k], ajax: ajax}
     else this.variables[key] = {value: value, ajax: ajax}
+  }
+
+  // - SHARE DATA (Client Side)
+  share(key, value) {
+    if (typeof key === 'object' && key !== null) {
+      Object.assign(this.sharedData, key)
+    } else {
+      this.sharedData[key] = value
+    }
   }
 
   // - HTTP CODE

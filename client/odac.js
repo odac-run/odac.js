@@ -249,10 +249,24 @@ class _odac {
     return document.cookie.split('odac_client=')[1].split(';')[0]
   }
 
-  data() {
-    if (this.#data) return this.#data
-    if (!document.cookie.includes('odac_data=')) return null
-    return JSON.parse(unescape(document.cookie.split('odac_data=')[1].split(';')[0]))
+  data(key) {
+    if (!this.#data) {
+      const script = document.getElementById('odac-data')
+      if (script) {
+        try {
+          this.#data = JSON.parse(script.textContent)
+        } catch (e) {
+          console.error('Odac: Failed to parse odac-data', e)
+        }
+      }
+    }
+    
+    if (this.#data) {
+      if (key) return this.#data[key] ?? null
+      return this.#data
+    }
+    
+    return null
   }
 
   form(obj, callback) {
@@ -673,6 +687,14 @@ class _odac {
       if (newPage !== null) {
         this.#page = newPage
         document.documentElement.dataset.odacPage = newPage
+      }
+
+      if (ajaxData.data) {
+        this.#data = ajaxData.data
+      }
+
+      if (ajaxData.title) {
+        document.title = ajaxData.title
       }
 
       if (elementsToUpdate.length === 0) {

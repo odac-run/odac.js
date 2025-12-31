@@ -90,6 +90,9 @@ module.exports = {
       _odac.set = function (key, value) {
         return _odac.Request.set(key, value)
       }
+      _odac.share = function (key, value) {
+        return _odac.Request.share(key, value)
+      }
       _odac.token = function (hash) {
         return hash ? _odac.Token.check(hash) : _odac.Token.generate()
       }

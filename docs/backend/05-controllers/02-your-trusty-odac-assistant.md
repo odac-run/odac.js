@@ -14,6 +14,8 @@ Remember the `Odac` object? It's your best friend inside a controller. It's pass
 
 *   `Odac.return(data)`: Send back a response.
 *   `Odac.direct(url)`: Redirect the user to a new page.
+*   `Odac.set(key, value)`: Pass variables to your View template.
+*   `Odac.share(key, value)`: Share data directly with frontend JavaScript (`odac.data()`).
 *   `Odac.cookie(key, value)`: Set a browser cookie.
 *   `Odac.validator()`: Check user input easily.
 *   `Odac.setInterval(callback, delay)`: Schedule repeating tasks (auto-cleanup).
