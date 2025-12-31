@@ -262,7 +262,7 @@ class _odac {
     }
     
     if (this.#data) {
-      if (key) return this.#data[key] !== undefined ? this.#data[key] : null
+      if (key) return this.#data[key] ?? null
       return this.#data
     }
     
