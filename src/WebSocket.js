@@ -335,10 +335,14 @@ class WebSocketServer {
       'HTTP/1.1 101 Switching Protocols',
       'Upgrade: websocket',
       'Connection: Upgrade',
-      `Sec-WebSocket-Accept: ${acceptKey}`,
-      '',
-      ''
+      `Sec-WebSocket-Accept: ${acceptKey}`
     ]
+
+    if (req.headers['sec-websocket-protocol']) {
+      responseHeaders.push(`Sec-WebSocket-Protocol: ${req.headers['sec-websocket-protocol']}`)
+    }
+
+    responseHeaders.push('', '')
 
     socket.write(responseHeaders.join('\r\n'))
 
