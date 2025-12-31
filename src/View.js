@@ -3,6 +3,8 @@ const fs = require('fs')
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 
+const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+
 const CACHE_DIR = './storage/.cache'
 
 class View {
@@ -150,7 +152,7 @@ class View {
             output[element] = html
 
             // Extract title if present inside the part
-            const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i)
+            const titleMatch = html.match(TITLE_REGEX)
             if (titleMatch && titleMatch[1]) {
               title = titleMatch[1]
             }
@@ -168,13 +170,15 @@ class View {
             if (fs.existsSync(`./view/${key}/${viewPath}.html`)) {
               try {
                 const partHtml = await this.#render(`./view/${key}/${viewPath}.html`)
-                const titleMatch = partHtml.match(/<title[^>]*>([^<]*)<\/title>/i)
+                const titleMatch = partHtml.match(TITLE_REGEX)
                 if (titleMatch && titleMatch[1]) {
                   title = titleMatch[1]
                   break
                 }
-              } catch {
-                // Ignore render errors
+              } catch (e) {
+                if (this.#odac.Config?.debug) {
+                  console.warn(`Odac: Failed to render part '${key}' while searching for title:`, e)
+                }
               }
             }
           }
