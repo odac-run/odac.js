@@ -657,7 +657,10 @@ class Route {
           }
         }
       }
-      return handler(Odac)
+      const res = handler(Odac)
+      if (res instanceof Promise) await res
+      ws.resume()
+      return res
     }
 
     this.#wsServer.route(path, wrappedHandler)

@@ -22,9 +22,14 @@ class WebSocketClient {
 
   constructor(socket, server, id) {
     this.#socket = socket
+    this.#socket.pause()
     this.#server = server
     this.#id = id
     this.#setupListeners()
+  }
+
+  resume() {
+    this.#socket.resume()
   }
 
   get id() {
@@ -336,6 +341,8 @@ class WebSocketServer {
     ]
 
     socket.write(responseHeaders.join('\r\n'))
+
+    if (head && head.length > 0) socket.unshift(head)
 
     const clientId = nodeCrypto.randomUUID()
     const client = new WebSocketClient(socket, this, clientId)
