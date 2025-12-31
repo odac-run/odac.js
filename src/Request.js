@@ -299,7 +299,7 @@ class OdacRequest {
   // - SHARE DATA (Client Side)
   share(key, value) {
     if (typeof key === 'object' && key !== null) {
-      for (const k in key) this.sharedData[k] = key[k]
+      Object.assign(this.sharedData, key)
     } else {
       this.sharedData[key] = value
     }
