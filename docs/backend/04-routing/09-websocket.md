@@ -45,6 +45,35 @@ web/
 │   └── websocket.js    # WebSocket routes (recommended)
 ```
 
+### Using Controllers
+
+You can also specify a connector file as a string. Odac will look for the file in `controller/ws/`.
+
+```javascript
+// route/websocket.js
+Odac.Route.ws('/chat', 'ChatController')
+```
+
+**File Structure:**
+```
+web/
+├── controller/
+│   └── ws/
+│       └── ChatController.js
+```
+
+**Controller File:**
+```javascript
+// controller/ws/ChatController.js
+module.exports = Odac => {
+  Odac.ws.send({type: 'welcome'})
+  
+  Odac.ws.on('message', data => {
+    // ...
+  })
+}
+```
+
 ## WebSocket Client API (Odac.ws)
 
 The WebSocket client is accessible via `Odac.ws` in your handler, providing a consistent API pattern with HTTP routes.

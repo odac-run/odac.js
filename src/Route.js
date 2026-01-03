@@ -600,6 +600,26 @@ class Route {
     const {token = true} = options
     const requireAuth = type === '#ws'
 
+    if (typeof handler !== 'function') {
+      let path = `${__dir}/controller/${type.replace('#', '')}/${handler}.js`
+      if (typeof handler === 'string' && handler.includes('.')) {
+        let arr = handler.split('.')
+        path = `${__dir}/controller/${arr[0]}/${type.replace('#', '')}/${arr.slice(1).join('.')}.js`
+      }
+
+      if (fs.existsSync(path)) {
+        handler = require(path)
+      } else {
+        console.error(`\x1b[31m[Odac]\x1b[0m WebSocket Controller not found: \x1b[33m${path}\x1b[0m`)
+        return
+      }
+    }
+
+    if (typeof handler !== 'function') {
+      console.error(`\x1b[31m[Odac]\x1b[0m Invalid WebSocket handler (not a function).`)
+      return
+    }
+
     const wrappedHandler = async (ws, Odac) => {
       Odac.ws = ws
 
