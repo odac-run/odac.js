@@ -18,6 +18,10 @@ module.exports = {
     auto: true,
     maxResources: 5
   },
+  ipc: {
+    driver: 'memory',
+    redis: 'default'
+  },
   debug: false,
 
   init: function () {

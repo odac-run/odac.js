@@ -18,6 +18,11 @@ module.exports = {
       // Start session garbage collector (runs every hour, expires after 7 days)
       Odac.Storage.startSessionGC()
 
+      // Initialize IPC for Memory Driver if active
+      if (Odac.Ipc.config.driver === 'memory') {
+        Odac.Ipc._initMemory()
+      }
+
       for (let i = 0; i < numCPUs; i++) {
         cluster.fork()
       }

@@ -7,6 +7,10 @@ module.exports = {
     await global.Odac.Env.init()
     await global.Odac.Config.init()
     await global.Odac.Database.init()
+
+    global.Odac.Ipc = require('./Ipc.js')
+    await global.Odac.Ipc.init()
+
     await global.Odac.Route.init()
     await global.Odac.Server.init()
     global.Odac.instance = this.instance
@@ -24,6 +28,7 @@ module.exports = {
     _odac.Database = require('./Database.js')
     _odac.DB = _odac.Database
     _odac.Route = global.Odac?.Route ?? new (require('./Route.js'))()
+    _odac.Ipc = require('./Ipc.js')
     _odac.Server = require('./Server.js')
     _odac.Storage = require('./Storage.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
