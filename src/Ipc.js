@@ -141,6 +141,8 @@ class Ipc extends EventEmitter {
           }
         }
       })
+
+      this._startGarbageCollector()
     } else {
       process.on('message', msg => {
         if (msg && msg.type === 'ipc:response') {
@@ -192,10 +194,19 @@ class Ipc extends EventEmitter {
   _handleDirectPrimaryCall(action, payload) {
     // Basic implementation for Primary process using itself
     if (action === 'set') {
-      this._memoryStore.set(payload.key, payload.value)
+      const expireAt = payload.ttl > 0 ? Date.now() + payload.ttl * 1000 : Infinity
+      this._memoryStore.set(payload.key, {value: payload.value, expireAt})
       return true
     }
-    if (action === 'get') return this._memoryStore.get(payload.key)
+    if (action === 'get') {
+      const data = this._memoryStore.get(payload.key)
+      if (!data) return null
+      if (data.expireAt !== Infinity && Date.now() > data.expireAt) {
+        this._memoryStore.delete(payload.key)
+        return null
+      }
+      return data.value
+    }
     if (action === 'del') return this._memoryStore.delete(payload.key)
     if (action === 'publish') {
       const workers = this._memorySubs.get(payload.channel)
@@ -209,20 +220,52 @@ class Ipc extends EventEmitter {
     // subscribe on primary not deeply implemented to avoid complexity, usually workers listen.
   }
 
+  _startGarbageCollector() {
+    // Run every 5 minutes.
+    // This is "lazy enough" not to impact CPU, but frequent enough to free memory.
+    const interval = setInterval(
+      () => {
+        const now = Date.now()
+        for (const [key, data] of this._memoryStore) {
+          if (data.expireAt !== Infinity && now > data.expireAt) {
+            this._memoryStore.delete(key)
+          }
+        }
+      },
+      5 * 60 * 1000
+    )
+
+    // Allow process to exit even if this interval is running
+    interval.unref()
+  }
+
   _handlePrimaryMessage(worker, msg) {
-    const {type, id, key, value, channel, message} = msg
+    const {type, id, key, value, ttl, channel, message} = msg
     const action = type.replace('ipc:', '')
 
     let response = null
 
     switch (action) {
-      case 'set':
-        this._memoryStore.set(key, value)
+      case 'set': {
+        const expireAt = ttl > 0 ? Date.now() + ttl * 1000 : Infinity
+        this._memoryStore.set(key, {value, expireAt})
         response = true
         break
-      case 'get':
-        response = this._memoryStore.get(key)
+      }
+      case 'get': {
+        const data = this._memoryStore.get(key)
+        if (data) {
+          if (data.expireAt !== Infinity && Date.now() > data.expireAt) {
+            this._memoryStore.delete(key)
+            response = null
+          } else {
+            response = data.value
+          }
+        } else {
+          response = null
+        }
         break
+      }
       case 'del':
         response = this._memoryStore.delete(key)
         break
