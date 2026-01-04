@@ -11,6 +11,9 @@ class Ipc extends EventEmitter {
   }
 
   async init() {
+    if (this.initialized) return
+    this.initialized = true
+
     this.config = Odac.Config.ipc || {driver: 'memory'}
 
     // default MaxListeners is 10. If we have thousands of different channels, it's fine.
@@ -123,16 +126,27 @@ class Ipc extends EventEmitter {
 
   async _initMemory() {
     if (cluster.isPrimary) {
-      this._memoryStore = new Map()
-      this._memorySubs = new Map() // channel -> Set<workerId>
+      if (!this._memoryStore) this._memoryStore = new Map()
+      if (!this._memorySubs) this._memorySubs = new Map()
 
-      cluster.on('message', (worker, msg) => {
+      // PREVENT DUPLICATE LISTENERS via Global References
+      // If Ipc is reloaded (hot-reload), the old listener remains on 'cluster' (global).
+      // We must remove it before adding a new one.
+
+      if (global.__odac_ipc_message_handler) {
+        cluster.removeListener('message', global.__odac_ipc_message_handler)
+      }
+      if (global.__odac_ipc_exit_handler) {
+        cluster.removeListener('exit', global.__odac_ipc_exit_handler)
+      }
+
+      const messageHandler = (worker, msg) => {
         if (msg && msg.type && msg.type.startsWith('ipc:')) {
           this._handlePrimaryMessage(worker, msg)
         }
-      })
+      }
 
-      cluster.on('exit', worker => {
+      const exitHandler = worker => {
         // Cleanup worker subscriptions on exit
         for (const [channel, workers] of this._memorySubs) {
           workers.delete(worker.id)
@@ -140,15 +154,23 @@ class Ipc extends EventEmitter {
             this._memorySubs.delete(channel)
           }
         }
-      })
+      }
+
+      // Save references globally
+      global.__odac_ipc_message_handler = messageHandler
+      global.__odac_ipc_exit_handler = exitHandler
+
+      cluster.on('message', messageHandler)
+      cluster.on('exit', exitHandler)
 
       this._startGarbageCollector()
     } else {
       process.on('message', msg => {
         if (msg && msg.type === 'ipc:response') {
           const req = this._requests.get(msg.id)
+          // If request exists (hasn't timed out yet)
           if (req) {
-            clearTimeout(req.timeout)
+            clearTimeout(req.timeout) // Stop the timeout timer
             req.resolve(msg.data)
             this._requests.delete(msg.id)
           }
@@ -225,11 +247,15 @@ class Ipc extends EventEmitter {
     // This is "lazy enough" not to impact CPU, but frequent enough to free memory.
     const interval = setInterval(
       () => {
-        const now = Date.now()
-        for (const [key, data] of this._memoryStore) {
-          if (data.expireAt !== Infinity && now > data.expireAt) {
-            this._memoryStore.delete(key)
+        try {
+          const now = Date.now()
+          for (const [key, data] of this._memoryStore) {
+            if (data.expireAt !== Infinity && now > data.expireAt) {
+              this._memoryStore.delete(key)
+            }
           }
+        } catch (e) {
+          console.error('[Odac IPC GC Error]', e)
         }
       },
       5 * 60 * 1000
