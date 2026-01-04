@@ -28,7 +28,37 @@ module.exports = {
     _odac.Database = require('./Database.js')
     _odac.DB = _odac.Database
     _odac.Route = global.Odac?.Route ?? new (require('./Route.js'))()
-    _odac.Ipc = require('./Ipc.js')
+
+    _odac._ipcSubs = []
+    const ipcSingleton = require('./Ipc.js')
+
+    _odac.Ipc = new Proxy(ipcSingleton, {
+      get(target, prop) {
+        if (prop === 'subscribe') {
+          return async (channel, callback) => {
+            const res = await target.subscribe(channel, callback)
+            _odac._ipcSubs.push({channel, callback})
+            return res
+          }
+        }
+        if (prop === 'unsubscribe') {
+          return async (channel, callback) => {
+            const res = await target.unsubscribe(channel, callback)
+            const index = _odac._ipcSubs.findIndex(s => s.channel === channel && s.callback === callback)
+            if (index > -1) _odac._ipcSubs.splice(index, 1)
+            return res
+          }
+        }
+        const value = target[prop]
+        if (typeof value === 'function') return value.bind(target)
+        return value
+      },
+      set(target, prop, value) {
+        target[prop] = value
+        return true
+      }
+    })
+
     _odac.Server = require('./Server.js')
     _odac.Storage = require('./Storage.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
@@ -67,8 +97,14 @@ module.exports = {
       _odac.cleanup = function () {
         for (const id of _odac._intervals) clearInterval(id)
         for (const id of _odac._timeouts) clearTimeout(id)
+        if (_odac._ipcSubs) {
+          for (const sub of _odac._ipcSubs) {
+            ipcSingleton.unsubscribe(sub.channel, sub.callback).catch(console.error)
+          }
+        }
         _odac._intervals = []
         _odac._timeouts = []
+        _odac._ipcSubs = []
       }
 
       _odac.__ = function (...args) {

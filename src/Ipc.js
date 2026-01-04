@@ -13,6 +13,11 @@ class Ipc extends EventEmitter {
   async init() {
     this.config = Odac.Config.ipc || {driver: 'memory'}
 
+    // default MaxListeners is 10. If we have thousands of different channels, it's fine.
+    // But if we attach many listeners to the "same" channel or event emitter, we might need more.
+    // For Ipc (which extends EventEmitter), let's bump it up just in case.
+    this.setMaxListeners(0) // Unlimited
+
     if (this.config.driver === 'redis') {
       await this._initRedis()
     } else {
@@ -66,17 +71,36 @@ class Ipc extends EventEmitter {
           this.emit(chan, JSON.parse(msg))
         })
       }
+      // Redis handles duplicate subscriptions gracefully (ignores them)
       await this.subRedis.subscribe(channel)
       this.on(channel, callback)
     } else {
       // Memory driver subscription
-      // We process 'ipc:message' from checking message type in _initMemory
       if (!this._subs.has(channel)) {
         this._subs.set(channel, new Set())
         // Inform main process that this worker is subscribed
         this._sendMemory('subscribe', {channel})
       }
       this._subs.get(channel).add(callback)
+    }
+  }
+
+  async unsubscribe(channel, callback) {
+    if (this.config.driver === 'redis') {
+      this.removeListener(channel, callback)
+      // If no more listeners for this channel, unsubscribe from redis to save resources
+      if (this.listenerCount(channel) === 0 && this.subRedis) {
+        await this.subRedis.unsubscribe(channel)
+      }
+    } else {
+      if (this._subs.has(channel)) {
+        const callbacks = this._subs.get(channel)
+        callbacks.delete(callback)
+        if (callbacks.size === 0) {
+          this._subs.delete(channel)
+          this._sendMemory('unsubscribe', {channel})
+        }
+      }
     }
   }
 
@@ -107,12 +131,23 @@ class Ipc extends EventEmitter {
           this._handlePrimaryMessage(worker, msg)
         }
       })
+
+      cluster.on('exit', worker => {
+        // Cleanup worker subscriptions on exit
+        for (const [channel, workers] of this._memorySubs) {
+          workers.delete(worker.id)
+          if (workers.size === 0) {
+            this._memorySubs.delete(channel)
+          }
+        }
+      })
     } else {
       process.on('message', msg => {
         if (msg && msg.type === 'ipc:response') {
-          const resolve = this._requests.get(msg.id)
-          if (resolve) {
-            resolve(msg.data)
+          const req = this._requests.get(msg.id)
+          if (req) {
+            clearTimeout(req.timeout)
+            req.resolve(msg.data)
             this._requests.delete(msg.id)
           }
         } else if (msg && msg.type === 'ipc:message') {
@@ -135,13 +170,20 @@ class Ipc extends EventEmitter {
       return this._handleDirectPrimaryCall(action, payload)
     }
 
-    return new Promise(resolve => {
+    return new Promise((resolve, reject) => {
       const id = Date.now() + Math.random().toString(36).substr(2, 9)
-      if (action !== 'subscribe' && action !== 'publish') {
+      if (action !== 'subscribe' && action !== 'publish' && action !== 'unsubscribe') {
         // Only wait for response for data ops
-        this._requests.set(id, resolve)
+        const timeout = setTimeout(() => {
+          if (this._requests.has(id)) {
+            this._requests.delete(id)
+            reject(new Error(`IPC request timed out: ${action}`))
+          }
+        }, 5000)
+
+        this._requests.set(id, {resolve, reject, timeout})
       } else {
-        resolve() // Pub/Sub doesn't wait for ack usually
+        resolve() // Pub/Sub/Unsub doesn't wait for ack
       }
       process.send({type: `ipc:${action}`, id, ...payload})
     })
@@ -189,6 +231,14 @@ class Ipc extends EventEmitter {
           this._memorySubs.set(channel, new Set())
         }
         this._memorySubs.get(channel).add(worker.id)
+        break
+      case 'unsubscribe':
+        if (this._memorySubs.has(channel)) {
+          this._memorySubs.get(channel).delete(worker.id)
+          if (this._memorySubs.get(channel).size === 0) {
+            this._memorySubs.delete(channel)
+          }
+        }
         break
       case 'publish': {
         // Relay to all subscribed workers
