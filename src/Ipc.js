@@ -110,10 +110,7 @@ class Ipc extends EventEmitter {
   // --- Drivers ---
 
   async _initRedis() {
-    // Assuming Odac has a Redis handler or we use a standard library.
-    // Since strict requirements aren't given for Redis lib, assuming we use the one configured in Odac.Database or similar.
-    // However, Odac.Database usually for SQL. Let's assume standard 'redis' package is available or we use a placeholder if not.
-    // Checking package.json would be ideal, but for now implementing standard redis client usage.
+
     try {
       const Redis = require('redis')
       this.redis = Redis.createClient(Odac.Config.database?.redis?.[this.config.redis || 'default'] || {})
