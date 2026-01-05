@@ -110,14 +110,14 @@ class Ipc extends EventEmitter {
   // --- Drivers ---
 
   async _initRedis() {
-
     try {
       const Redis = require('redis')
       this.redis = Redis.createClient(Odac.Config.database?.redis?.[this.config.redis || 'default'] || {})
       await this.redis.connect()
     } catch (e) {
       console.error('IPC Redis Driver Error:', e)
-      // Fallback to memory? or throw? For now just log.
+      // Re-throw to ensure application doesn't start in a broken state.
+      throw e
     }
   }
 
