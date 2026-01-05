@@ -192,7 +192,7 @@ class Ipc extends EventEmitter {
     }
 
     return new Promise((resolve, reject) => {
-      const id = Date.now() + Math.random().toString(36).substr(2, 9)
+      const id = require('node:crypto').randomUUID()
       if (action !== 'subscribe' && action !== 'publish' && action !== 'unsubscribe') {
         // Only wait for response for data ops
         const timeout = setTimeout(() => {
