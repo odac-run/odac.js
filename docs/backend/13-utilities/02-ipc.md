@@ -10,6 +10,15 @@ To configure the IPC system, update your project configuration. The default driv
 // config.js
 module.exports = {
   // ...
+  database: {
+    // ... other dbs
+    redis: {
+      default: {
+        // node-redis connection options
+        // e.g., url: 'redis://user:pass@host:port'
+      }
+    }
+  },
   ipc: {
     driver: 'memory', // Options: 'memory' or 'redis'
     redis: 'default'  // The name of the redis connection to use (if driver is 'redis')
