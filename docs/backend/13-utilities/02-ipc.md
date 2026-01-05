@@ -29,7 +29,7 @@ module.exports = {
 ### Drivers
 
 - **memory**: Uses Node.js `cluster` IPC. Ideal for single-server deployments. Data is stored in the Main/Primary process RAM and shared across workers via `process.send`.
-- **redis**: Uses a Redis server. Ideal for multi-server/horizontal scaling deployements. Requires a configured Redis connection.
+- **redis**: Uses a Redis server. Ideal for multi-server/horizontal scaling deployments. Requires a configured Redis connection.
 
 ## Usage
 
