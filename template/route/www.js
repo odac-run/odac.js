@@ -5,15 +5,17 @@
 // Controllers are located in controller/page/ directory
 
 // Home page - displays welcome message, features, and interactive demos
-Odac.Route.page('/', 'index')
+module.exports = function (Odac) {
+  Odac.Route.page('/', 'index')
 
-// About page - provides information about Odac
-Odac.Route.page('/about', 'about')
+  // About page - provides information about Odac
+  Odac.Route.page('/about', 'about')
 
-// ============================================
-// API Routes
-// ============================================
-// Add your API routes here
-// Example:
-// Odac.Route.post('/api/contact', 'contact')
-// Odac.Route.get('/api/data', 'data')
+  // ============================================
+  // API Routes
+  // ============================================
+  // Add your API routes here
+  // Example:
+  // Odac.Route.post('/api/contact', 'contact')
+  // Odac.Route.get('/api/data', 'data')
+}

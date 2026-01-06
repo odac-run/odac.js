@@ -308,7 +308,10 @@ class Route {
       if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
         delete require.cache[require.resolve(`${__dir}/route/${file}`)]
         routes2[Odac.Route.buff] = mtime
-        require(`${__dir}/route/${file}`)
+        const routeModule = require(`${__dir}/route/${file}`)
+        if (typeof routeModule === 'function') {
+          routeModule(Odac)
+        }
       }
       for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
         if (!this.routes[Odac.Route.buff]) continue
