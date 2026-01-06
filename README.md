@@ -1,57 +1,60 @@
-<p align="center">
-  <img src="https://odac.run/assets/img/github/header.png?v=1" alt="Odac Header">
-</p>
 
-# ⚡ Odac
+# ⚡ ODAC.JS
 
-**Odac** is a lightweight yet powerful server + framework toolkit for building and deploying modern web apps with ease — with built-in automation and a developer-first philosophy.
+**ODAC** is a lightweight, high-performance Node.js framework designed to build modern, scalable web applications with ease. It allows developers to focus on building features rather than configuring boilerplate, offering a complete toolkit for web development.
 
 ## ✨ Key Features
 
-### Core Server Features
+*   🚀 **Developer Friendly:** Simple setup and intuitive API design let you start building immediately.
+*   🔗 **Powerful Routing:** Create clean, custom URLs and manage infinite pages with a flexible routing system.
+*   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions eliminates the need for complex client-side code.
+*   🛡️ **Built-in Security:** Automatic CSRF protection and secure default headers keep your application safe.
+*   🔐 **Authentication:** Ready-to-use session management, password hashing, and authentication helpers.
+*   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
+*   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
+*   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.
 
-*   ⚡ **Blazing Fast & Ultra Light:** Optimized for performance, Odac is significantly lighter and faster than traditional server solutions, ensuring maximum performance with minimal resource usage.
-*   🚀 **Zero-Config Hosting:** Leave the complex server configurations to Odac and focus solely on your code. Get your web applications up and running in minutes.
-*   🌐 **One Server, Many Domains:** Easily host and manage multiple websites on a single Odac instance, each with its own domain and resources.
-*   🔒 **SSL in Seconds:** Secure all your websites in seconds with free, auto-renewing SSL certificates.
-*   📬 **Native Mail Server:** A full-featured, built-in mail server (IMAP/SMTP) that allows you to create and manage email accounts for your domains without needing an external service.
-*   ⚙️ **Process & CLI Monitor:** Keep your applications running smoothly with the integrated process manager and monitor your server from anywhere with the powerful command-line tool.
+## 🛠️ Advanced Capabilities
 
-### Integrated Web Framework
+### ⚡ Cluster-Ready IPC
+Built for scale from day one, ODAC includes a powerful Inter-Process Communication (IPC) system.
+*   **Unified API:** Use the same `get`, `set`, `publish`, and `subscribe` methods regardless of the underlying driver.
+*   **Zero-Config Clustering:** The default `memory` driver automatically syncs data between Node.js cluster workers without external dependencies.
+*   **Redis Support:** Switch to the `redis` driver with a single config change to scale horizontally across multiple servers.
 
-*   🔗 **Custom URLs & Infinite Pages:** Easily create clean, custom URLs and an unlimited number of pages thanks to the powerful routing and skeleton system.
-*   ✨ **No-Code AJAX:** Automatically enable AJAX for form submissions and page transitions without writing any custom JavaScript, providing your users with a seamless single-page application (SPA) experience.
-*   🛡️ **Safe Requests:** Automatically secure all your endpoints against common vulnerabilities like CSRF with built-in token verification for POST and GET requests.
-*   🔐 **Auth Made Easy:** Implement user authentication in minutes with built-in session management, password hashing, and ready-to-use login/register forms.
-*   🌍 **Global Ready:** Reach a worldwide audience with built-in, automatic multi-language support. The framework simplifies internationalization (i18n).
-*   ⏰ **Built-in Cron Jobs:** Schedule and automate recurring tasks with the integrated cron system, perfect for background jobs, data cleanup, and scheduled operations.
+### 🔌 Native WebSocket Support
+Real-time features are a first-class citizen in ODAC.
+*   **Integrated Server:** No need for third-party libraries; ODAC features a lightweight, native WebSocket implementation.
+*   **Room System:** Easily manage user groups with built-in `join`, `leave`, and `broadcast` to room functionality.
+*   **Route Integration:** define WebSocket endpoints directly in your router alongside HTTP routes.
+
+### 🎨 Powerful Templating
+ODAC's view engine combines the power of JavaScript with intuitive HTML tags.
+*   **Logic Tags:** Use `<odac:if>`, `<odac:for>`, and `<odac:else>` for clean control flow.
+*   **Async Support:** Fully asynchronous rendering allows fetching data directly within your views using `await`.
+*   **Safety:** Automatic escaping prevents XSS while allowing raw HTML output when explicitly requested.
 
 ## 🚀 Quick Start
 
-> 🔥 **Install with a single command. Works on Linux, macOS, and Windows.**
+Get your new ODAC project up and running in seconds using our CLI.
 
-#### Linux & macOS
+### Create a new project
 
 ```bash
-curl -sL https://odac.run/install | sudo bash
+npx odac init my-app
 ```
 
-#### Windows (PowerShell)
+### Start development
 
-```powershell
-irm https://odac.run/install | iex
+```bash
+cd my-app
+npm run dev
 ```
-
-This command:
-
-- Installs Node.js (v18+) if missing
-- Installs Odac globally via npm
-- Prepares your system for development or deployment
 
 ## 📚 Documentation
 
-For more detailed information and API reference, please check out our [official documentation website](https://docs.odac.run).
+For detailed guides, API references, and examples, visit our [official documentation](https://docs.odac.run).
 
 ## 📄 License
 
-This project is licensed under the AGPL-3.0 License. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
