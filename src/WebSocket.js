@@ -158,6 +158,8 @@ class WebSocketClient {
     if (this.#closed) return
     this.#closed = true
 
+    this.#socket.removeAllListeners()
+
     for (const room of this.#rooms) {
       this.#server.leaveRoom(this.#id, room)
     }
@@ -245,6 +247,7 @@ class WebSocketClient {
 
     this.#sendFrame(OPCODE.CLOSE, payload)
     this.#socket.end()
+    this.#socket.removeAllListeners()
 
     for (const room of this.#rooms) {
       this.#server.leaveRoom(this.#id, room)
