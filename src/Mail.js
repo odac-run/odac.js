@@ -11,6 +11,8 @@ class Mail {
   #subject = ''
   #template
   #to
+  #htmlContent
+  #textContent
 
   constructor(template) {
     this.#template = template
@@ -290,6 +292,16 @@ class Mail {
     return this
   }
 
+  html(content) {
+    this.#htmlContent = content
+    return this
+  }
+
+  text(content) {
+    this.#textContent = content
+    return this
+  }
+
   #encode(text) {
     if (!text) return ''
     // eslint-disable-next-line
@@ -301,22 +313,56 @@ class Mail {
     return new Promise(resolve => {
       ;(async () => {
         try {
-          if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
-            console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
-            return resolve(false)
-          }
           if (!this.#from || !this.#subject || !this.#to) {
             console.error('[Mail] Missing required fields: From, Subject, or To')
             return resolve(false)
           }
+
           if (!Odac.Var(this.#from.email).is('email')) {
             console.error('[Mail] From field is not a valid e-mail address')
             return resolve(false)
           }
+
           if (!Odac.Var(this.#to.value[0].address).is('email')) {
             console.error('[Mail] To field is not a valid e-mail address')
             return resolve(false)
           }
+
+          let htmlContent = ''
+          let textContent = ''
+
+          if (this.#template) {
+            if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
+              console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
+              return resolve(false)
+            }
+            htmlContent = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
+            textContent = htmlContent
+              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+              .replace(/<[^>]+>/g, '')
+              .replace(/\s+/g, ' ')
+              .trim()
+          } else {
+            if (this.#htmlContent) htmlContent = this.#htmlContent
+            if (this.#textContent) textContent = this.#textContent
+
+            if (!htmlContent && !textContent) {
+              console.error('[Mail] No content provided (Template, HTML, or Text)')
+              return resolve(false)
+            }
+
+            // If only HTML is provided, auto-generate text
+            if (htmlContent && !textContent) {
+              textContent = htmlContent
+                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\s+/g, ' ')
+                .trim()
+            }
+          }
+
           if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
           if (!this.#header['To']) {
             const t = this.#to.value[0]
@@ -326,12 +372,17 @@ class Mail {
           if (!this.#header['Message-ID']) this.#header['Message-ID'] = `<${nodeCrypto.randomBytes(16).toString('hex')}-${Date.now()}@odac>`
 
           if (!this.#header['Date']) this.#header['Date'] = new Date().toUTCString()
-          if (!this.#header['Content-Type'])
-            this.#header['Content-Type'] =
-              'multipart/alternative; charset=UTF-8; boundary="----=' + nodeCrypto.randomBytes(32).toString('hex') + '"'
+          if (!this.#header['Content-Type']) {
+            if (htmlContent) {
+              this.#header['Content-Type'] =
+                'multipart/alternative; charset=UTF-8; boundary="----=' + nodeCrypto.randomBytes(32).toString('hex') + '"'
+            } else {
+              this.#header['Content-Type'] = 'text/plain; charset=UTF-8'
+            }
+          }
           if (!this.#header['X-Mailer']) this.#header['X-Mailer'] = 'ODAC'
           if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
-          let content = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
+
           const client = new net.Socket()
           const payload = {
             auth: process.env.ODAC_API_KEY,
@@ -342,13 +393,8 @@ class Mail {
                 from: {value: [{address: this.#from.email, name: this.#from.name}]},
                 to: this.#to,
                 header: this.#header,
-                html: content,
-                text: content
-                  .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                  .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                  .replace(/<[^>]+>/g, '')
-                  .replace(/\s+/g, ' ')
-                  .trim(),
+                html: htmlContent,
+                text: textContent,
                 attachments: []
               }
             ]

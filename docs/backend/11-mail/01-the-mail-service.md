@@ -74,6 +74,40 @@ Create your HTML template in `view/mail/contact_form_notification.html`:
 <p>{user_message}</p>
 ```
 
+### Sending Plain Text or Raw HTML (No Template)
+
+You can send emails **without creating a template file** by using the `.text()` or `.html()` methods directly. This is useful for simple notifications or dynamic content.
+
+**Note:** If you provide both a template name AND manual content, the template will take precedence.
+
+#### 1. Plain Text Email
+
+Use the `.text()` method to send a simple, text-only email. The `Content-Type` will automatically be set to `text/plain`.
+
+```javascript
+await Odac.Mail() // No template name required
+  .to('recipient@example.com')
+  .subject('System Alert')
+  .text('Server load is critical. Please check immediately.')
+  .send();
+```
+
+> **Note:** Plain text does not support HTML tags like links (`<a href>`). If you write a URL (e.g., `https://odac.run`), most email clients will automatically make it clickable.
+
+#### 2. Raw HTML Email
+
+Use the `.html()` method to send an HTML email without a file.
+
+```javascript
+await Odac.Mail()
+  .to('user@example.com')
+  .subject('Welcome')
+  .html('<h1>Welcome!</h1><p>Please <a href="https://example.com">click here</a>.</p>')
+  .send();
+```
+
+If you use `.html()`, the system will automatically generate a plain-text version of your email by stripping the tags, just like it does for templates.
+
 ### Advanced Usage
 
 #### Custom Headers
@@ -92,5 +126,7 @@ You can inject custom headers into the email using the `header()` method:
 *   `from(email, name)`: Sets the sender.
 *   `to(email)`: Sets the recipient.
 *   `subject(text)`: Sets the subject line.
+*   `text(content)`: Sets the plain text body (used if no template is provided).
+*   `html(content)`: Sets the HTML body (used if no template is provided).
 *   `header(object)`: Merges custom headers.
 *   `send(data)`: Compiles the template with `data`, connects to the Odac Core, and sends the email payload. Returns a `Promise`.
