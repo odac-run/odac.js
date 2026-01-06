@@ -134,6 +134,7 @@ class WebSocketClient {
         break
       case OPCODE.PING:
         this.#sendFrame(OPCODE.PONG, frame.payload)
+        this.#emit('ping', frame.payload)
         break
       case OPCODE.PONG:
         this.#emit('pong')
