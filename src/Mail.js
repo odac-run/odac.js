@@ -315,6 +315,16 @@ class Mail {
     return '=?UTF-8?B?' + Buffer.from(text).toString('base64') + '?='
   }
 
+  #stripHtml(html) {
+    if (!html) return ''
+    return html
+      .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
+      .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
   send(data = {}) {
     return new Promise(resolve => {
       ;(async () => {
@@ -343,12 +353,7 @@ class Mail {
               return resolve(false)
             }
             htmlContent = await this.#render(__dir + '/view/mail/' + this.#template + '.html', data)
-            textContent = htmlContent
-              .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-              .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-              .replace(/<[^>]+>/g, '')
-              .replace(/\s+/g, ' ')
-              .trim()
+            textContent = this.#stripHtml(htmlContent)
           } else {
             if (this.#htmlContent) htmlContent = this.#htmlContent
             if (this.#textContent) textContent = this.#textContent
@@ -360,12 +365,7 @@ class Mail {
 
             // If only HTML is provided, auto-generate text
             if (htmlContent && !textContent) {
-              textContent = htmlContent
-                .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-                .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-                .replace(/<[^>]+>/g, '')
-                .replace(/\s+/g, ' ')
-                .trim()
+              textContent = this.#stripHtml(htmlContent)
             }
           }
 
