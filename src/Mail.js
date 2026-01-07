@@ -317,12 +317,19 @@ class Mail {
 
   #stripHtml(html) {
     if (!html) return ''
-    return html
-      .replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gim, '')
-      .replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gim, '')
-      .replace(/<[^>]+>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim()
+
+    let text = html
+    let oldText
+    // Recursively remove script and style tags to handle nested injections
+    do {
+      oldText = text
+      text = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gim, '')
+    } while (text !== oldText)
+
+    // Remove all other tags
+    text = text.replace(/<[^>]+>/g, '')
+
+    return text.replace(/\s+/g, ' ').trim()
   }
 
   send(data = {}) {
