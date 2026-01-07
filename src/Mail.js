@@ -321,13 +321,12 @@ class Mail {
     let text = html
     let oldText
     // Recursively remove script and style tags to handle nested injections
+    // Recursively remove script/style tags (with content) and other tags (keeping content)
     do {
       oldText = text
       text = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gim, '')
+      text = text.replace(/<[^>]+>/g, '')
     } while (text !== oldText)
-
-    // Remove all other tags
-    text = text.replace(/<[^>]+>/g, '')
 
     return text.replace(/\s+/g, ' ').trim()
   }
