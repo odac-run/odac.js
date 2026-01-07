@@ -155,8 +155,14 @@ class Mail {
   }
 
   async #render(file, data) {
-    let mtime = fs.statSync(file).mtimeMs
-    let content = fs.readFileSync(file, 'utf8')
+    const fd = fs.openSync(file, 'r')
+    let mtime, content
+    try {
+      mtime = fs.fstatSync(fd).mtimeMs
+      content = fs.readFileSync(fd, 'utf8')
+    } finally {
+      fs.closeSync(fd)
+    }
 
     // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile.
     // For performance in emails (usually background), re-compiling is okay, but caching is better.
