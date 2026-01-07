@@ -664,7 +664,7 @@ if (typeof window !== 'undefined') {
   
       const currentUrl = window.location.href
       url = new URL(url, currentUrl).href
-      if (url === '' || url.startsWith('javascript:') || url.includes('#')) return false
+      if (url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.includes('#')) return false
   
       this.#isNavigating = true
   
