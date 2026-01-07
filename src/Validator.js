@@ -16,13 +16,17 @@ async function loadDisposableDomains() {
   let shouldUpdate = true
 
   try {
-    if (fs.existsSync(CACHE_FILE)) {
-      const stats = fs.statSync(CACHE_FILE)
-      const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
-      if (ageInHours < 24) {
-        shouldUpdate = false
-        content = fs.readFileSync(CACHE_FILE, 'utf8')
+    try {
+      if (fs.existsSync(CACHE_FILE)) {
+        const stats = fs.statSync(CACHE_FILE)
+        const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
+        if (ageInHours < 24) {
+          content = fs.readFileSync(CACHE_FILE, 'utf8')
+          shouldUpdate = false
+        }
       }
+    } catch (e) {
+      // Cache error check failed, proceed to validation update
     }
 
     if (shouldUpdate) {
