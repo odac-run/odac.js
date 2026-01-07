@@ -765,7 +765,7 @@ if (typeof window !== 'undefined') {
         if (!anchor) return
         const url = anchor.getAttribute('href')
         const target = anchor.getAttribute('target')
-        if (!url || url === '' || url.startsWith('javascript:') || url.startsWith('#')) return
+        if (!url || url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.startsWith('#')) return
         const isExternal = url.includes('://') && !url.includes(window.location.host)
         if ((target === null || target === '_self') && !isExternal) {
           e.preventDefault()
