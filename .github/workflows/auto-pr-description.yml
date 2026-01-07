@@ -35,6 +35,8 @@ jobs:
 
       - name: Update PR Title and Body
         uses: actions/github-script@v7
+        env:
+          PR_BODY: ${{ steps.generate_body.outputs.body }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -43,5 +45,5 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
               title: 'Sync `dev` to `main`',
-              body: `${{ steps.generate_body.outputs.body }}`
+              body: process.env.PR_BODY
             });
