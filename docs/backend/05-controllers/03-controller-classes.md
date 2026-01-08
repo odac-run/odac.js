@@ -75,5 +75,5 @@ module.exports = async function (Odac) {
 
 - **Organization**: Group related business logic together in `class/`
 - **Reusability**: Share logic between different controllers and routes
-- **Context**: The `Odac` object is injected, providing access to `Auht`, `DB`, `Request`, etc.
+- **Context**: The `Odac` object is injected, providing access to `Auth`, `DB`, `Request`, etc.
 - **Separation of Concerns**: Keep your Controllers lightweight by moving heavy logic to Services.
