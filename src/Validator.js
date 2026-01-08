@@ -5,8 +5,7 @@ const path = require('path')
 
 let disposableDomains = null
 const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
-const SOURCE_URL =
-  'https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf'
+const SOURCE_URL = 'https://hub.odac.run/blocklist/disposable-emails'
 
 async function loadDisposableDomains() {
   if (disposableDomains instanceof Set) return
@@ -25,7 +24,7 @@ async function loadDisposableDomains() {
           shouldUpdate = false
         }
       }
-    } catch (e) {
+    } catch {
       // Cache error check failed, proceed to validation update
     }
 
@@ -45,7 +44,9 @@ async function loadDisposableDomains() {
           req.on('error', reject)
           req.end()
         })
-        fs.writeFileSync(CACHE_FILE, content)
+        const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        fs.writeFileSync(tempFile, content)
+        fs.renameSync(tempFile, CACHE_FILE)
       } catch {
         if (fs.existsSync(CACHE_FILE)) {
           content = fs.readFileSync(CACHE_FILE, 'utf8')
