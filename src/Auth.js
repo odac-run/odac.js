@@ -346,9 +346,9 @@ class Auth {
     // Cleanup: Remove expired tokens periodically
     this.#cleanupExpiredMagicLinks(magicTable)
 
-    // 1. Check if user exists (or auto-register check if needed, but for now lets assume user must exist)
-    // If you want to support auto-register, we'd need more logic here.
-    // For security by default: only existing users.
+    // 1. Check if user exists.
+    // We proceed regardless of whether the user exists or not.
+    // If they exist, it's a login. If not, it will accept the link and Auto-Register them (Passwordless Signup).
     // let user = null
     try {
       // Check if user exists (logic preserved but unused 'user' variable issue fixed)
