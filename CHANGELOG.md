@@ -1,3 +1,120 @@
+### Fix
+
+- Resolve WebSocket handshake error by echoing subprotocol header
+
+### Refactor
+
+- Unified WebSocket architecture and fixed race conditions
+
+### deps
+
+- update mysql2 dependency to ^3.16.0
+
+### ⚙️ Engine Tuning
+
+- Add type checks for page assignments and a null check for the `authPage` method's `authFile` parameter.
+- extract and trim validation rule names for clearer inverse rule processing.
+- extract HTML stripping logic into a private helper method and apply it to text content generation.
+- migrate custom `odac:field` tag to `odac:input` with updated parsing logic and regex patterns.
+- migrate session locking from in-memory object to `Odac.Storage` for persistence.
+- Move form message clearing logic to the beginning of form submission.
+- move middleware execution to occur after URL parameter processing.
+- pass PR body to github-script action via environment variable
+- Remove duplicate data-error-email attribute assignment.
+- rename `requestMagicLink` method to `magic` in Auth and update its usages and documentation
+- Rename authentication token and session cookie keys from 'candy' to 'odac'.
+- rename internal `Odac` class to `_odac`
+- Rename Mysql to Database and implement connection pooling
+- Update default magic link table name from 'magic_links' to 'odac_magic'.
+- Use `crypto.randomBytes` for client and session ID generation instead of MD5 hashing.
+- use `node:crypto.randomBytes` for generating unique IDs instead of `Date.now()` and `Math.random()`
+- use file descriptor for mail template reading to ensure resource closure
+
+### ✨ What's New
+
+- add `_odac/form` POST route with CSRF token validation
+- Add `!disposable` validation rule to block temporary email providers by fetching and caching a daily updated blocklist.
+- Add console error for missing controller files
+- Add custom template rendering engine with caching to Mail service and enhance magic link email options.
+- Add magic link rate limiting, expired link cleanup, and open redirect protection for magic link redirects.
+- add passwordless auto-registration for magic links, improve URL query decoding, and disable token validation for the magic link verification route.
+- Add request language property from Accept-Language header, defaulting to 'en'.
+- Add session cooldown for magic link requests and return explicit errors for rate limits, updating documentation.
+- Allow direct page route definition when a file is provided.
+- Allow specifying and using a redirect URL for magic link authentication.
+- emit 'ping' event when receiving a WebSocket PING frame
+- Enable passing variables directly in view configuration objects for page routes and update documentation.
+- Enable sending plain text and raw HTML emails without templates in the mail service.
+- HTML Mail delivery via direct ODAC Mail Server
+- Ignore database table not found errors when looking up users by email.
+- Implement and document auto-clearing of form inputs on successful submission, controllable via a `clear` attribute.
+- Implement backend-to-frontend data sharing via `Odac.share` and…
+- implement built-in IPC system with Memory and Redis drivers
+- Implement dynamic session garbage collection with simple and batch cleaning modes based on session count.
+- Implement graceful shutdown for primary and worker processes in the cluster.
+- Implement magic login functionality
+- Implement magic login functionality with new routes, internal handlers, and form processing, while removing a generic form route.
+- Implement passwordless signup by auto-registering new users during magic link verification and adding `node:crypto` for random password generation.
+- Implement server actions for forms, allowing `Controller.method` as the action and dispatching internally via a generic endpoint.
+- introduce `Odac.DB.nanoid()` helper, centralize its implementation, and update authentication ID generation strategy documentation.
+- Introduce Nano IDs for primary keys and cookie identifiers, streamlining user insertion logic.
+- introduce service classes in a dedicated directory with naming collision handling and refine route authentication logic.
+- Introduce Storage module to encapsulate LMDB operations and session garbage collection.
+- Migrate session management from in-memory to LMDB, enable server clustering, and add session garbage collection.
+- Modernize db layer with magic api and migrations
+- Modernize db layer with magic api and migrations
+- Render form success and error messages as HTML using a new `textToHtml` utility.
+- Return generic success message for user not found when auto-register is enabled to prevent enumeration.
+- Server Clustering & Persistent Session Management
+- support string-based WebSocket controller paths and update documentation
+- Update route loading to execute function-exported route definitions with Odac.
+- Update session private key hashing algorithm from MD5 to SHA256.
+
+### 📚 Documentation
+
+- Add magic links documentation.
+- Fix typo in controller classes documentation
+- overhaul README to detail new Node.js framework features, advanced capabilities, updated quick start instructions, and license.
+- remove redundant html code block tag
+- remove server documentation index.
+- Replace old database connection and MySQL guides with new getting started, query basics, advanced queries, and migrations documentation.
+- Standardize framework name capitalization from Odac to ODAC across documentation.
+- Update database interaction examples from `Odac.Mysql` to `Odac.DB`.
+- update database query examples to include `.select()` and variable assignments.
+
+### 🛠️ Fixes & Improvements
+
+- Add error handling for cache file access to ensure validation update proceeds.
+- Add explicit response termination for middleware and redirects, and pass page file path to request.
+- Adjust session key counting range
+- Consume all magic link tokens for an email instead of just the used one to prevent reuse.
+- Correct `odac` special variable path resolution by removing `/src` instead of `/framework/src`.
+- Enable `MiddlewareChain` to automatically use auth handlers when created via `Route.auth.use`.
+- Ensure all HTML tags are recursively stripped when converting HTML to plain text.
+- Ignore `data:` and `vbscript:` pseudo-protocols when processing anchor hrefs.
+- Implement form token rotation on successful form submission without redirect and update client-side form with the new token.
+- Initialize cron interval only in the primary cluster process.
+- Introduce `setSession` method for client ID initialization and optimize internal session and cookie storage.
+- log errors when ensuring the magic link table exists instead of ignoring them
+- Log Odac Auth errors when ensuring token table exists instead of ignoring them.
+- Prevent navigation to `data:` and `vbscript:` URLs.
+- re-register form submit handler when its `data-odac-form` attribute changes to ensure correct event capture.
+- recursively strip nested script and style tags when sanitizing HTML
+- Relax sameSite cookie policy to Lax and refactor redirect handling.
+- remove all socket listeners when closing or disconnecting the WebSocket.
+- Remove early exit from token hash check loop to mitigate timing attacks.
+- return non-function default connection properties directly instead of attempting to bind them
+- return registration error on unique check failure.
+- Robustly extract multipart boundary from request body.
+- serve static files via `createReadStream` and pipe streamable content to response.
+- Validate error route cache handler is a function in Request abort method.
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - Simplify project initialization by removing directory emptiness validation and extraneous comments.
