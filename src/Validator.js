@@ -50,7 +50,9 @@ async function loadDisposableDomains() {
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
         const fd = fs.openSync(tempFile, 'wx')
         try {
-          fs.writeSync(fd, content)
+          // Sanitize content before writing to file to avoid injection attacks
+          const sanitizedContent = content.replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
+          fs.writeSync(fd, sanitizedContent)
         } finally {
           fs.closeSync(fd)
         }
