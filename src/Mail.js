@@ -319,14 +319,11 @@ class Mail {
     if (!html) return ''
 
     let text = html
-    let oldText
     // Recursively remove script and style tags to handle nested injections
-    // Recursively remove script/style tags (with content) and other tags (keeping content)
-    do {
-      oldText = text
-      text = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gim, '')
-      text = text.replace(/<[^>]+>/g, '')
-    } while (text !== oldText)
+    // Single-pass removal for plain text generation.
+    // Recursive removal (do-while) is dangerous (ReDoS) and unnecessary for text/plain output.
+    text = text.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gim, '')
+    text = text.replace(/<[^>]+>/g, '')
 
     return text.replace(/\s+/g, ' ').trim()
   }
