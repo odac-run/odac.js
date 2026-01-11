@@ -16,17 +16,17 @@ async function loadDisposableDomains() {
 
   try {
     try {
-        const fd = fs.openSync(CACHE_FILE, 'r')
-        try {
-          const stats = fs.fstatSync(fd)
-          const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
-          if (ageInHours < 24) {
-            content = fs.readFileSync(fd, 'utf8')
-            shouldUpdate = false
-          }
-        } finally {
-          fs.closeSync(fd)
+      const fd = fs.openSync(CACHE_FILE, 'r')
+      try {
+        const stats = fs.fstatSync(fd)
+        const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
+        if (ageInHours < 24) {
+          content = fs.readFileSync(fd, 'utf8')
+          shouldUpdate = false
         }
+      } finally {
+        fs.closeSync(fd)
+      }
     } catch {
       // Cache error check failed, proceed to validation update
     }
@@ -48,7 +48,12 @@ async function loadDisposableDomains() {
           req.end()
         })
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        fs.writeFileSync(tempFile, content)
+        const fd = fs.openSync(tempFile, 'wx')
+        try {
+          fs.writeSync(fd, content)
+        } finally {
+          fs.closeSync(fd)
+        }
         fs.renameSync(tempFile, CACHE_FILE)
       } catch {
         if (fs.existsSync(CACHE_FILE)) {
