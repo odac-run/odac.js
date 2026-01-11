@@ -70,6 +70,7 @@ if (await validator.error()) {
 - `in:substring` - Must contain substring
 - `notin:substring` - Must not contain substring
 - `regex:pattern` - Must match regex pattern
+- `!disposable` - Block disposable/temporary email providers (List is automatically updated daily)
 
 **Security:**
 - `xss` - Check for HTML tags (XSS protection)

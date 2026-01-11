@@ -69,7 +69,7 @@ module.exports = async function(Odac) {
   const validatedPage = Math.max(1, page)
   
   // Fetch results
-  const results = await Odac.Mysql.table('products')
+  const results = await Odac.DB.products
     .where('name', 'like', `%${validatedQuery}%`)
     .limit(20)
     .offset((validatedPage - 1) * 20)

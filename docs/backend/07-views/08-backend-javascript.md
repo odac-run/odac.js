@@ -379,7 +379,7 @@ You can use multiple `<script:odac>` blocks in the same view:
 ```html
 <script:odac>
   // Don't do this - should be in controller
-  const users = await Odac.Mysql.query('SELECT * FROM users');
+  const users = await Odac.DB.users.get();
   const apiData = await fetch('https://api.example.com/data');
 </script:odac>
 ```

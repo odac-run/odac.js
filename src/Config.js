@@ -5,7 +5,7 @@ const os = require('os')
 module.exports = {
   auth: {
     key: 'id',
-    token: 'candy_auth'
+    token: 'odac_auth'
   },
   request: {
     timeout: 10000
@@ -18,6 +18,11 @@ module.exports = {
     auto: true,
     maxResources: 5
   },
+  ipc: {
+    driver: 'memory',
+    redis: 'default'
+  },
+  debug: false,
 
   init: function () {
     try {
@@ -44,7 +49,7 @@ module.exports = {
       return obj.replace(/\$\{(\w+)\}/g, (_, key) => {
         // Special variables
         if (key === 'odac') {
-          return __dirname.replace(/\/framework\/src$/, '')
+          return __dirname.replace(/\/src$/, '/client')
         }
         // Environment variables
         return process.env[key] || ''

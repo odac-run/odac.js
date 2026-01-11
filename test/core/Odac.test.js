@@ -34,13 +34,13 @@ describe('Odac', () => {
     })
 
     it('should not recreate global if already exists', () => {
-      const existingCandy = global.Odac
+      const existingOdac = global.Odac
 
       // Clear module cache and re-require
       delete require.cache[require.resolve('../../core/Odac.js')]
       require('../../core/Odac.js')
 
-      expect(global.Odac).toBe(existingCandy)
+      expect(global.Odac).toBe(existingOdac)
     })
   })
 

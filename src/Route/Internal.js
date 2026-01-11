@@ -1,3 +1,5 @@
+const nodeCrypto = require('crypto')
+
 class Internal {
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
@@ -107,7 +109,7 @@ class Internal {
     })
 
     if (!registerResult.success) {
-      if (registerResult.error === 'Database connection not configured') {
+      if (registerResult.error === 'Database connection failed') {
         return Odac.return({
           result: {success: false},
           errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
@@ -247,7 +249,7 @@ class Internal {
     const loginResult = await Odac.Auth.login(credentials)
 
     if (!loginResult.success) {
-      if (loginResult.error === 'Database connection not configured') {
+      if (loginResult.error === 'Database connection failed') {
         return Odac.return({
           result: {success: false},
           errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
@@ -270,6 +272,117 @@ class Internal {
         redirect: config.redirect
       }
     })
+  }
+
+  static async magicLogin(Odac) {
+    const token = await Odac.request('_odac_magic_login_token')
+    if (!token) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Invalid request'}
+      })
+    }
+
+    const formData = Odac.Request.session(`_magic_login_form_${token}`)
+    if (!formData) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+      })
+    }
+
+    if (formData.expires < Date.now()) {
+      Odac.Request.session(`_magic_login_form_${token}`, null)
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+      })
+    }
+
+    // Basic security checks
+    if (
+      formData.sessionId !== Odac.Request.session('_client') ||
+      formData.userAgent !== Odac.Request.header('user-agent') ||
+      formData.ip !== Odac.Request.ip
+    ) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Invalid request security token'}
+      })
+    }
+
+    const config = formData.config
+    const validator = Odac.validator()
+    let email = ''
+
+    // Validate inputs (expecting email)
+    for (const field of config.fields) {
+      const value = await Odac.request(field.name)
+      for (const validation of field.validations) {
+        this.#validateField(validator, field, validation, value)
+      }
+      if (field.name === 'email') email = value
+    }
+
+    if (await validator.error()) {
+      return validator.result()
+    }
+
+    if (!email) {
+      return Odac.return({
+        result: {success: false},
+        errors: {email: 'Email is required'}
+      })
+    }
+
+    const result = await Odac.Auth.magic(email, {
+      autoRegister: false, // config.autoRegister
+      redirect: config.redirect
+    })
+
+    if (!result.success) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: result.error || 'Failed to send magic link'}
+      })
+    }
+
+    Odac.Request.session(`_magic_login_form_${token}`, null)
+
+    return Odac.return({
+      result: {
+        success: true,
+        message: result.message || 'Magic link sent! Please check your email.',
+        // We might want to keep them on page or redirect to a "check email" page
+        redirect: config.redirect
+      }
+    })
+  }
+
+  static async magicVerify(Odac) {
+    const token = await Odac.request('token')
+    const email = await Odac.request('email')
+
+    if (!token || !email) {
+      return Odac.Request.end('Invalid verification link.')
+    }
+
+    const result = await Odac.Auth.verifyMagicLink(token, email)
+
+    if (!result.success) {
+      return Odac.Request.end(`Verification failed: ${result.error}`)
+    }
+
+    // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
+    let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
+
+    // Security: Prevent open redirect attacks by only allowing relative paths
+    if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
+      redirectUrl = '/'
+    }
+
+    Odac.Request.redirect(redirectUrl)
+    Odac.Request.end('')
   }
 
   static async processForm(Odac) {
@@ -384,18 +497,14 @@ class Internal {
 
     if (Odac.formConfig.table) {
       try {
-        const mysql = Odac.Mysql
+        const table = Odac.DB[Odac.formConfig.table]
 
         for (const field of Odac.formUniqueFields) {
           if (Odac.formData[field.name] == null) continue
 
-          const existingRecord = await mysql.query(`SELECT id FROM ?? WHERE ?? = ? LIMIT 1`, [
-            Odac.formConfig.table,
-            field.name,
-            Odac.formData[field.name]
-          ])
+          const existingRecord = await table.where(field.name, Odac.formData[field.name]).first()
 
-          if (existingRecord && existingRecord.length > 0) {
+          if (existingRecord) {
             const errorMessage = field.message || `This ${field.name} is already registered`
             return Odac.return({
               result: {success: false},
@@ -404,7 +513,7 @@ class Internal {
           }
         }
 
-        await mysql.query('INSERT INTO ?? SET ?', [Odac.formConfig.table, Odac.formData])
+        await table.insert(Odac.formData)
 
         Odac.Request.session(`_custom_form_${token}`, null)
 
@@ -416,7 +525,7 @@ class Internal {
           }
         })
       } catch (error) {
-        if (error.message === 'Database connection not configured') {
+        if (error.message === 'Database connection failed') {
           return Odac.return({
             result: {success: false},
             errors: {_odac_form: 'Database not configured. Please check your config.json'}
@@ -426,6 +535,100 @@ class Internal {
         return Odac.return({
           result: {success: false},
           errors: {_odac_form: error.message || 'Database error occurred'}
+        })
+      }
+    }
+
+    if (Odac.formConfig.action) {
+      const actionParts = Odac.formConfig.action.split('.')
+      if (actionParts.length === 2) {
+        const controllerName = actionParts[0]
+        const methodName = actionParts[1]
+
+        // Dynamically load controller
+        // We need to access Odac.Route.class to find the controller path/module
+        // Or use require directly if we know the path structure.
+        // Since we are in framework/src/Route/Internal.js, controllers are in framework/controller/ OR app/controller/
+        // Ideally Odac.Route.class has the loaded controllers.
+
+        let controllerModule = null
+
+        if (Odac.Route && Odac.Route.class && Odac.Route.class[controllerName]) {
+          controllerModule = Odac.Route.class[controllerName].module
+        } else {
+          // Try to require it if not loaded (though Route.js should have loaded it)
+          // This fallback might be tricky with absolute paths, relying on Route.class is safer.
+        }
+
+        if (controllerModule) {
+          try {
+            // Create Form Helper Object
+            const formHelper = {
+              data: Odac.formData,
+
+              error: (field, message) => {
+                return Odac.return({
+                  result: {success: false},
+                  errors: {[field]: message}
+                })
+              },
+
+              success: (message, redirect = null) => {
+                const finalRedirect = redirect || Odac.formConfig.redirect
+                let newToken = null
+
+                // Only rotate token if we are staying on the page (no redirect)
+                if (!finalRedirect) {
+                  newToken = nodeCrypto.randomBytes(32).toString('hex')
+
+                  if (formData && formData.config) {
+                    const newFormData = {
+                      ...formData,
+                      config: {...formData.config, token: newToken},
+                      created: Date.now(),
+                      expires: Date.now() + 30 * 60 * 1000
+                    }
+                    Odac.Request.session(`_custom_form_${newToken}`, newFormData)
+                  }
+                }
+
+                Odac.Request.session(`_custom_form_${token}`, null)
+
+                return Odac.return({
+                  result: {
+                    success: true,
+                    message: message,
+                    redirect: finalRedirect,
+                    _token: newToken
+                  }
+                })
+              }
+            }
+
+            // Handle Class-based Controller
+            if (typeof controllerModule === 'function' && controllerModule.prototype) {
+              const instance = new controllerModule(Odac)
+              if (typeof instance[methodName] === 'function') {
+                return await instance[methodName](formHelper)
+              }
+            }
+            // Handle Object-based Controller (Backwards Compatibility)
+            else if (typeof controllerModule[methodName] === 'function') {
+              return await controllerModule[methodName](Odac, formHelper)
+            }
+          } catch (e) {
+            console.error(e)
+            return Odac.return({
+              result: {success: false},
+              errors: {_odac_form: 'An error occurred while processing your request.'}
+            })
+          }
+        }
+
+        console.error(`Action ${Odac.formConfig.action} not found or invalid.`)
+        return Odac.return({
+          result: {success: false},
+          errors: {_odac_form: 'An error occurred while processing your request.'}
         })
       }
     }

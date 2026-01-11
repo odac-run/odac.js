@@ -10,6 +10,7 @@ Let's take a look at a typical project layout:
     -   `route/`: This folder holds all your route definitions. The filename of the route file corresponds to the subdomain it serves.
         -   `www.js`: Used for routes on your main domain (e.g., `www.example.com` or `example.com`).
         -   `api.js`: Used for routes on a subdomain (e.g., `api.example.com`). When a request comes in for `api.example.com`, this is the route file that gets used. You can create files for any subdomain!
+    -   `class/`: A dedicated place for your business logic classes and reusable services (e.g., `User.js`, `Mailer.js`).
     -   `controller/`: This is where the magic happens! Controllers contain the main logic for your application.
         -   `page/`: We suggest putting controllers that show HTML pages in here.
         -   `api/`: If you're building an API, it's a great idea to keep those controllers separate in their own folder.

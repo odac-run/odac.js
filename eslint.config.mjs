@@ -6,49 +6,7 @@ import prettierConfig from 'eslint-config-prettier'
 
 export default defineConfig([
   {
-    files: ['core/**/*.js', 'watchdog/**/*.js', 'server/**/*.js', 'cli/**/*.js'],
-    ignores: ['server/src/Odac.js'],
-    languageOptions: {
-      globals: {
-        ...globals.node,
-        Odac: 'readonly',
-        __: 'readonly'
-      },
-      sourceType: 'script'
-    },
-    plugins: {
-      js,
-      prettier: prettierPlugin
-    },
-    rules: {
-      ...js.configs.recommended.rules,
-      ...prettierConfig.rules,
-      'prettier/prettier': 'error'
-    }
-  },
-  {
-    files: ['server/src/Odac.js'],
-    languageOptions: {
-      globals: {
-        ...globals.node,
-        log: 'readonly',
-        __: 'readonly'
-      },
-      sourceType: 'script'
-    },
-    plugins: {
-      js,
-      prettier: prettierPlugin
-    },
-    rules: {
-      ...js.configs.recommended.rules,
-      ...prettierConfig.rules,
-      'prettier/prettier': 'error'
-    }
-  },
-  {
-    files: ['framework/**/*.js'],
-    ignores: ['framework/web/**/*.js'],
+    files: ['src/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -68,7 +26,7 @@ export default defineConfig([
     }
   },
   {
-    files: ['framework/web/**/*.js'],
+    files: ['client/**/*.js'],
     languageOptions: {
       globals: {...globals.browser},
       sourceType: 'module'
@@ -79,8 +37,8 @@ export default defineConfig([
     }
   },
   {
-    files: ['web/**/*.js'],
-    ignores: ['web/public/**/*.js'],
+    files: ['template/**/*.js'],
+    ignores: ['template/public/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,
@@ -99,7 +57,7 @@ export default defineConfig([
     }
   },
   {
-    files: ['web/public/**/*.js'],
+    files: ['template/public/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.browser,

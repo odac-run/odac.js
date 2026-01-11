@@ -118,7 +118,7 @@ Create a separate view part for the `<head>` section:
 ```javascript
 module.exports = async function (Odac) {
   const productId = Odac.Request.get('id')
-  const product = await Odac.Mysql.table('products')
+  const product = await Odac.DB.table('products')
     .where('id', productId)
     .first()
   

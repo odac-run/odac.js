@@ -52,16 +52,6 @@ async function run() {
             }
 
             console.log('\n✨ Project initialized successfully!')
-            console.log('\n🚀 Starting server...')
-
-            try {
-                execSync('npm run dev', {
-                    stdio: 'inherit',
-                    cwd: targetDir
-                })
-            } catch (err) {
-                console.log('\n👋 Server stopped.')
-            }
 
         } catch (error) {
             console.error('❌ Error initializing project:', error.message)

@@ -1,9 +1,16 @@
 module.exports = {
   init: async function () {
     global.Odac = this.instance()
+    global.Odac.Storage = require('./Storage.js')
+    global.Odac.Storage.init()
+
     await global.Odac.Env.init()
     await global.Odac.Config.init()
-    await global.Odac.Mysql.init()
+    await global.Odac.Database.init()
+
+    global.Odac.Ipc = require('./Ipc.js')
+    await global.Odac.Ipc.init()
+
     await global.Odac.Route.init()
     await global.Odac.Server.init()
     global.Odac.instance = this.instance
@@ -18,9 +25,42 @@ module.exports = {
     _odac.Config = require('./Config.js')
     _odac.Env = require('./Env.js')
     _odac.Mail = (...args) => new (require('./Mail.js'))(...args)
-    _odac.Mysql = require('./Mysql.js')
+    _odac.Database = require('./Database.js')
+    _odac.DB = _odac.Database
     _odac.Route = global.Odac?.Route ?? new (require('./Route.js'))()
+
+    _odac._ipcSubs = []
+    const ipcSingleton = require('./Ipc.js')
+
+    _odac.Ipc = new Proxy(ipcSingleton, {
+      get(target, prop) {
+        if (prop === 'subscribe') {
+          return async (channel, callback) => {
+            const res = await target.subscribe(channel, callback)
+            _odac._ipcSubs.push({channel, callback})
+            return res
+          }
+        }
+        if (prop === 'unsubscribe') {
+          return async (channel, callback) => {
+            const res = await target.unsubscribe(channel, callback)
+            const index = _odac._ipcSubs.findIndex(s => s.channel === channel && s.callback === callback)
+            if (index > -1) _odac._ipcSubs.splice(index, 1)
+            return res
+          }
+        }
+        const value = target[prop]
+        if (typeof value === 'function') return value.bind(target)
+        return value
+      },
+      set(target, prop, value) {
+        target[prop] = value
+        return true
+      }
+    })
+
     _odac.Server = require('./Server.js')
+    _odac.Storage = require('./Storage.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
 
     if (req) {
@@ -57,15 +97,14 @@ module.exports = {
       _odac.cleanup = function () {
         for (const id of _odac._intervals) clearInterval(id)
         for (const id of _odac._timeouts) clearTimeout(id)
+        if (_odac._ipcSubs) {
+          for (const sub of _odac._ipcSubs) {
+            ipcSingleton.unsubscribe(sub.channel, sub.callback).catch(console.error)
+          }
+        }
         _odac._intervals = []
         _odac._timeouts = []
-      }
-
-      if (global.Odac?.Route?.class) {
-        for (const name in global.Odac.Route.class) {
-          const Module = global.Odac.Route.class[name].module
-          _odac[name] = typeof Module === 'function' ? new Module(_odac) : Module
-        }
+        _odac._ipcSubs = []
       }
 
       _odac.__ = function (...args) {
@@ -92,6 +131,9 @@ module.exports = {
       _odac.set = function (key, value) {
         return _odac.Request.set(key, value)
       }
+      _odac.share = function (key, value) {
+        return _odac.Request.share(key, value)
+      }
       _odac.token = function (hash) {
         return hash ? _odac.Token.check(hash) : _odac.Token.generate()
       }
@@ -104,6 +146,20 @@ module.exports = {
       _odac.stream = function (input) {
         _odac.Request.clearTimeout()
         return new (require('./Stream'))(_odac.Request.req, _odac.Request.res, input, _odac)
+      }
+
+      if (global.Odac?.Route?.class) {
+        _odac.App = {}
+        for (const name in global.Odac.Route.class) {
+          const Module = global.Odac.Route.class[name].module
+          const instance = typeof Module === 'function' ? new Module(_odac) : Module
+
+          if (_odac[name]) {
+            _odac.App[name] = instance
+          } else {
+            _odac[name] = instance
+          }
+        }
       }
     }
 

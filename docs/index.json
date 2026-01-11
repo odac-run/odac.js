@@ -1,124 +1,4 @@
 {
-  "server": [
-    {
-      "file": "01-installation",
-      "title": "Installation",
-      "children": [
-        {
-          "file": "01-quick-install.md",
-          "title": "Quick Install"
-        },
-        {
-          "file": "02-manual-installation-via-npm.md",
-          "title": "Manual Installation (via NPM)"
-        }
-      ]
-    },
-    {
-      "file": "02-get-started",
-      "title": "Getting Started",
-      "children": [
-        {
-          "file": "01-core-concepts.md",
-          "title": "Core Concepts"
-        },
-        {
-          "file": "02-basic-commands.md",
-          "title": "Basic Commands"
-        },
-        {
-          "file": "03-cli-reference.md",
-          "title": "CLI Reference"
-        },
-        {
-          "file": "04-cli-quick-reference.md",
-          "title": "CLI Quick Reference"
-        }
-      ]
-    },
-    {
-      "file": "03-service",
-      "title": "Running a Service",
-      "children": [
-        {
-          "file": "01-start-a-new-service.md",
-          "title": "Start a New Service"
-        },
-        {
-          "file": "02-delete-a-service.md",
-          "title": "Delete a Service"
-        }
-      ]
-    },
-    {
-      "file": "04-web",
-      "title": "Managing Websites",
-      "children": [
-        {
-          "file": "01-create-a-website.md",
-          "title": "Create a Website"
-        },
-        {
-          "file": "02-list-websites.md",
-          "title": "List Websites"
-        },
-        {
-          "file": "03-delete-a-website.md",
-          "title": "Delete a Website"
-        }
-      ]
-    },
-    {
-      "file": "05-subdomain",
-      "title": "Managing Subdomains",
-      "children": [
-        {
-          "file": "01-create-a-subdomain.md",
-          "title": "Create a Subdomain"
-        },
-        {
-          "file": "02-list-subdomains.md",
-          "title": "List Subdomains"
-        },
-        {
-          "file": "03-delete-a-subdomain.md",
-          "title": "Delete a Subdomain"
-        }
-      ]
-    },
-    {
-      "file": "06-ssl",
-      "title": "Managing SSL",
-      "children": [
-        {
-          "file": "01-renew-an-ssl-certificate.md",
-          "title": "Renew an SSL Certificate"
-        }
-      ]
-    },
-    {
-      "file": "07-mail",
-      "title": "Managing Mail",
-      "children": [
-        {
-          "file": "01-create-a-mail-account.md",
-          "title": "Create a Mail Account"
-        },
-        {
-          "file": "02-delete-a-mail-account.md",
-          "title": "Delete a Mail Account"
-        },
-        {
-          "file": "03-list-mail-accounts.md",
-          "title": "List Mail Accounts"
-        },
-        {
-          "file": "04-change-account-password.md",
-          "title": "Change Account Password"
-        }
-      ]
-    }
-  ],
   "backend": [
     {
       "file": "01-overview",
@@ -329,12 +209,20 @@
       "title": "Database",
       "children": [
         {
-          "file": "01-database-connection.md",
-          "title": "Database Connection"
+          "file": "01-getting-started.md",
+          "title": "Getting Started"
         },
         {
-          "file": "02-using-mysql.md",
-          "title": "Using MySQL"
+          "file": "02-basics.md",
+          "title": "Query Basics"
+        },
+        {
+          "file": "03-advanced.md",
+          "title": "Advanced Queries"
+        },
+        {
+          "file": "04-migrations.md",
+          "title": "Code-First Migrations"
         }
       ]
     },
@@ -375,6 +263,10 @@
         {
           "file": "06-odac-login-forms.md",
           "title": "Odac Login Forms (Zero-Config)"
+        },
+        {
+          "file": "07-magic-links.md",
+          "title": "Magic Links"
         }
       ]
     },

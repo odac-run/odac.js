@@ -74,7 +74,7 @@ class Route {
     post: (path, authFile, file) => this.authPost(path, authFile, file),
     get: (path, authFile, file) => this.authGet(path, authFile, file),
     ws: (path, handler, options) => this.authWs(path, handler, options),
-    use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()])
+    use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()], true)
   }
 
   async #runMiddlewares(Odac, middlewares) {
@@ -90,8 +90,13 @@ class Route {
 
       const result = await middleware(Odac)
 
+      if (Odac.Request.res.finished) {
+        return false
+      }
+
       if (result === false) {
-        return Odac.Request.abort(403)
+        await Odac.Request.abort(403)
+        return false
       }
 
       if (result !== undefined && result !== true) {
@@ -101,14 +106,14 @@ class Route {
   }
 
   async #executeController(Odac, controller) {
-    const middlewareResult = await this.#runMiddlewares(Odac, controller.middlewares)
-    if (middlewareResult !== undefined) return middlewareResult
-
     if (controller.params) {
       for (let key in controller.params) {
         Odac.Request.data.url[key] = controller.params[key]
       }
     }
+
+    const middlewareResult = await this.#runMiddlewares(Odac, controller.middlewares)
+    if (middlewareResult !== undefined) return middlewareResult
 
     if (typeof controller.cache === 'function') {
       return controller.cache(Odac)
@@ -153,7 +158,6 @@ class Route {
       Odac.Request.clientSkeleton = Odac.Request.header('X-Odac-Skeleton')
     }
     if (Odac.Config && Odac.Config.route && Odac.Config.route[url]) {
-      Odac.Config.route[url] = Odac.Config.route[url].replace('${odac}', `${__dir}/node_modules/odac`)
       if (fs.existsSync(Odac.Config.route[url])) {
         let stat = fs.lstatSync(Odac.Config.route[url])
         if (stat.isFile()) {
@@ -174,6 +178,10 @@ class Route {
       if (controller) {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+          Odac.Request.setSession()
+          const page = controller.cache?.file || controller.file
+          if (typeof page === 'string') Odac.Request.page = page
+
           if (
             ['post', 'get'].includes(Odac.Request.method) &&
             controller.token &&
@@ -187,12 +195,16 @@ class Route {
     }
     let authPageController = this.#controller(Odac.Request.route, '#page', url)
     if (authPageController && (await Odac.Auth.check())) {
-      Odac.Request.page = authPageController.cache?.file || authPageController.file
+      Odac.Request.setSession()
+      const page = authPageController.cache?.file || authPageController.file
+      if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, authPageController)
     }
     let pageController = this.#controller(Odac.Request.route, 'page', url)
     if (pageController) {
-      Odac.Request.page = pageController.cache?.file || pageController.file
+      Odac.Request.setSession()
+      const page = pageController.cache?.file || pageController.file
+      if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, pageController)
     }
     if (url && !url.includes('/../') && fs.existsSync(`${__dir}/public${url}`)) {
@@ -206,9 +218,10 @@ class Route {
         Odac.Request.header('Content-Type', type)
         Odac.Request.header('Cache-Control', 'public, max-age=31536000')
         Odac.Request.header('Content-Length', stat.size)
-        return fs.readFileSync(`${__dir}/public${url}`)
+        return fs.createReadStream(`${__dir}/public${url}`)
       }
     }
+
     return Odac.Request.abort(404)
   }
 
@@ -237,7 +250,8 @@ class Route {
           params: params,
           cache: this.routes[route][method][key].cache,
           token: this.routes[route][method][key].token,
-          middlewares: this.routes[route][method][key].middlewares
+          middlewares: this.routes[route][method][key].middlewares,
+          file: this.routes[route][method][key].file
         }
     }
     return false
@@ -268,18 +282,22 @@ class Route {
     if (this.loading) return
     this.loading = true
     this.#loadMiddlewares()
-    for (const file of fs.readdirSync(`${__dir}/controller/`)) {
-      if (!file.endsWith('.js')) continue
-      let name = file.replace('.js', '')
-      if (!Odac.Route.class) Odac.Route.class = {}
-      if (Odac.Route.class[name]) {
-        if (Odac.Route.class[name].mtime >= fs.statSync(Odac.Route.class[name].path).mtimeMs + 1000) continue
-        delete require.cache[require.resolve(Odac.Route.class[name].path)]
-      }
-      Odac.Route.class[name] = {
-        path: `${__dir}/controller/${file}`,
-        mtime: fs.statSync(`${__dir}/controller/${file}`).mtimeMs,
-        module: require(`${__dir}/controller/${file}`)
+    const classDir = `${__dir}/class/`
+    if (fs.existsSync(classDir)) {
+      for (const file of fs.readdirSync(classDir)) {
+        if (!file.endsWith('.js')) continue
+        let name = file.replace('.js', '')
+        if (!Odac.Route.class) Odac.Route.class = {}
+        if (Odac.Route.class[name]) {
+          const fileStat = fs.statSync(Odac.Route.class[name].path)
+          if (Odac.Route.class[name].mtime >= fileStat.mtimeMs || Date.now() < fileStat.mtimeMs + 1000) continue
+          delete require.cache[require.resolve(Odac.Route.class[name].path)]
+        }
+        Odac.Route.class[name] = {
+          path: `${__dir}/class/${file}`,
+          mtime: fs.statSync(`${__dir}/class/${file}`).mtimeMs,
+          module: require(`${__dir}/class/${file}`)
+        }
       }
     }
     let dir = fs.readdirSync(`${__dir}/route/`)
@@ -290,7 +308,10 @@ class Route {
       if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
         delete require.cache[require.resolve(`${__dir}/route/${file}`)]
         routes2[Odac.Route.buff] = mtime
-        require(`${__dir}/route/${file}`)
+        const routeModule = require(`${__dir}/route/${file}`)
+        if (typeof routeModule === 'function') {
+          routeModule(Odac)
+        }
       }
       for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
         if (!this.routes[Odac.Route.buff]) continue
@@ -354,7 +375,7 @@ class Route {
     )
 
     this.set(
-      ['POST', 'GET', 'PUT', 'PATCH', 'DELETE'],
+      'POST',
       '/_odac/form',
       async Odac => {
         const csrfToken = await Odac.request('_token')
@@ -375,6 +396,28 @@ class Route {
       {token: true}
     )
 
+    this.set(
+      'POST',
+      '/_odac/magic-login',
+      async Odac => {
+        const csrfToken = await Odac.request('_token')
+        if (!csrfToken || !Odac.token(csrfToken)) {
+          return Odac.Request.abort(401)
+        }
+        return await Internal.magicLogin(Odac)
+      },
+      {token: true}
+    )
+
+    this.set(
+      'GET',
+      '/_odac/magic-verify',
+      async Odac => {
+        return await Internal.magicVerify(Odac)
+      },
+      {token: false}
+    )
+
     delete Odac.Route.buff
   }
 
@@ -387,6 +430,11 @@ class Route {
       if (result instanceof Promise) result = await result
       const Stream = require('./Stream.js')
       if (result instanceof Stream) return
+      if (result && typeof result.pipe === 'function') {
+        param.Request.print()
+        result.pipe(param.Request.res)
+        return
+      }
       if (param.Request.res.finished || param.Request.res.writableEnded) {
         param.cleanup()
         return
@@ -453,7 +501,10 @@ class Route {
       this.routes[Odac.Route.buff][type][url].path = path
       this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
       this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+
       this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+    } else if (file && typeof file === 'string') {
+      console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
     }
 
     return this
@@ -462,6 +513,7 @@ class Route {
   page(path, file) {
     if (typeof file === 'object' && !Array.isArray(file)) {
       this.set('page', path, _odac => {
+        _odac.set(file)
         _odac.View.set(file)
         return
       })
@@ -482,16 +534,20 @@ class Route {
   }
 
   authPage(path, authFile, file) {
-    if (typeof authFile === 'object' && !Array.isArray(authFile)) {
+    if (typeof authFile === 'object' && authFile !== null && !Array.isArray(authFile)) {
       this.set('#page', path, _odac => {
+        _odac.set(authFile)
         _odac.View.set(authFile)
         return
       })
       if (typeof file === 'object' && !Array.isArray(file)) {
         this.set('page', path, _odac => {
+          _odac.set(file)
           _odac.View.set(file)
           return
         })
+      } else if (file) {
+        this.set('page', path, file)
       }
       return this
     }
@@ -499,6 +555,7 @@ class Route {
     if (file) {
       if (typeof file === 'object' && !Array.isArray(file)) {
         this.set('page', path, _odac => {
+          _odac.set(file)
           _odac.View.set(file)
           return
         })
@@ -545,6 +602,26 @@ class Route {
 
     const {token = true} = options
     const requireAuth = type === '#ws'
+
+    if (typeof handler !== 'function') {
+      let path = `${__dir}/controller/${type.replace('#', '')}/${handler}.js`
+      if (typeof handler === 'string' && handler.includes('.')) {
+        let arr = handler.split('.')
+        path = `${__dir}/controller/${arr[0]}/${type.replace('#', '')}/${arr.slice(1).join('.')}.js`
+      }
+
+      if (fs.existsSync(path)) {
+        handler = require(path)
+      } else {
+        console.error(`\x1b[31m[Odac]\x1b[0m WebSocket Controller not found: \x1b[33m${path}\x1b[0m`)
+        return
+      }
+    }
+
+    if (typeof handler !== 'function') {
+      console.error(`\x1b[31m[Odac]\x1b[0m Invalid WebSocket handler (not a function).`)
+      return
+    }
 
     const wrappedHandler = async (ws, Odac) => {
       Odac.ws = ws
@@ -603,7 +680,10 @@ class Route {
           }
         }
       }
-      return handler(Odac)
+      const res = handler(Odac)
+      if (res instanceof Promise) await res
+      ws.resume()
+      return res
     }
 
     this.#wsServer.route(path, wrappedHandler)

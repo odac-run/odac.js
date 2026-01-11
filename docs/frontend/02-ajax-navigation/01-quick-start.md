@@ -347,7 +347,7 @@ Odac.action({
 **Page Identifier Rules:**
 - **With controller**: Uses controller filename (e.g., `user.js` → `'user'`)
 - **With view object**: Uses `content` or `all` value (e.g., `{content: 'dashboard'}` → `'dashboard'`)
-- Accessible via `Odac.page()` or `document.documentElement.dataset.candyPage`
+- Accessible via `Odac.page()`
 
 ## Server Variables
 

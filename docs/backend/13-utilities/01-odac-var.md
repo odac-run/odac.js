@@ -313,7 +313,7 @@ module.exports = async function(Odac) {
   const profileSlug = Odac.Var(username).slug()
   
   // Save user
-  await Odac.Mysql.table('users').insert({
+  await Odac.DB.users.insert({
     email: email,
     username: username,
     password: hashedPassword,
@@ -332,7 +332,7 @@ module.exports = async function(Odac) {
   const password = Odac.Request.post('password')
   
   // Find user
-  const user = await Odac.Mysql.table('users')
+  const user = await Odac.DB.users
     .where('email', email)
     .first()
   
@@ -369,19 +369,19 @@ module.exports = async function(Odac) {
   const slug = Odac.Var(title).slug()
   
   // Check if slug exists
-  const exists = await Odac.Mysql.table('posts')
+  const exists = await Odac.DB.posts
     .where('slug', slug)
     .first()
   
   if (exists) {
     // Add timestamp to make unique
     const uniqueSlug = `${slug}-${Date.now()}`
-    await Odac.Mysql.table('posts').insert({
+    await Odac.DB.posts.insert({
       title: title,
       slug: uniqueSlug
     })
   } else {
-    await Odac.Mysql.table('posts').insert({
+    await Odac.DB.posts.insert({
       title: title,
       slug: slug
     })
@@ -464,7 +464,7 @@ module.exports = async function(Odac) {
   const encryptedCard = Odac.Var(creditCard).encrypt()
   
   // Save encrypted data
-  await Odac.Mysql.table('payments').insert({
+  await Odac.DB.payments.insert({
     user_id: Odac.Auth.id(),
     card: encryptedCard
   })
@@ -474,7 +474,7 @@ module.exports = async function(Odac) {
 
 // Later, to retrieve and decrypt
 module.exports = async function(Odac) {
-  const payment = await Odac.Mysql.table('payments')
+  const payment = await Odac.DB.payments
     .where('user_id', Odac.Auth.id())
     .first()
   

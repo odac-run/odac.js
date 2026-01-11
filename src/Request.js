@@ -3,14 +3,16 @@ const nodeCrypto = require('crypto')
 class OdacRequest {
   #odac
   #complete = false
-  #cookies = {received: [], sent: []}
+  #cookies = {data: {}, sent: []}
   data = {post: {}, get: {}, url: {}}
   #event = {data: [], end: []}
   #headers = {Server: 'Odac'}
   #status = 200
   #timeout = null
   #earlyHints = null
+  #sessions = {}
   variables = {}
+  sharedData = {}
   isAjaxLoad = false
   ajaxLoad = null
   clientSkeleton = null
@@ -26,6 +28,7 @@ class OdacRequest {
     this.host = req.headers.host
     this.ssl = this.header('x-odac-connection-ssl') === 'true'
     this.ip = (this.header('x-odac-connection-remoteaddress') ?? req.connection.remoteAddress).replace('::ffff:', '')
+    this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'
     delete this.req.headers['x-odac-connection-ssl']
     delete this.req.headers['x-odac-connection-remoteaddress']
     let route = req.headers.host.split('.')[0]
@@ -36,21 +39,17 @@ class OdacRequest {
     }
     this.#data()
     if (!Odac.Request) Odac.Request = {}
-    if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
-      let client = nodeCrypto
-        .createHash('md5')
-        .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-        .digest('hex')
-      this.cookie('odac_client', client, {expires: null, httpOnly: false})
-      this.session('_client', client)
-    }
   }
 
   // - ABORT REQUEST
   async abort(code) {
     this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
-    if (Odac.Route.routes[this.route].error && Odac.Route.routes[this.route].error[code])
+    if (
+      Odac.Route.routes[this.route].error &&
+      Odac.Route.routes[this.route].error[code] &&
+      typeof Odac.Route.routes[this.route].error[code].cache === 'function'
+    )
       result = await Odac.Route.routes[this.route].error[code].cache(this.#odac)
     this.end(result)
   }
@@ -58,17 +57,16 @@ class OdacRequest {
   // - SET COOKIE
   cookie(key, value, options = {}) {
     if (value === undefined) {
-      if (this.#cookies.sent[key]) return this.#cookies.sent[key]
-      if (this.#cookies.received[key]) return this.#cookies.received[key]
+      if (this.#cookies.data[key]) return this.#cookies.data[key]
       value =
         this.req.headers.cookie
           ?.split('; ')
           .find(c => c.startsWith(key + '='))
           ?.split('=')[1] ?? null
       if (value && value.startsWith('{') && value.endsWith('}')) value = JSON.parse(value)
-      this.#cookies.received[key] = value
       return value
     }
+    this.#cookies.data[key] = value
     if (options.path === undefined) options.path = '/'
     if (options.expires === undefined) options.expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toUTCString()
     if (options.secure === undefined) options.secure = true
@@ -86,8 +84,8 @@ class OdacRequest {
       let data = split[1].split('&')
       for (let i = 0; i < data.length; i++) {
         if (data[i].indexOf('=') === -1) continue
-        let key = data[i].split('=')[0]
-        let val = data[i].split('=')[1]
+        let key = decodeURIComponent(data[i].split('=')[0])
+        let val = decodeURIComponent(data[i].split('=')[1] || '')
         this.data.get[key] = val
       }
     }
@@ -101,7 +99,14 @@ class OdacRequest {
       } else {
         if (body.length > 0 && body.indexOf('Content-Disposition') === -1) return
         if (body.indexOf('Content-Disposition') > -1) {
-          let boundary = body.split('\r\n')[0].split('; ')[1].split('=')[1]
+          let boundary = body.split('\r\n')[0]
+          if (boundary.includes('boundary=')) {
+            try {
+              boundary = boundary.split('boundary=')[1].split(';')[0].trim()
+            } catch {
+              // ignore
+            }
+          }
           let data = body.split(boundary)
           for (let i = 0; i < data.length; i++) {
             if (data[i].indexOf('Content-Disposition') === -1) continue
@@ -203,6 +208,7 @@ class OdacRequest {
   redirect(url) {
     this.header('Location', url)
     this.status(302)
+    this.end()
   }
 
   // - GET REQUEST
@@ -225,62 +231,78 @@ class OdacRequest {
     })
   }
 
+  setSession() {
+    if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
+      let client = nodeCrypto.randomBytes(16).toString('hex')
+      this.cookie('odac_client', client, {expires: null, httpOnly: false})
+      this.session('_client', client)
+    }
+  }
+
   // - SESSION
   session(key, value) {
-    if (!Odac.Request.session) Odac.Request.session = {}
-    if (!Odac.Request.sessionLocks) Odac.Request.sessionLocks = {}
-
     let pri = nodeCrypto
-      .createHash('md5')
+      .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex')
-    let pub = this.cookie('candy_session')
-
-    if (!pub || !Odac.Request.session[pub + '-' + pri]) {
-      const lockKey = `${this.ip}-${pri}`
+    let pub = this.cookie('odac_session')
+    if (!pub || !Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
+      const lockKey = `lock:${this.ip}:${pri}`
       const now = Date.now()
 
-      if (Odac.Request.sessionLocks[lockKey]) {
-        const lock = Odac.Request.sessionLocks[lockKey]
-        if (now - lock.timestamp < 5000 && Odac.Request.session[`${lock.sessionId}-${pri}`]) {
-          pub = lock.sessionId
+      const existingLock = Odac.Storage.get(lockKey)
+      if (existingLock) {
+        if (now - existingLock.timestamp < 2000 && Odac.Storage.get(`sess:${existingLock.sessionId}:${pri}:_created`)) {
+          pub = existingLock.sessionId
         } else {
-          delete Odac.Request.sessionLocks[lockKey]
+          Odac.Storage.remove(lockKey)
         }
       }
 
       if (!pub) {
-        const sessionLockValues = Object.values(Odac.Request.sessionLocks)
-        const activeSessions = new Set(sessionLockValues.map(l => l.sessionId))
         do {
-          pub = nodeCrypto
-            .createHash('md5')
-            .update(this.ip + this.id + Date.now().toString() + Math.random().toString())
-            .digest('hex')
-        } while (Odac.Request.session[`${pub}-${pri}`] || activeSessions.has(pub))
-
-        Odac.Request.sessionLocks[lockKey] = {sessionId: pub, timestamp: now}
-        Odac.Request.session[`${pub}-${pri}`] = {}
-        this.cookie('candy_session', `${pub}`)
-
+          pub = nodeCrypto.randomBytes(16).toString('hex')
+        } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
+        Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
+        Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
+        this.cookie('odac_session', `${pub}`)
         setTimeout(() => {
-          if (Odac.Request.sessionLocks[lockKey]?.timestamp === now) {
-            delete Odac.Request.sessionLocks[lockKey]
+          const lock = Odac.Storage.get(lockKey)
+          if (lock?.timestamp === now) {
+            Odac.Storage.remove(lockKey)
           }
-        }, 5000)
+        }, 2000)
       }
     }
 
-    if (!Odac.Request.session[pub + '-' + pri]) Odac.Request.session[pub + '-' + pri] = {}
-    if (value === undefined) return Odac.Request.session[pub + '-' + pri][key] ?? null
-    else if (value === null) delete Odac.Request.session[pub + '-' + pri][key]
-    else Odac.Request.session[pub + '-' + pri][key] = value
+    const dbKey = `sess:${pub}:${pri}:${key}`
+    if (value === undefined) {
+      if (Object.prototype.hasOwnProperty.call(this.#sessions, dbKey)) return this.#sessions[dbKey]
+      const dbValue = Odac.Storage.get(dbKey) ?? null
+      return dbValue
+    } else if (value === null) {
+      delete this.#sessions[dbKey]
+      delete this.#sessions[dbKey]
+      Odac.Storage.remove(dbKey)
+    } else {
+      this.#sessions[dbKey] = value
+      Odac.Storage.put(dbKey, value)
+    }
   }
 
   // - SET
   set(key, value, ajax = false) {
     if (typeof key === 'object') for (const k in key) this.variables[k] = {value: key[k], ajax: ajax}
     else this.variables[key] = {value: value, ajax: ajax}
+  }
+
+  // - SHARE DATA (Client Side)
+  share(key, value) {
+    if (typeof key === 'object' && key !== null) {
+      Object.assign(this.sharedData, key)
+    } else {
+      this.sharedData[key] = value
+    }
   }
 
   // - HTTP CODE

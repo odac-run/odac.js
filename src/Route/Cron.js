@@ -1,4 +1,5 @@
 const fs = require('fs')
+const cluster = require('node:cluster')
 
 class Cron {
   #interval = null
@@ -6,7 +7,9 @@ class Cron {
 
   init() {
     if (this.#interval) return
-    this.#interval = setInterval(this.check.bind(this), 60 * 1000) // Check every minute
+    if (cluster.isPrimary) {
+      this.#interval = setInterval(this.check.bind(this), 60 * 1000) // Check every minute
+    }
   }
 
   check() {

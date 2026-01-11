@@ -22,9 +22,14 @@ class WebSocketClient {
 
   constructor(socket, server, id) {
     this.#socket = socket
+    this.#socket.pause()
     this.#server = server
     this.#id = id
     this.#setupListeners()
+  }
+
+  resume() {
+    this.#socket.resume()
   }
 
   get id() {
@@ -129,6 +134,7 @@ class WebSocketClient {
         break
       case OPCODE.PING:
         this.#sendFrame(OPCODE.PONG, frame.payload)
+        this.#emit('ping', frame.payload)
         break
       case OPCODE.PONG:
         this.#emit('pong')
@@ -151,6 +157,8 @@ class WebSocketClient {
   #handleClose() {
     if (this.#closed) return
     this.#closed = true
+
+    this.#socket.removeAllListeners()
 
     for (const room of this.#rooms) {
       this.#server.leaveRoom(this.#id, room)
@@ -239,6 +247,7 @@ class WebSocketClient {
 
     this.#sendFrame(OPCODE.CLOSE, payload)
     this.#socket.end()
+    this.#socket.removeAllListeners()
 
     for (const room of this.#rooms) {
       this.#server.leaveRoom(this.#id, room)
@@ -330,12 +339,18 @@ class WebSocketServer {
       'HTTP/1.1 101 Switching Protocols',
       'Upgrade: websocket',
       'Connection: Upgrade',
-      `Sec-WebSocket-Accept: ${acceptKey}`,
-      '',
-      ''
+      `Sec-WebSocket-Accept: ${acceptKey}`
     ]
 
+    if (req.headers['sec-websocket-protocol']) {
+      responseHeaders.push(`Sec-WebSocket-Protocol: ${req.headers['sec-websocket-protocol']}`)
+    }
+
+    responseHeaders.push('', '')
+
     socket.write(responseHeaders.join('\r\n'))
+
+    if (head && head.length > 0) socket.unshift(head)
 
     const clientId = nodeCrypto.randomUUID()
     const client = new WebSocketClient(socket, this, clientId)

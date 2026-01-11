@@ -3,6 +3,8 @@ const fs = require('fs')
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 
+const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+
 const CACHE_DIR = './storage/.cache'
 
 class View {
@@ -140,12 +142,45 @@ class View {
       }
 
       // Render requested elements
+      let title = null
       for (let element of this.#odac.Request.ajaxLoad) {
         if (this.#part[element]) {
           let viewPath = this.#part[element]
           if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
           if (fs.existsSync(`./view/${element}/${viewPath}.html`)) {
-            output[element] = await this.#render(`./view/${element}/${viewPath}.html`)
+            const html = await this.#render(`./view/${element}/${viewPath}.html`)
+            output[element] = html
+
+            // Extract title if present inside the part
+            const titleMatch = html.match(TITLE_REGEX)
+            if (titleMatch && titleMatch[1]) {
+              title = titleMatch[1]
+            }
+          }
+        }
+      }
+
+      // If title not found in parts, try to extract from 'head', 'header' or 'meta' parts
+      if (!title) {
+        const priorityParts = ['head', 'header', 'meta']
+        for (const key of priorityParts) {
+          if (this.#part[key] && !this.#odac.Request.ajaxLoad.includes(key)) {
+            let viewPath = this.#part[key]
+            if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
+            if (fs.existsSync(`./view/${key}/${viewPath}.html`)) {
+              try {
+                const partHtml = await this.#render(`./view/${key}/${viewPath}.html`)
+                const titleMatch = partHtml.match(TITLE_REGEX)
+                if (titleMatch && titleMatch[1]) {
+                  title = titleMatch[1]
+                  break
+                }
+              } catch (e) {
+                if (this.#odac.Config?.debug) {
+                  console.warn(`Odac: Failed to render part '${key}' while searching for title:`, e)
+                }
+              }
+            }
           }
         }
       }
@@ -161,6 +196,8 @@ class View {
       this.#odac.Request.end({
         output: output,
         variables: variables,
+        data: this.#odac.Request.sharedData,
+        title: title,
         skeletonChanged: skeletonChanged
       })
       return
@@ -206,6 +243,14 @@ class View {
         if (detectedResources && detectedResources.length > 0) {
           this.#earlyHints.cacheHints(routePath, detectedResources)
         }
+      }
+
+      // Inject Shared Data
+      const sharedScript = `<script type="application/json" id="odac-data">${JSON.stringify(this.#odac.Request.sharedData || {})}</script>`
+      if (result.includes('</body>')) {
+        result = result.replace('</body>', `${sharedScript}</body>`)
+      } else {
+        result += sharedScript
       }
     }
 

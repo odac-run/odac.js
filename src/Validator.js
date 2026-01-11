@@ -1,3 +1,82 @@
+const https = require('https')
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+
+let disposableDomains = null
+const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
+const SOURCE_URL = 'https://hub.odac.run/blocklist/disposable-emails'
+
+async function loadDisposableDomains() {
+  if (disposableDomains instanceof Set) return
+
+  disposableDomains = new Set()
+  let content = ''
+  let shouldUpdate = true
+
+  try {
+    try {
+      const fd = fs.openSync(CACHE_FILE, 'r')
+      try {
+        const stats = fs.fstatSync(fd)
+        const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
+        if (ageInHours < 24) {
+          content = fs.readFileSync(fd, 'utf8')
+          shouldUpdate = false
+        }
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch {
+      // Cache error check failed, proceed to validation update
+    }
+
+    if (shouldUpdate) {
+      try {
+        content = await new Promise((resolve, reject) => {
+          const req = https.get(SOURCE_URL, res => {
+            if (res.statusCode !== 200) {
+              res.resume()
+              reject(new Error(`Failed to fetch: ${res.statusCode}`))
+              return
+            }
+            let data = ''
+            res.on('data', chunk => (data += chunk))
+            res.on('end', () => resolve(data))
+          })
+          req.on('error', reject)
+          req.end()
+        })
+        const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        const fd = fs.openSync(tempFile, 'wx')
+        try {
+          // Sanitize content before writing to file to avoid injection attacks
+          const sanitizedContent = content.replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
+          fs.writeSync(fd, sanitizedContent)
+        } finally {
+          fs.closeSync(fd)
+        }
+        fs.renameSync(tempFile, CACHE_FILE)
+      } catch {
+        if (fs.existsSync(CACHE_FILE)) {
+          content = fs.readFileSync(CACHE_FILE, 'utf8')
+        }
+      }
+    }
+
+    if (content) {
+      content.split('\n').forEach(line => {
+        const domain = line.trim().toLowerCase()
+        if (domain && !domain.startsWith('#')) {
+          disposableDomains.add(domain)
+        }
+      })
+    }
+  } catch (error) {
+    console.error('Validator Warning: Could not load disposable domains.', error.message)
+  }
+}
+
 class Validator {
   #checklist = {}
   #completed = false
@@ -88,9 +167,12 @@ class Validator {
           } else {
             for (const rule of rules.includes('|') ? rules.split('|') : [rules]) {
               let vars = rule.split(':')
-              let inverse = vars[0].startsWith('!')
+              let ruleName = vars[0].trim()
+              let inverse = ruleName.startsWith('!')
+              if (inverse) ruleName = ruleName.substr(1)
+
               if (!error) {
-                switch (inverse ? vars[0].substr(1) : vars[0]) {
+                switch (ruleName) {
                   case 'required':
                     error = value === undefined || value === '' || value === null
                     break
@@ -204,6 +286,9 @@ class Validator {
                     }
                     break
                   }
+                  case 'disposable':
+                    error = value && value !== '' && !(await Validator.isDisposable(value))
+                    break
                 }
                 if (inverse) error = !error
               }
@@ -218,6 +303,13 @@ class Validator {
       }
     }
     this.#completed = true
+  }
+
+  static async isDisposable(email) {
+    if (!email || typeof email !== 'string') return false
+    await loadDisposableDomains()
+    const domain = email.split('@').pop().toLowerCase()
+    return disposableDomains && disposableDomains.has(domain)
   }
 
   var(name, value = null) {
