@@ -526,7 +526,10 @@ if (typeof window !== 'undefined') {
                     let errorEl = formElement.querySelector(`[odac-form-error="${name}"]`)
                     if (errorEl) {
                       errorEl.innerHTML = this.textToHtml(message)
-                      errorEl.style.cssText = 'display:block;color:#dc3545;font-size:0.875rem;margin-top:0.25rem'
+                      errorEl.style.display = 'block'
+                      if (!errorEl.style.color) errorEl.style.color = '#dc3545'
+                      if (!errorEl.style.fontSize) errorEl.style.fontSize = '0.875rem'
+                      if (!errorEl.style.marginTop) errorEl.style.marginTop = '0.25rem'
                     } else {
                       const inputEl = formElement.querySelector(`*[name="${name}"]`)
                       if (inputEl) {
@@ -545,7 +548,10 @@ if (typeof window !== 'undefined') {
                         const errorEl = document.createElement('div')
                         errorEl.setAttribute('odac-form-error', name)
                         errorEl.innerHTML = this.textToHtml(message)
-                        errorEl.style.cssText = 'display:block;color:#dc3545;background-color:#f8d7da;border:1px solid #f5c2c7;border-radius:0.375rem;padding:0.75rem 1rem;margin-bottom:1rem;font-size:0.875rem'
+                        errorEl.style.display = 'block'
+                        errorEl.style.color = '#dc3545'
+                        errorEl.style.fontSize = '0.875rem'
+                        errorEl.style.marginBottom = '1rem'
                         formElement.insertBefore(errorEl, formElement.firstChild)
                       }
                     }
