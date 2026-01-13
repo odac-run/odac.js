@@ -1,5 +1,22 @@
 ## 📦 API and Data Routes
 
+
+#### Class-Based Route Definition (Recommended)
+
+You can route requests to specific methods within a Controller Class using the `ClassName@methodName` syntax. This allows you to group related logic in a single file clearly.
+
+```javascript
+// Calls the 'index' method of the class exported in controller/User.js
+Odac.Route.get('/users', 'User@index');
+
+// Calls the 'store' method of the class exported in controller/User.js
+Odac.Route.post('/users', 'User@store');
+
+// You can also use dot notation for controllers in subdirectories
+// controller/Admin/Dashboard.js -> Admin.Dashboard
+Odac.Route.get('/admin', 'Admin.Dashboard@index');
+```
+
 #### `get(path, controller, options)`
 Defines a route that responds to `GET` requests. This is ideal for API endpoints that return data (like JSON).
 
@@ -18,3 +35,4 @@ Defines a route that responds to `POST` requests, typically used for form submis
 // A form that posts data to /login
 Odac.Route.post('/login', 'auth.login');
 ```
+

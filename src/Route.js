@@ -115,6 +115,21 @@ class Route {
     const middlewareResult = await this.#runMiddlewares(Odac, controller.middlewares)
     if (middlewareResult !== undefined) return middlewareResult
 
+    if (controller.action) {
+      const ControllerClass = controller.cache
+      try {
+        const instance = new ControllerClass(Odac)
+        if (typeof instance[controller.action] === 'function') {
+          return instance[controller.action](Odac)
+        }
+      } catch {
+        if (typeof ControllerClass[controller.action] === 'function') {
+          return ControllerClass[controller.action](Odac)
+        }
+      }
+      return Odac.Request.abort(500)
+    }
+
     if (typeof controller.cache === 'function') {
       return controller.cache(Odac)
     }
@@ -473,11 +488,20 @@ class Route {
     const isFunction = typeof file === 'function'
     let path = `${__dir}/route/${Odac.Route.buff}.js`
 
+    let action = null
+
     if (!isFunction && file) {
-      path = `${__dir}/controller/${type.replace('#', '')}/${file}.js`
-      if (typeof file === 'string' && file.includes('.')) {
-        let arr = file.split('.')
-        path = `${__dir}/controller/${arr[0]}/${type.replace('#', '')}/${arr.slice(1).join('.')}.js`
+      if (typeof file === 'string' && file.includes('@')) {
+        let arr = file.split('@')
+        file = arr[0]
+        action = arr[1]
+        path = `${__dir}/controller/${file.replace(/\./g, '/')}.js`
+      } else {
+        path = `${__dir}/controller/${type.replace('#', '')}/${file}.js`
+        if (typeof file === 'string' && file.includes('.')) {
+          let arr = file.split('.')
+          path = `${__dir}/controller/${arr[0]}/${type.replace('#', '')}/${arr.slice(1).join('.')}.js`
+        }
       }
     }
 
@@ -501,6 +525,7 @@ class Route {
       this.routes[Odac.Route.buff][type][url].path = path
       this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
       this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+      this.routes[Odac.Route.buff][type][url].action = action
 
       this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
     } else if (file && typeof file === 'string') {
