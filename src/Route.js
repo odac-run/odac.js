@@ -591,15 +591,31 @@ class Route {
     return this
   }
 
-  authPost(path, authFile, file) {
-    if (authFile) this.set('#post', path, authFile)
-    if (file) this.post(path, file)
+  authPost(path, authFile, file, options) {
+    let opts = options
+    let publicFile = file
+
+    if (publicFile && typeof publicFile === 'object' && !opts) {
+      opts = publicFile
+      publicFile = undefined
+    }
+
+    if (authFile) this.set('#post', path, authFile, opts)
+    if (publicFile) this.post(path, publicFile, opts)
     return this
   }
 
-  authGet(path, authFile, file) {
-    if (authFile) this.set('#get', path, authFile)
-    if (file) this.get(path, file)
+  authGet(path, authFile, file, options) {
+    let opts = options
+    let publicFile = file
+
+    if (publicFile && typeof publicFile === 'object' && !opts) {
+      opts = publicFile
+      publicFile = undefined
+    }
+
+    if (authFile) this.set('#get', path, authFile, opts)
+    if (publicFile) this.get(path, publicFile, opts)
     return this
   }
 
