@@ -6,6 +6,7 @@
 ## ✨ Key Features
 
 *   🚀 **Developer Friendly:** Simple setup and intuitive API design let you start building immediately.
+*   🎨 **Built-in Tailwind CSS:** Zero-config integration with Tailwind CSS v4. Automatic compilation and optimization out of the box.
 *   🔗 **Powerful Routing:** Create clean, custom URLs and manage infinite pages with a flexible routing system.
 *   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions eliminates the need for complex client-side code.
 *   🛡️ **Built-in Security:** Automatic CSRF protection and secure default headers keep your application safe.
