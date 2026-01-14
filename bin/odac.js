@@ -117,7 +117,7 @@ async function run() {
         console.log(`🎨 Compiling ${isCustom ? 'Custom' : 'Default'} CSS...`)
 
         try {
-            execSync(`npx @tailwindcss/cli -i ${input} -o ${cssOutput} --minify`, {
+            execSync(`npx @tailwindcss/cli -i "${input}" -o "${cssOutput}" --minify`, {
                 stdio: 'inherit',
                 cwd: process.cwd()
             })
