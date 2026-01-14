@@ -61,6 +61,31 @@ In your layout files (e.g., `view/head/main.html`), simply link to the compiled 
 
 This is already set up for you in the default project template.
 
+## Multiple CSS Files
+
+Odac supports multiple CSS entry points. If your application has distinct sections (e.g., a Landing Page, a Dashboard, and an Admin Panel) that require separate stylesheets, you can organize them easily.
+
+### How to use
+
+Any `.css` file you place in the **`view/css/`** directory will be automatically detected, watched, and compiled by Odac.
+
+**Input:**
+*   `view/css/app.css`
+*   `view/css/admin.css`
+*   `view/css/landing.css`
+
+**Output (Compiled):**
+*   `public/assets/css/app.css`
+*   `public/assets/css/admin.css`
+*   `public/assets/css/landing.css`
+
+You can then link each specific stylesheet in its respective layout file:
+
+```html
+<!-- In Admin Layout -->
+<link rel="stylesheet" href="/assets/css/admin.css" />
+```
+
 ## Using Tailwind v4
 
 Tailwind v4 is radically simpler. You generally don't need a `tailwind.config.js` file anymore. You can define your theme directly in CSS using the `@theme` block as shown above.
