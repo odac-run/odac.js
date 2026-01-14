@@ -127,8 +127,22 @@ const isLoggedIn = await Odac.Auth.check()
 **Get user info:**
 ```javascript
 const user = Odac.Auth.user(null)  // Full user object
+const user = Odac.Auth.user(null)  // Full user object
 const email = Odac.Auth.user('email')  // Specific field
 ```
+
+### Custom Session Data
+
+If you need to store your own data in the session (e.g. shopping cart ID, preferences), use the `Odac.session()` helper:
+
+```javascript
+// Store data
+Odac.session('theme', 'dark')
+
+// Retrieve data
+const theme = Odac.session('theme')
+```
+
 
 ### Best Practices
 

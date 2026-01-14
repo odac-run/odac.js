@@ -131,6 +131,9 @@ module.exports = {
       _odac.set = function (key, value) {
         return _odac.Request.set(key, value)
       }
+      _odac.session = function (key, value) {
+        return _odac.Request.session(key, value)
+      }
       _odac.share = function (key, value) {
         return _odac.Request.share(key, value)
       }
