@@ -16,6 +16,36 @@ const rl = readline.createInterface({
 
 const ask = question => new Promise(resolve => rl.question(question, answer => resolve(answer.trim())))
 
+/**
+ * Resolves Tailwind CSS paths and ensures required directories/files exist.
+ * @returns {{ input: string, cssOutput: string, isCustom: boolean }}
+ */
+function getTailwindConfig() {
+    const userCssInput = path.join(process.cwd(), 'view/css/app.css')
+    const cacheDir = path.join(process.cwd(), 'storage/.cache')
+    const defaultCssInput = path.join(cacheDir, 'tailwind.css')
+    const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
+
+    let input
+    let isCustom = false
+
+    if (fs.existsSync(userCssInput)) {
+        input = userCssInput
+        isCustom = true
+    } else {
+        fs.mkdirSync(cacheDir, { recursive: true })
+        if (!fs.existsSync(defaultCssInput)) {
+            fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
+        }
+        input = defaultCssInput
+    }
+
+    const cssOutputDir = path.dirname(cssOutput)
+    fs.mkdirSync(cssOutputDir, { recursive: true })
+
+    return { input, cssOutput, isCustom }
+}
+
 async function run() {
     if (command === 'init') {
         const projectName = args[0] || '.'
@@ -59,27 +89,9 @@ async function run() {
         }
 
     } else if (command === 'dev') {
-        const userCssInput = path.join(process.cwd(), 'view/css/app.css')
-        const cacheDir = path.join(process.cwd(), 'storage/.cache')
-        const defaultCssInput = path.join(cacheDir, 'tailwind.css')
-        const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
-        
         if (cluster.isPrimary) {
-            let input = null
-
-            if (fs.existsSync(userCssInput)) {
-                input = userCssInput
-                console.log('🎨 Starting Tailwind CSS (Custom)...')
-            } else {
-                // Create default tailwind cache file if it doesn't exist
-                if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
-                if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
-                input = defaultCssInput
-                console.log('🎨 Starting Tailwind CSS (Default)...')
-            }
-
-            const cssOutputDir = path.dirname(cssOutput)
-            if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+            const { input, cssOutput, isCustom } = getTailwindConfig()
+            console.log(`🎨 Starting Tailwind CSS (${isCustom ? 'Custom' : 'Default'})...`)
 
             const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
                 stdio: 'inherit',
@@ -101,24 +113,8 @@ async function run() {
     } else if (command === 'build') {
         console.log('🏗️  Building for production...')
         
-        const userCssInput = path.join(process.cwd(), 'view/css/app.css')
-        const cacheDir = path.join(process.cwd(), 'storage/.cache')
-        const defaultCssInput = path.join(cacheDir, 'tailwind.css')
-        const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
-        
-        let input = null
-        if (fs.existsSync(userCssInput)) {
-            input = userCssInput
-            console.log('🎨 Compiling Custom CSS...')
-        } else {
-            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
-            if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
-            input = defaultCssInput
-            console.log('🎨 Compiling Default CSS...')
-        }
-
-        const cssOutputDir = path.dirname(cssOutput)
-        if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+        const { input, cssOutput, isCustom } = getTailwindConfig()
+        console.log(`🎨 Compiling ${isCustom ? 'Custom' : 'Default'} CSS...`)
 
         try {
             execSync(`npx @tailwindcss/cli -i ${input} -o ${cssOutput} --minify`, {
