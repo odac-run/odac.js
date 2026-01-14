@@ -962,8 +962,8 @@ if (typeof window !== 'undefined') {
             socket = new OdacWebSocket(wsUrl, protocols, options)
             socket.on('open', () => broadcast('open'))
             socket.on('message', data => broadcast('message', data))
-            socket.on('close', e => broadcast('close', e))
-            socket.on('error', e => broadcast('error', e))
+            socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
+            socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
           } else if (socket.connected) {
              // If already connected, notify the new port immediately
              port.postMessage({type: 'open'})
