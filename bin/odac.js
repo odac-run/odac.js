@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline')
 const { execSync, spawn } = require('node:child_process')
+const cluster = require('node:cluster')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -61,38 +62,40 @@ async function run() {
         const userCssInput = path.join(process.cwd(), 'view/css/app.css')
         const cacheDir = path.join(process.cwd(), 'storage/.cache')
         const defaultCssInput = path.join(cacheDir, 'tailwind.css')
-        const cssOutput = path.join(process.cwd(), 'public/css/app.css')
+        const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
         
-        let input = null
+        if (cluster.isPrimary) {
+            let input = null
 
-        if (fs.existsSync(userCssInput)) {
-            input = userCssInput
-            console.log('🎨 Starting Tailwind CSS (Custom)...')
-        } else {
-            // Create default tailwind cache file if it doesn't exist
-            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
-            if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
-            input = defaultCssInput
-            console.log('🎨 Starting Tailwind CSS (Default)...')
+            if (fs.existsSync(userCssInput)) {
+                input = userCssInput
+                console.log('🎨 Starting Tailwind CSS (Custom)...')
+            } else {
+                // Create default tailwind cache file if it doesn't exist
+                if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+                if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
+                input = defaultCssInput
+                console.log('🎨 Starting Tailwind CSS (Default)...')
+            }
+
+            const cssOutputDir = path.dirname(cssOutput)
+            if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+
+            const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
+                stdio: 'inherit',
+                shell: true,
+                cwd: process.cwd()
+            })
+
+            const cleanup = () => {
+                try {
+                    tailwind.kill()
+                } catch (e) {}
+            }
+            process.on('SIGINT', cleanup)
+            process.on('SIGTERM', cleanup)
+            process.on('exit', cleanup)
         }
-
-        const cssOutputDir = path.dirname(cssOutput)
-        if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
-
-        const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
-            stdio: 'inherit',
-            shell: true,
-            cwd: process.cwd()
-        })
-
-        const cleanup = () => {
-             try {
-                 tailwind.kill()
-             } catch (e) {}
-        }
-        process.on('SIGINT', cleanup)
-        process.on('SIGTERM', cleanup)
-        process.on('exit', cleanup)
         
         require('../index.js')
     } else {
