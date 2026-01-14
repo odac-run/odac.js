@@ -98,10 +98,48 @@ async function run() {
         }
         
         require('../index.js')
+    } else if (command === 'build') {
+        console.log('🏗️  Building for production...')
+        
+        const userCssInput = path.join(process.cwd(), 'view/css/app.css')
+        const cacheDir = path.join(process.cwd(), 'storage/.cache')
+        const defaultCssInput = path.join(cacheDir, 'tailwind.css')
+        const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
+        
+        let input = null
+        if (fs.existsSync(userCssInput)) {
+            input = userCssInput
+            console.log('🎨 Compiling Custom CSS...')
+        } else {
+            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+            if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
+            input = defaultCssInput
+            console.log('🎨 Compiling Default CSS...')
+        }
+
+        const cssOutputDir = path.dirname(cssOutput)
+        if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+
+        try {
+            execSync(`npx @tailwindcss/cli -i ${input} -o ${cssOutput} --minify`, {
+                stdio: 'inherit',
+                cwd: process.cwd()
+            })
+            console.log('✅ Build completed successfully!')
+        } catch (error) {
+            console.error('❌ Build failed:', error.message)
+            process.exit(1)
+        }
+    } else if (command === 'start') {
+        process.env.NODE_ENV = 'production'
+        require('../index.js')
     } else {
         console.log('Usage:')
         console.log('  npx odac init            (Interactive mode)')
         console.log('  npx odac init <project>  (Quick mode)')
+        console.log('  npx odac dev             (Development mode)')
+        console.log('  npx odac build           (Production build)')
+        console.log('  npx odac start           (Start server)')
     }
 
     rl.close()
