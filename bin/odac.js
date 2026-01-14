@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline')
-const { execSync } = require('node:child_process')
+const { execSync, spawn } = require('node:child_process')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -58,6 +58,29 @@ async function run() {
         }
 
     } else if (command === 'dev') {
+        const cssInput = path.join(process.cwd(), 'view/css/app.css')
+        if (fs.existsSync(cssInput)) {
+            const cssOutput = path.join(process.cwd(), 'public/css/app.css')
+            const cssOutputDir = path.dirname(cssOutput)
+
+            if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+
+            console.log('🎨 Starting Tailwind CSS...')
+            const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', cssInput, '-o', cssOutput, '--watch'], {
+                stdio: 'inherit',
+                shell: true,
+                cwd: process.cwd()
+            })
+
+            const cleanup = () => {
+                try {
+                    tailwind.kill()
+                } catch (e) {}
+            }
+            process.on('SIGINT', cleanup)
+            process.on('SIGTERM', cleanup)
+            process.on('exit', cleanup)
+        }
         require('../index.js')
     } else {
         console.log('Usage:')
