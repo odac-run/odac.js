@@ -58,29 +58,42 @@ async function run() {
         }
 
     } else if (command === 'dev') {
-        const cssInput = path.join(process.cwd(), 'view/css/app.css')
-        if (fs.existsSync(cssInput)) {
-            const cssOutput = path.join(process.cwd(), 'public/css/app.css')
-            const cssOutputDir = path.dirname(cssOutput)
+        const userCssInput = path.join(process.cwd(), 'view/css/app.css')
+        const cacheDir = path.join(process.cwd(), 'storage/.cache')
+        const defaultCssInput = path.join(cacheDir, 'tailwind_input.css')
+        const cssOutput = path.join(process.cwd(), 'public/css/app.css')
+        
+        let input = null
 
-            if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
-
-            console.log('🎨 Starting Tailwind CSS...')
-            const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', cssInput, '-o', cssOutput, '--watch'], {
-                stdio: 'inherit',
-                shell: true,
-                cwd: process.cwd()
-            })
-
-            const cleanup = () => {
-                try {
-                    tailwind.kill()
-                } catch (e) {}
-            }
-            process.on('SIGINT', cleanup)
-            process.on('SIGTERM', cleanup)
-            process.on('exit', cleanup)
+        if (fs.existsSync(userCssInput)) {
+            input = userCssInput
+            console.log('🎨 Starting Tailwind CSS (Custom)...')
+        } else {
+            // Create default tailwind cache file if it doesn't exist
+            if (!fs.existsSync(cacheDir)) fs.mkdirSync(cacheDir, { recursive: true })
+            if (!fs.existsSync(defaultCssInput)) fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
+            input = defaultCssInput
+            console.log('🎨 Starting Tailwind CSS (Default)...')
         }
+
+        const cssOutputDir = path.dirname(cssOutput)
+        if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+
+        const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
+            stdio: 'inherit',
+            shell: true,
+            cwd: process.cwd()
+        })
+
+        const cleanup = () => {
+             try {
+                 tailwind.kill()
+             } catch (e) {}
+        }
+        process.on('SIGINT', cleanup)
+        process.on('SIGTERM', cleanup)
+        process.on('exit', cleanup)
+        
         require('../index.js')
     } else {
         console.log('Usage:')
