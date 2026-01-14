@@ -71,7 +71,7 @@ class OdacRequest {
     if (options.expires === undefined) options.expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toUTCString()
     if (options.secure === undefined) options.secure = true
     if (options.httpOnly === undefined) options.httpOnly = true
-    if (options.sameSite === undefined) options.sameSite = 'Strict'
+    if (options.sameSite === undefined) options.sameSite = 'Lax'
     if (typeof value === 'object') value = JSON.stringify(value)
     let cookie = `${key}=${value}`
     for (const option of Object.keys(options)) if (options[option]) cookie += `; ${option}=${options[option]}`
