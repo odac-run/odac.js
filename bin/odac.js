@@ -60,7 +60,7 @@ async function run() {
     } else if (command === 'dev') {
         const userCssInput = path.join(process.cwd(), 'view/css/app.css')
         const cacheDir = path.join(process.cwd(), 'storage/.cache')
-        const defaultCssInput = path.join(cacheDir, 'tailwind_input.css')
+        const defaultCssInput = path.join(cacheDir, 'tailwind.css')
         const cssOutput = path.join(process.cwd(), 'public/css/app.css')
         
         let input = null
