@@ -1,79 +1,72 @@
-## 🚀 Development Server
+## 🚀 CLI Commands & Deployment
 
-ODAC provides a built-in development server that allows you to test your website locally without running the full ODAC server infrastructure.
+ODAC comes with a powerful CLI to manage your project's lifecycle, from development to production.
 
-### Quick Start
+### Development Mode (`dev`)
 
-Navigate to your website directory and run one of these commands:
+Start the development server with **hot-reloading** and **automatic Tailwind CSS compilation**:
+
+```bash
+# Using npm script
+npm run dev
+
+# Using ODAC directly
+npx odac dev
+```
+
+**What it does:**
+- Starts the Node.js server (default port `1071`).
+- **Zero-Config Tailwind:** Automatically watches and compiles your classes.
+- **Watch Mode:** Recompiles CSS instantly when you change files.
+
+### Production Build (`build`)
+
+Prepare your application for production deployment. This command compiles and modifies your assets for optimal performance.
+
+```bash
+# Using npm script
+npm run build
+
+# Using ODAC directly
+npx odac build
+```
+
+**What it does:**
+- **Compiles CSS:** Generates the final `public/assets/css/app.css`.
+- **Minification:** Compresses the CSS to reduce file size.
+- **One-off Run:** Runs once and exits. Does not start a server.
+
+### Production Server (`start`)
+
+Start the application in **production mode**. This is the command you should run on your server or hosting platform.
 
 ```bash
 # Using npm script
 npm start
 
 # Using ODAC directly
-odac framework run
+npx odac start
 ```
 
-Both commands will start a local development server on port `1071` by default, and your website will be accessible at `http://127.0.0.1:1071`.
-
-### Custom Port
-
-You can specify a custom port by adding it as an argument:
-
-```bash
-# Using npm script with custom port
-npm start 8080
-
-# Using ODAC directly with custom port
-odac framework run 8080
-```
-
-This will start the server on your specified port (e.g., `http://127.0.0.1:8080`).
-
-### Development vs Production
-
-The development server (`npm start`) is designed for:
-
-- **Local testing** and development only
-- **Quick iteration** without server setup
-- **Debugging** your application logic
-- **Testing on localhost** (127.0.0.1)
-
-**Important**: The development server does NOT provide DNS, SSL, or other production services.
-
-For production deployment with full ODAC server features, create your website using:
-
-```bash
-odac web create
-```
-
-This registers your website with the ODAC server and provides:
-
-- **Automatic SSL** certificate management
-- **DNS handling** for your domain
-- **Multi-domain hosting** capabilities
-- **Process monitoring** and auto-restart
-- **Production optimizations** and security
+**What it does:**
+- Sets `NODE_ENV=production`.
+- Starts the Node.js server.
+- **No Overhead:** Does not run Tailwind watchers or dev tools. Simplicity and performance focused.
 
 ### Package.json Scripts
 
-When you create a new website, ODAC automatically generates a `package.json` with these useful scripts:
+When you create a new ODAC project, your `package.json` comes pre-configured with these scripts:
 
 ```json
 {
   "scripts": {
-    "start": "odac framework run",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "odac dev",
+    "build": "odac build",
+    "start": "odac start"
   }
 }
 ```
 
-- `npm start` - Starts the development server for local testing
-- `npm test` - Placeholder for your test suite
-
-### Tips
-
-- The development server automatically detects changes in your code
-- Use `Ctrl+C` to stop the development server
-- The server will show helpful error messages in the console
-- All ODAC framework features are available in development mode
+- `npm run dev` - Your daily development command.
+- `npm run build` - Run this before deploying (e.g., in CI/CD).
+- `npm start` - The command that runs your live website.
