@@ -16,23 +16,22 @@ Let's take a look at a typical project layout:
         -   `api/`: If you're building an API, it's a great idea to keep those controllers separate in their own folder.
     -   `view/`: For all your HTML template files. This is what your users will see.
 
-### Development Commands
+### CLI Commands
 
-Your `package.json` includes helpful npm scripts for development:
+Your `package.json` includes scripts to manage your project lifecycle:
 
 ```bash
-# Start development server (default port 1071)
+# STAGE 1: DEVELOPMENT
+# Starts dev server with hot-reload & automatic Tailwind CSS
+npm run dev
+
+# STAGE 2: BUILD
+# Compiles and optimizes assets (CSS) for production
+npm run build
+
+# STAGE 3: PRODUCTION
+# Starts the optimized server
 npm start
-
-# Start development server on custom port
-npm start 8080
-```
-
-You can also use Odac commands directly:
-
-```bash
-# Development server (local testing only)
-odac framework run [port]
 ```
 
 **Note**: For production websites with DNS and SSL, use `odac web create` to register with Odac server.
