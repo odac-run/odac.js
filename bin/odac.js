@@ -18,32 +18,57 @@ const ask = question => new Promise(resolve => rl.question(question, answer => r
 
 /**
  * Resolves Tailwind CSS paths and ensures required directories/files exist.
- * @returns {{ input: string, cssOutput: string, isCustom: boolean }}
+ * Supports multiple CSS entry points from 'view/css'.
+ * @returns {Array<{ input: string, cssOutput: string, isCustom: boolean, name: string }>}
  */
-function getTailwindConfig() {
-    const userCssInput = path.join(process.cwd(), 'view/css/app.css')
+function getTailwindConfigs() {
+    const cssDir = path.join(process.cwd(), 'view/css')
     const cacheDir = path.join(process.cwd(), 'storage/.cache')
     const defaultCssInput = path.join(cacheDir, 'tailwind.css')
-    const cssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
+    const defaultCssOutput = path.join(process.cwd(), 'public/assets/css/app.css')
+    
+    const configs = []
 
-    let input
-    let isCustom = false
+    // Scan for custom CSS files
+    if (fs.existsSync(cssDir) && fs.lstatSync(cssDir).isDirectory()) {
+        const files = fs.readdirSync(cssDir).filter(file => file.endsWith('.css'))
+        
+        files.forEach(file => {
+            const input = path.join(cssDir, file)
+            const cssOutput = path.join(process.cwd(), 'public/assets/css', file)
+            
+            // Ensure output directory exists
+            const cssOutputDir = path.dirname(cssOutput)
+            if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
 
-    if (fs.existsSync(userCssInput)) {
-        input = userCssInput
-        isCustom = true
-    } else {
+            configs.push({
+                input,
+                cssOutput,
+                isCustom: true,
+                name: file
+            })
+        })
+    }
+
+    // Fallback to default if no custom files found
+    if (configs.length === 0) {
         fs.mkdirSync(cacheDir, { recursive: true })
         if (!fs.existsSync(defaultCssInput)) {
             fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
         }
-        input = defaultCssInput
+        
+        const cssOutputDir = path.dirname(defaultCssOutput)
+        if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, { recursive: true })
+
+        configs.push({
+            input: defaultCssInput,
+            cssOutput: defaultCssOutput,
+            isCustom: false,
+            name: 'Default'
+        })
     }
 
-    const cssOutputDir = path.dirname(cssOutput)
-    fs.mkdirSync(cssOutputDir, { recursive: true })
-
-    return { input, cssOutput, isCustom }
+    return configs
 }
 
 async function run() {
@@ -90,19 +115,26 @@ async function run() {
 
     } else if (command === 'dev') {
         if (cluster.isPrimary) {
-            const { input, cssOutput, isCustom } = getTailwindConfig()
-            console.log(`🎨 Starting Tailwind CSS (${isCustom ? 'Custom' : 'Default'})...`)
+            const configs = getTailwindConfigs()
+            const tails = []
 
-            const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
-                stdio: 'inherit',
-                shell: true,
-                cwd: process.cwd()
+            configs.forEach(({ input, cssOutput, name, isCustom }) => {
+                console.log(`🎨 Starting Tailwind CSS for ${name} (${isCustom ? 'Custom' : 'Default'})...`)
+
+                const tailwind = spawn('npx', ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch'], {
+                    stdio: 'inherit',
+                    shell: true,
+                    cwd: process.cwd()
+                })
+                tails.push(tailwind)
             })
 
             const cleanup = () => {
-                try {
-                    tailwind.kill()
-                } catch (e) {}
+                tails.forEach(t => {
+                    try {
+                        t.kill()
+                    } catch (e) {}
+                })
             }
             process.on('SIGINT', cleanup)
             process.on('SIGTERM', cleanup)
@@ -113,18 +145,26 @@ async function run() {
     } else if (command === 'build') {
         console.log('🏗️  Building for production...')
         
-        const { input, cssOutput, isCustom } = getTailwindConfig()
-        console.log(`🎨 Compiling ${isCustom ? 'Custom' : 'Default'} CSS...`)
+        const configs = getTailwindConfigs()
+        let hasError = false
 
-        try {
-            execSync(`npx @tailwindcss/cli -i "${input}" -o "${cssOutput}" --minify`, {
-                stdio: 'inherit',
-                cwd: process.cwd()
-            })
-            console.log('✅ Build completed successfully!')
-        } catch (error) {
-            console.error('❌ Build failed:', error.message)
+        configs.forEach(({ input, cssOutput, name, isCustom }) => {
+            console.log(`🎨 Compiling ${name} (${isCustom ? 'Custom' : 'Default'}) CSS...`)
+            try {
+                execSync(`npx @tailwindcss/cli -i "${input}" -o "${cssOutput}" --minify`, {
+                    stdio: 'inherit',
+                    cwd: process.cwd()
+                })
+            } catch (error) {
+                console.error(`❌ Build failed for ${name}:`, error.message)
+                hasError = true
+            }
+        })
+
+        if (hasError) {
             process.exit(1)
+        } else {
+            console.log('✅ All builds completed successfully!')
         }
     } else if (command === 'start') {
         process.env.NODE_ENV = 'production'
