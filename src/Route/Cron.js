@@ -109,22 +109,28 @@ class Cron {
       updated: new Date()
     })
     let id = this.#jobs.length - 1
-    return {
-      minute: value => this.#jobs[id].condition.push({type: 'minute', value: value}),
-      hour: value => this.#jobs[id].condition.push({type: 'hour', value: value}),
-      day: value => this.#jobs[id].condition.push({type: 'day', value: value}),
-      weekDay: value => this.#jobs[id].condition.push({type: 'weekDay', value: value}),
-      month: value => this.#jobs[id].condition.push({type: 'month', value: value}),
-      year: value => this.#jobs[id].condition.push({type: 'year', value: value}),
-      yearDay: value => this.#jobs[id].condition.push({type: 'yearDay', value: value}),
-      everyMinute: value => this.#jobs[id].condition.push({type: 'everyMinute', value: value}),
-      everyHour: value => this.#jobs[id].condition.push({type: 'everyHour', value: value}),
-      everyDay: value => this.#jobs[id].condition.push({type: 'everyDay', value: value}),
-      everyWeekDay: value => this.#jobs[id].condition.push({type: 'everyWeekDay', value: value}),
-      everyMonth: value => this.#jobs[id].condition.push({type: 'everyMonth', value: value}),
-      everyYear: value => this.#jobs[id].condition.push({type: 'everyYear', value: value}),
-      everyYearDay: value => this.#jobs[id].condition.push({type: 'everyYearDay', value: value})
+    const addCondition = (type, value) => {
+      this.#jobs[id].condition.push({type, value})
+      return chain
     }
+
+    const chain = {
+      minute: value => addCondition('minute', value),
+      hour: value => addCondition('hour', value),
+      day: value => addCondition('day', value),
+      weekDay: value => addCondition('weekDay', value),
+      month: value => addCondition('month', value),
+      year: value => addCondition('year', value),
+      yearDay: value => addCondition('yearDay', value),
+      everyMinute: value => addCondition('everyMinute', value),
+      everyHour: value => addCondition('everyHour', value),
+      everyDay: value => addCondition('everyDay', value),
+      everyWeekDay: value => addCondition('everyWeekDay', value),
+      everyMonth: value => addCondition('everyMonth', value),
+      everyYear: value => addCondition('everyYear', value),
+      everyYearDay: value => addCondition('everyYearDay', value)
+    }
+    return chain
   }
 }
 
