@@ -14,6 +14,7 @@
 *   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
 *   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
 *   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.
+*   ⚡ **Zero-Config Early Hints:** Intelligent HTTP 103 implementation that requires **no setup**. ODAC automatically analyzes your views and serves assets instantly, drastically improving load times without a single line of code.
 
 ## 🛠️ Advanced Capabilities
 
