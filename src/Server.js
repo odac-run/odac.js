@@ -68,6 +68,39 @@ module.exports = {
         return Odac.Route.request(req, res)
       })
 
+      /**
+       * ENTERPRISE PERFORMANCE CONFIGURATION
+       * ------------------------------------
+       * 1. Keep-Alive: Set higher than the upstream Load Balancer/Proxy (usually 60s).
+       *    This prevents the "502 Bad Gateway" race condition where Node closes
+       *    an idle connection while the proxy attempts to reuse it.
+       */
+      server.keepAliveTimeout = 65000 // 65 seconds
+      server.headersTimeout = 66000 // 66 seconds (Must be > keepAliveTimeout)
+
+      /**
+       * 2. Low Latency: Disable Nagle's Algorithm.
+       *    We want to send data immediately, even if the packet is small.
+       *    Critical for sub-millisecond API responses.
+       */
+      server.on('connection', socket => {
+        socket.setNoDelay(true)
+      })
+
+      /**
+       * 3. Connection Rotation: Force reset after 10k requests.
+       *    - Helps with Load Balancing (clients are forced to reconnect and potentially pick a new pod/worker).
+       *    - Mitigates long-term memory leaks in the TLS/Socket layer.
+       */
+      server.maxRequestsPerSocket = 10000
+
+      /**
+       * 4. Hard Timeout: Kill connection if request processing (headers + body) takes too long.
+       *    - Defaults to 0 (unlimited) or 5min in older Node.
+       *    - 30s is more than enough for an API; fail fast if the client is stuck.
+       */
+      server.requestTimeout = 30000 // 30 seconds
+
       server.on('upgrade', (req, socket, head) => {
         const id = nodeCrypto.randomBytes(16).toString('hex')
         const param = Odac.instance(id, req, null)
