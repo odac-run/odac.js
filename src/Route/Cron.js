@@ -81,7 +81,9 @@ class Cron {
           if (job.function || fs.existsSync(job.path)) {
             if (!job.function) job.function = require(job.path)
             if (job.function && typeof job.function === 'function') {
-              job.function()
+              const _odac = global.Odac.instance(null, 'cron')
+              job.function(_odac)
+              if (_odac.cleanup) _odac.cleanup()
             }
           }
         } catch (error) {
