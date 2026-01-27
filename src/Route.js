@@ -1,4 +1,5 @@
 const fs = require('fs')
+const fsPromises = fs.promises
 
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
@@ -69,6 +70,8 @@ class Route {
   middlewares = {}
   _pendingMiddlewares = []
   #wsServer = new WebSocketServer()
+  #configCache = {}
+  #publicCache = {}
   auth = {
     page: (path, authFile, file) => this.authPage(path, authFile, file),
     post: (path, authFile, file) => this.authPost(path, authFile, file),
@@ -172,20 +175,43 @@ class Route {
       Odac.Request.isAjaxLoad = true
       Odac.Request.clientSkeleton = Odac.Request.header('X-Odac-Skeleton')
     }
-    if (Odac.Config && Odac.Config.route && Odac.Config.route[url]) {
-      if (fs.existsSync(Odac.Config.route[url])) {
-        let stat = fs.lstatSync(Odac.Config.route[url])
+    if (Odac.Config?.route?.[url]) {
+      // PROD CACHE HIT
+      if (!Odac.Config.debug && this.#configCache[url]) {
+        const cached = this.#configCache[url]
+        Odac.Request.header('Content-Type', cached.type)
+        Odac.Request.header('Cache-Control', 'public, max-age=31536000')
+        Odac.Request.header('Content-Length', cached.size)
+        return cached.content
+      }
+
+      const filePath = Odac.Config.route[url]
+      try {
+        const stat = await fsPromises.stat(filePath)
         if (stat.isFile()) {
           let type = 'text/html'
-          if (Odac.Config.route[url].includes('.')) {
-            let arr = Odac.Config.route[url].split('.')
+          if (filePath.includes('.')) {
+            let arr = filePath.split('.')
             type = mime[arr[arr.length - 1]]
           }
+          const content = await fsPromises.readFile(filePath)
+
+          // PROD CACHE SET
+          if (!Odac.Config.debug) {
+            this.#configCache[url] = {
+              content,
+              type,
+              size: stat.size
+            }
+          }
+
           Odac.Request.header('Content-Type', type)
           Odac.Request.header('Cache-Control', 'public, max-age=31536000')
           Odac.Request.header('Content-Length', stat.size)
-          return fs.readFileSync(Odac.Config.route[url])
+          return content
         }
+      } catch {
+        // File not found or error, continue routing
       }
     }
     for (let method of ['#' + Odac.Request.method, Odac.Request.method]) {
@@ -222,18 +248,42 @@ class Route {
       if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, pageController)
     }
-    if (url && !url.includes('/../') && fs.existsSync(`${__dir}/public${url}`)) {
-      let stat = fs.lstatSync(`${__dir}/public${url}`)
-      if (stat.isFile()) {
-        let type = 'text/html'
-        if (url.includes('.')) {
-          let arr = url.split('.')
-          type = mime[arr[arr.length - 1]]
-        }
-        Odac.Request.header('Content-Type', type)
+    if (url && !url.includes('/../')) {
+      const publicPath = `${__dir}/public${url}`
+
+      // PROD CACHE HIT (Metadata)
+      if (!Odac.Config.debug && this.#publicCache[publicPath]) {
+        const cached = this.#publicCache[publicPath]
+        Odac.Request.header('Content-Type', cached.type)
         Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-        Odac.Request.header('Content-Length', stat.size)
-        return fs.createReadStream(`${__dir}/public${url}`)
+        Odac.Request.header('Content-Length', cached.size)
+        return fs.createReadStream(publicPath)
+      }
+
+      try {
+        const stat = await fsPromises.stat(publicPath)
+        if (stat.isFile()) {
+          let type = 'text/html'
+          if (url.includes('.')) {
+            let arr = url.split('.')
+            type = mime[arr[arr.length - 1]]
+          }
+
+          // PROD CACHE SET (Metadata Only)
+          if (!Odac.Config.debug) {
+            this.#publicCache[publicPath] = {
+              type,
+              size: stat.size
+            }
+          }
+
+          Odac.Request.header('Content-Type', type)
+          Odac.Request.header('Cache-Control', 'public, max-age=31536000')
+          Odac.Request.header('Content-Length', stat.size)
+          return fs.createReadStream(publicPath)
+        }
+      } catch {
+        // File not found in public
       }
     }
 
@@ -354,9 +404,13 @@ class Route {
   init() {
     this.#init()
     this.#registerInternalRoutes()
-    setInterval(() => {
-      this.#init()
-    }, 5000)
+
+    // Hot Reload only in Debug Mode
+    if (Odac.Config.debug) {
+      setInterval(() => {
+        this.#init()
+      }, 5000)
+    }
   }
 
   #registerInternalRoutes() {
