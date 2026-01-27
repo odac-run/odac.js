@@ -1,5 +1,6 @@
 const nodeCrypto = require('crypto')
 const fs = require('fs')
+const fsPromises = fs.promises
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 
@@ -8,7 +9,6 @@ const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 const CACHE_DIR = './storage/.cache'
 
 class View {
-  #cache = {}
   #earlyHints = null
   #functions = {
     '{!!': {
@@ -205,8 +205,8 @@ class View {
 
     // Normal page rendering
     let result = ''
-    if (this.#part.skeleton && fs.existsSync(`./skeleton/${this.#part.skeleton}.html`)) {
-      result = fs.readFileSync(`./skeleton/${this.#part.skeleton}.html`, 'utf8')
+    if (this.#part.skeleton && (await this.#exists(`./skeleton/${this.#part.skeleton}.html`))) {
+      result = await this.#readSkeleton(`./skeleton/${this.#part.skeleton}.html`)
 
       // Add data-odac-navigate to content wrapper for auto-navigation
       result = this.#addNavigateAttribute(result)
@@ -363,10 +363,32 @@ class View {
   }
 
   async #render(file) {
-    let mtime = fs.statSync(file).mtimeMs
-    let content = fs.readFileSync(file, 'utf8')
+    if (!global.Odac.View) global.Odac.View = {}
+    if (!global.Odac.View.cache) global.Odac.View.cache = {}
 
-    if (this.#cache[file]?.mtime !== mtime) {
+    // Performance: In Production, skip stat check if cached
+    if (!this.#odac.Config?.debug && global.Odac.View.cache[file]) {
+      try {
+        return await require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)(
+          this.#odac,
+          key => this.#odac.Request.get(key),
+          (...args) => this.#odac.Lang.get(...args)
+        )
+      } catch {
+        // Fallback if cache file missing
+      }
+    }
+
+    let mtime = 0
+    try {
+      const stats = await fsPromises.stat(file)
+      mtime = stats.mtimeMs
+    } catch {
+      return ''
+    }
+
+    if (global.Odac.View.cache[file]?.mtime !== mtime) {
+      let content = await fsPromises.readFile(file, 'utf8')
       content = Form.parse(content, this.#odac)
 
       const jsBlocks = []
@@ -549,6 +571,28 @@ class View {
     if (hints && hints.length > 0) {
       this.#odac.Request.setEarlyHints(hints)
     }
+  }
+
+  async #exists(path) {
+    try {
+      await fsPromises.access(path)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  async #readSkeleton(path) {
+    if (!global.Odac.View.skeletons) global.Odac.View.skeletons = {}
+
+    // In production (debug=false), cache logic
+    if (!this.#odac.Config?.debug && global.Odac.View.skeletons[path]) {
+      return global.Odac.View.skeletons[path]
+    }
+
+    const content = await fsPromises.readFile(path, 'utf8')
+    global.Odac.View.skeletons[path] = content
+    return content
   }
 }
 

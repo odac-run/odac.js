@@ -22,7 +22,7 @@ module.exports = {
     driver: 'memory',
     redis: 'default'
   },
-  debug: false,
+  debug: process.env.NODE_ENV !== 'production',
 
   init: function () {
     try {
