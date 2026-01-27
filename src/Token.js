@@ -1,6 +1,9 @@
 const nodeCrypto = require('crypto')
 
 class Token {
+  // CLUSTER SAFETY NOTE:
+  // This is a request-scoped local cache (debounce) for performance.
+  // Valid tokens represent state persisted in Session (LMDB), shared across all workers.
   confirmed = []
 
   constructor(Request) {
