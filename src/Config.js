@@ -5,13 +5,13 @@ const os = require('os')
 module.exports = {
   auth: {
     key: 'id',
-    token: 'odac_auth'
+    token: 'odac_auth' // This is the TABLE NAME for tokens, not a secret token.
   },
   request: {
     timeout: 10000
   },
   encrypt: {
-    key: 'odac'
+    key: 'odac' // Default encryption key. MUST be overridden in production.
   },
   earlyHints: {
     enabled: true,
@@ -41,7 +41,7 @@ module.exports = {
       }
       this._deepMerge(this, config)
     }
-    this.encrypt.key = nodeCrypto.createHash('md5').update(this.encrypt.key).digest('hex')
+    this.encrypt.key = nodeCrypto.createHash('sha256').update(this.encrypt.key).digest('hex')
   },
 
   _interpolate: function (obj) {
