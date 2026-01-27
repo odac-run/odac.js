@@ -7,7 +7,8 @@ module.exports = {
   init: function () {
     let args = process.argv.slice(2)
     if (args[0] == 'framework' && args[1] == 'run') args = args.slice(2)
-    let port = parseInt(args[0] ?? '1071')
+    let port = parseInt(args[0])
+    if (isNaN(port)) port = parseInt(process.env.PORT || '1071')
 
     if (cluster.isPrimary) {
       const numCPUs = Odac.Config.debug ? 1 : os.cpus().length
