@@ -79,6 +79,9 @@ Odac.Route.cron('task')
 // Day (1-31)
 .day(15) // On the 15th of the month
 
+// At Specific Time (HH:MM)
+.at('14:30') // At 14:30 (Shorthand for .hour(14).minute(30))
+
 // Week day (0-6, 0=Sunday)
 .weekDay(1) // On Monday
 
@@ -114,6 +117,18 @@ Odac.Route.cron('periodic')
 
 // Every N years
 .everyYear(1) // Every year
+
+## Raw Cron Expression
+You can use standard UNIX cron expressions (Minute Hour Day Month WeekDay) using the `.raw()` method.
+Supported formats for each field: `*`, `*/n` (interval), `n` (exact match).
+
+```javascript
+// Run every 15 minutes
+Odac.Route.cron('quarter-task').raw('*\/15 * * * *')
+
+// Run at 14:30 on Mondays
+Odac.Route.cron('weekly-meeting').raw('30 14 * * 1')
+```
 ```
 
 ## Combination Usage
@@ -147,3 +162,4 @@ Odac.Route.cron('monthly-cleanup')
 - Controller files are re-required on each execution
 - Inline functions are stored in memory and executed directly
 - If a job fails, it stops but the system continues
+- **CRITICAL:** Missing conditions act as wildcards (`*`). If you specify `.hour(14)` but omit `.minute()`, the task will run **every minute** between 14:00 and 14:59. Always specify smaller units (minute) to pin execution to a single point in time. Use `.at('14:00')` to safely set both hour and minute.

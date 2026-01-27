@@ -60,7 +60,7 @@ class Cron {
             if (job.lastRun && Math.floor(unix / 86400) % condition.value !== 0) shouldRun = false
             break
           case 'everyWeekDay':
-            if (job.lastRun && weekDay % condition.value !== 0) shouldRun = false
+            if (condition.value !== weekDay) shouldRun = false
             break
           case 'everyMonth':
             if (job.lastRun && (year * 12 + month) % condition.value !== 0) shouldRun = false
@@ -120,6 +120,39 @@ class Cron {
       minute: value => addCondition('minute', value),
       hour: value => addCondition('hour', value),
       day: value => addCondition('day', value),
+      at: time => {
+        if (!/^\d{1,2}:\d{1,2}$/.test(time)) throw new Error('Invalid time format for .at(). Use HH:MM')
+        const [h, m] = time.split(':')
+        addCondition('hour', parseInt(h))
+        addCondition('minute', parseInt(m))
+        return chain
+      },
+      raw: pattern => {
+        const parts = pattern.split(' ').filter(p => p.trim() !== '')
+        if (parts.length !== 5) throw new Error('Invalid cron expression. Expected 5 fields (min hour day month weekDay)')
+
+        const [min, hour, day, month, weekDay] = parts
+        const parse = (val, type, everyType) => {
+          if (val === '*') return
+          if (val.startsWith('*/') && everyType) {
+            addCondition(everyType, parseInt(val.split('/')[1]))
+            return
+          }
+          if (!isNaN(val)) {
+            addCondition(type, parseInt(val))
+            return
+          }
+          throw new Error(`Unsupported cron value '${val}' for ${type}`)
+        }
+
+        parse(min, 'minute', 'everyMinute')
+        parse(hour, 'hour', 'everyHour')
+        parse(day, 'day', 'everyDay')
+        parse(month, 'month', 'everyMonth')
+        parse(weekDay, 'weekDay', null)
+
+        return chain
+      },
       weekDay: value => addCondition('weekDay', value),
       month: value => addCondition('month', value),
       year: value => addCondition('year', value),
