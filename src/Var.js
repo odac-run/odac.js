@@ -89,7 +89,14 @@ class Var {
 
   html() {
     if (this.#value === null || this.#value === undefined) return ''
-    return String(this.#value).replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }
+    return String(this.#value).replace(/[&<>"']/g, m => map[m])
   }
 
   is(...args) {
