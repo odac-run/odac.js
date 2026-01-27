@@ -10,10 +10,13 @@ module.exports = {
     let port = parseInt(args[0] ?? '1071')
 
     if (cluster.isPrimary) {
-      const numCPUs = os.cpus().length
+      const numCPUs = Odac.Config.debug ? 1 : os.cpus().length
       let isShuttingDown = false
 
-      console.log(`Odac Server running on \x1b]8;;http://127.0.0.1:${port}\x1b\\\x1b[4mhttp://127.0.0.1:${port}\x1b[0m\x1b]8;;\x1b\\.`)
+      const mode = Odac.Config.debug ? '\x1b[33mDevelopment\x1b[0m' : '\x1b[32mProduction\x1b[0m'
+      console.log(
+        `Odac Server running on \x1b]8;;http://127.0.0.1:${port}\x1b\\\x1b[4mhttp://127.0.0.1:${port}\x1b[0m\x1b]8;;\x1b\\ in ${mode} mode.`
+      )
 
       // Start session garbage collector (runs every hour, expires after 7 days)
       Odac.Storage.startSessionGC()
