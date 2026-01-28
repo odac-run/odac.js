@@ -557,10 +557,17 @@ class Auth {
     })
   }
 
-  user(col) {
+  /**
+   * Retrieves the authenticated user or a specific column.
+   * Why: To provide access to the current user's session data securely.
+   *
+   * @param {string|null} [col=null] - The column to retrieve, or null for the full user object.
+   * @returns {object|string|number|boolean|false} The user object, column value, or false if not logged in.
+   */
+  user(col = null) {
     if (!this.#user) return false
     if (col === null) return this.#user
-    else return this.#user[col]
+    return this.#user[col]
   }
 }
 
