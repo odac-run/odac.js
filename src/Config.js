@@ -41,7 +41,7 @@ module.exports = {
       }
       this._deepMerge(this, config)
     }
-    this.encrypt.key = nodeCrypto.createHash('sha256').update(this.encrypt.key).digest('hex')
+    this.encrypt.key = nodeCrypto.createHash('sha256').update(this.encrypt.key).digest()
   },
 
   _interpolate: function (obj) {
