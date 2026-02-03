@@ -11,7 +11,7 @@ module.exports = {
     timeout: 10000
   },
   encrypt: {
-    key: 'odac' // Default encryption key. MUST be overridden in production.
+    key: null // Default is null. MUST be set via config or env.
   },
   earlyHints: {
     enabled: true,
@@ -37,10 +37,38 @@ module.exports = {
         config = JSON.parse(fs.readFileSync(__dir + '/config.json'))
         config = this._interpolate(config)
       } catch (err) {
-        console.error('Error reading config file:', __dir + '/config.json', err.message)
+        console.error(
+          JSON.stringify({
+            level: 'error',
+            message: 'Error reading config file',
+            file: __dir + '/config.json',
+            error: err.message
+          })
+        )
       }
       this._deepMerge(this, config)
     }
+
+    // Security Hardening: Ensure encryption key is set
+    if (!this.encrypt.key) {
+      this.encrypt.key = process.env.ODAC_ENCRYPT_KEY || process.env.APP_KEY
+    }
+
+    if (!this.encrypt.key) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('CRITICAL: Encryption key not found. Set ODAC_ENCRYPT_KEY environment variable.')
+      } else {
+        // Development mode: Generate a random key
+        this.encrypt.key = nodeCrypto.randomBytes(32).toString('hex')
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            message: 'Encryption key not found. Using generated key for development.'
+          })
+        )
+      }
+    }
+
     this.encrypt.key = nodeCrypto.createHash('sha256').update(this.encrypt.key).digest('hex')
   },
 
