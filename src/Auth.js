@@ -35,29 +35,54 @@ class Auth {
 
       // Knex build queries differently than previous builder
       // Need to chain where clauses
-      for (let key in where) {
-        query = query.orWhere(key, where[key] instanceof Promise ? await where[key] : where[key])
+      // Resolve input promises upfront to avoid side effects and race conditions
+      const criteria = {}
+      const keys = Object.keys(where)
+
+      if (keys.length === 0) return false
+
+      for (const key of keys) {
+        criteria[key] = where[key] instanceof Promise ? await where[key] : where[key]
+      }
+
+      // Chain where clauses
+      for (const key in criteria) {
+        query = query.orWhere(key, criteria[key])
       }
 
       // Execute query
-      let get = await query
+      const candidates = await query
 
-      if (!get || get.length === 0) return false
+      if (!candidates || candidates.length === 0) return false
 
-      let equal = false
-      for (var user of get) {
-        equal = Object.keys(where).length > 0
-        for (let key of Object.keys(where)) {
-          if (where[key] instanceof Promise) where[key] = await where[key]
-          if (!user[key]) equal = false
-          if (user[key] === where[key]) equal = equal && true
-          else if (Odac.Var(user[key]).is('bcrypt')) equal = equal && Odac.Var(user[key]).hashCheck(where[key])
-          else if (Odac.Var(user[key]).is('md5')) equal = equal && Odac.Var(where[key]).md5() === user[key]
+      // Iterate candidates to find the exact match
+      candidateLoop: for (const user of candidates) {
+        for (const key of keys) {
+          const userValue = user[key]
+          const targetValue = criteria[key]
+
+          if (!userValue) continue candidateLoop
+
+          // Strict equality check
+          if (userValue === targetValue) continue
+
+          // Security: Check hashed fields (Bcrypt/MD5)
+          const valueHandler = Odac.Var(userValue)
+          let hashMatch = false
+
+          if (valueHandler.is('bcrypt')) {
+            hashMatch = valueHandler.hashCheck(targetValue)
+          } else if (valueHandler.is('md5')) {
+            hashMatch = Odac.Var(targetValue).md5() === userValue
+          }
+
+          if (!hashMatch) continue candidateLoop
         }
-        if (equal) break
+
+        return user
       }
-      if (!equal) return false
-      return user
+
+      return false
     } else if (this.#user) {
       return true
     } else {

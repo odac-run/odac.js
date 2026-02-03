@@ -16,3 +16,14 @@ trigger: always_on
     - Always implement the mathematically and architecturally correct "Enterprise-Grade" solution (e.g., using raw `Buffer` for crypto keys instead of hex strings).
     - If a proper solution requires refactoring, do the refactoring. Do not patch holes.
     - **Prioritize Correctness over Speed:** It is better to verify documentation or think for a minute than to output a sub-par patch.
+
+## Code Quality & Modern Standards
+- **No Legacy Syntax:** 
+    - **Strictly Prohibited:** The use of `var` is forbidden. Use `const` (preferred) or `let` (only if mutation is needed).
+    - **Variable Scope:** Ensure variables are block-scoped to prevent leakage.
+- **Anti-Spaghetti Code:**
+    - **Fail-Fast Pattern:** Avoid deeply nested `if/else` logic. Use early returns (`return`, `break`, `continue`) to handle negative cases immediately.
+    - **Promise Handling:** Resolve Promises upfront (e.g., `Promise.all` or strict `await` before loops) rather than mixing `await` inside deep logic or mutating input objects.
+    - **Strict Equality:** Always use strict equality checks (`===`) instead of loose ones.
+    - **Loop Optimization:** Use labeled loops (`label: for`) for efficient control flow in nested structures. Eliminate intermediate "flag" variables (`isMatch`, `found`) by using direct `return` or `continue label`.
+    - **Direct Returns:** Return a value as soon as it is determined. Avoid assigning to a temporary variable (e.g. `matchedUser`) and breaking the loop, unless post-loop processing is strictly necessary.
