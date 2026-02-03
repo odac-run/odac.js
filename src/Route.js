@@ -69,6 +69,7 @@ class Route {
   routes = {}
   middlewares = {}
   _pendingMiddlewares = []
+  _pendingRouteLoads = []
   #wsServer = new WebSocketServer()
   #configCache = {}
   #publicCache = {}
@@ -323,15 +324,21 @@ class Route {
     return false
   }
 
-  #loadMiddlewares() {
+  async #loadMiddlewares() {
     const middlewareDir = `${__dir}/middleware/`
-    if (!fs.existsSync(middlewareDir)) return
+    try {
+      await fsPromises.access(middlewareDir)
+    } catch {
+      return
+    }
 
-    for (const file of fs.readdirSync(middlewareDir)) {
+    const files = await fsPromises.readdir(middlewareDir)
+    for (const file of files) {
       if (!file.endsWith('.js')) continue
       const name = file.replace('.js', '')
       const path = `${middlewareDir}${file}`
-      const mtime = fs.statSync(path).mtimeMs
+      const stat = await fsPromises.stat(path)
+      const mtime = stat.mtimeMs
 
       if (this.middlewares[name] && this.middlewares[name].mtime >= mtime - 1000) continue
 
@@ -344,72 +351,121 @@ class Route {
     }
   }
 
-  #init() {
+  async #init() {
     if (this.loading) return
     this.loading = true
-    this.#loadMiddlewares()
+    await this.#loadMiddlewares()
     const classDir = `${__dir}/class/`
-    if (fs.existsSync(classDir)) {
-      for (const file of fs.readdirSync(classDir)) {
+    try {
+      await fsPromises.access(classDir)
+      const files = await fsPromises.readdir(classDir)
+      for (const file of files) {
         if (!file.endsWith('.js')) continue
         let name = file.replace('.js', '')
         if (!Odac.Route.class) Odac.Route.class = {}
+        const filePath = `${__dir}/class/${file}`
+
+        let shouldLoad = true
+        let stat = null
+
         if (Odac.Route.class[name]) {
-          const fileStat = fs.statSync(Odac.Route.class[name].path)
-          if (Odac.Route.class[name].mtime >= fileStat.mtimeMs || Date.now() < fileStat.mtimeMs + 1000) continue
-          delete require.cache[require.resolve(Odac.Route.class[name].path)]
+          stat = await fsPromises.stat(Odac.Route.class[name].path)
+          if (Odac.Route.class[name].mtime >= stat.mtimeMs || Date.now() < stat.mtimeMs + 1000) {
+            shouldLoad = false
+          } else {
+            delete require.cache[require.resolve(Odac.Route.class[name].path)]
+          }
+        } else {
+          stat = await fsPromises.stat(filePath)
         }
-        Odac.Route.class[name] = {
-          path: `${__dir}/class/${file}`,
-          mtime: fs.statSync(`${__dir}/class/${file}`).mtimeMs,
-          module: require(`${__dir}/class/${file}`)
-        }
-      }
-    }
-    let dir = fs.readdirSync(`${__dir}/route/`)
-    for (const file of dir) {
-      if (!file.endsWith('.js')) continue
-      let mtime = fs.statSync(`${__dir}/route/${file}`).mtimeMs
-      Odac.Route.buff = file.replace('.js', '')
-      if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
-        delete require.cache[require.resolve(`${__dir}/route/${file}`)]
-        routes2[Odac.Route.buff] = mtime
-        const routeModule = require(`${__dir}/route/${file}`)
-        if (typeof routeModule === 'function') {
-          routeModule(Odac)
-        }
-      }
-      for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
-        if (!this.routes[Odac.Route.buff]) continue
-        if (!this.routes[Odac.Route.buff][type]) continue
-        for (const route in this.routes[Odac.Route.buff][type]) {
-          if (routes2[Odac.Route.buff] > this.routes[Odac.Route.buff][type][route].loaded) {
-            delete require.cache[require.resolve(this.routes[Odac.Route.buff][type][route].path)]
-            delete this.routes[Odac.Route.buff][type][route]
-          } else if (this.routes[Odac.Route.buff][type][route]) {
-            if (typeof this.routes[Odac.Route.buff][type][route].type === 'function') continue
-            if (this.routes[Odac.Route.buff][type][route].mtime < fs.statSync(this.routes[Odac.Route.buff][type][route].path).mtimeMs) {
-              delete require.cache[require.resolve(this.routes[Odac.Route.buff][type][route].path)]
-              this.routes[Odac.Route.buff][type][route].cache = require(this.routes[Odac.Route.buff][type][route].path)
-              this.routes[Odac.Route.buff][type][route].mtime = fs.statSync(this.routes[Odac.Route.buff][type][route].path).mtimeMs
-            }
+
+        if (shouldLoad) {
+          Odac.Route.class[name] = {
+            path: filePath,
+            mtime: stat.mtimeMs,
+            module: require(filePath)
           }
         }
       }
-      delete Odac.Route.buff
+    } catch {
+      // Class dir might not exist
     }
+
+    try {
+      const dir = await fsPromises.readdir(`${__dir}/route/`)
+      for (const file of dir) {
+        if (!file.endsWith('.js')) continue
+        const filePath = `${__dir}/route/${file}`
+        const stat = await fsPromises.stat(filePath)
+        let mtime = stat.mtimeMs
+        Odac.Route.buff = file.replace('.js', '')
+
+        if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
+          delete require.cache[require.resolve(filePath)]
+          routes2[Odac.Route.buff] = mtime
+          const routeModule = require(filePath)
+          if (typeof routeModule === 'function') {
+            // routeModule calls .set(), which pushes promises to _pendingRouteLoads
+            routeModule(Odac)
+          }
+        }
+
+        // Wait for all route sets to complete for this file
+        await Promise.all(this._pendingRouteLoads)
+        this._pendingRouteLoads = []
+
+        // Clean up deleted routes logic
+        for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
+          if (!this.routes[Odac.Route.buff]) continue
+          if (!this.routes[Odac.Route.buff][type]) continue
+          for (const route in this.routes[Odac.Route.buff][type]) {
+            const routeObj = this.routes[Odac.Route.buff][type][route]
+            if (!routeObj) continue
+
+            if (routes2[Odac.Route.buff] > routeObj.loaded) {
+              if (routeObj.path) {
+                try {
+                  delete require.cache[require.resolve(routeObj.path)]
+                } catch {
+                  // Silently fail
+                }
+              }
+              delete this.routes[Odac.Route.buff][type][route]
+            } else if (routeObj) {
+              if (typeof routeObj.type === 'function') continue
+              // Check if controller file modified
+              try {
+                const cStat = await fsPromises.stat(routeObj.path)
+                if (routeObj.mtime < cStat.mtimeMs) {
+                  delete require.cache[require.resolve(routeObj.path)]
+                  routeObj.cache = require(routeObj.path)
+                  routeObj.mtime = cStat.mtimeMs
+                }
+              } catch {
+                // Controller file might have been deleted?
+              }
+            }
+          }
+        }
+        delete Odac.Route.buff
+      }
+    } catch (e) {
+      // route dir issue?
+      console.error(e)
+    }
+
     Cron.init()
     this.loading = false
   }
 
-  init() {
-    this.#init()
+  async init() {
+    await this.#init()
     this.#registerInternalRoutes()
 
     // Hot Reload only in Debug Mode
     if (Odac.Config.debug) {
-      setInterval(() => {
-        this.#init()
+      setInterval(async () => {
+        await this.#init()
       }, 5000)
     }
   }
@@ -563,29 +619,63 @@ class Route {
     if (!this.routes[Odac.Route.buff]) this.routes[Odac.Route.buff] = {}
     if (!this.routes[Odac.Route.buff][type]) this.routes[Odac.Route.buff][type] = {}
 
-    if (this.routes[Odac.Route.buff][type][url]) {
-      this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-      if (!isFunction && this.routes[Odac.Route.buff][type][url].mtime < fs.statSync(path).mtimeMs) {
-        delete this.routes[Odac.Route.buff][type][url]
-        delete require.cache[require.resolve(path)]
-      } else return this
+    const task = async () => {
+      if (this.routes[Odac.Route.buff][type][url]) {
+        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
+        if (!isFunction) {
+          try {
+            const stat = await fsPromises.stat(path)
+            if (this.routes[Odac.Route.buff][type][url].mtime < stat.mtimeMs) {
+              delete this.routes[Odac.Route.buff][type][url]
+              delete require.cache[require.resolve(path)]
+            } else {
+              return
+            }
+          } catch {
+            // File error, proceed to reload or re-set
+          }
+        } else {
+          return
+        }
+      }
+
+      if (isFunction) {
+        if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
+        this.routes[Odac.Route.buff][type][url].cache = file
+        this.routes[Odac.Route.buff][type][url].type = 'function'
+        this.routes[Odac.Route.buff][type][url].file = file
+        this.routes[Odac.Route.buff][type][url].mtime = Date.now()
+        this.routes[Odac.Route.buff][type][url].path = path
+        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
+        this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+        this.routes[Odac.Route.buff][type][url].action = action
+
+        this.routes[Odac.Route.buff][type][url].middlewares =
+          this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+      } else {
+        try {
+          const stat = await fsPromises.stat(path)
+          if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
+          this.routes[Odac.Route.buff][type][url].cache = require(path)
+          this.routes[Odac.Route.buff][type][url].type = 'controller'
+          this.routes[Odac.Route.buff][type][url].file = file
+          this.routes[Odac.Route.buff][type][url].mtime = stat.mtimeMs
+          this.routes[Odac.Route.buff][type][url].path = path
+          this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
+          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+          this.routes[Odac.Route.buff][type][url].action = action
+
+          this.routes[Odac.Route.buff][type][url].middlewares =
+            this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+        } catch {
+          if (file && typeof file === 'string') {
+            console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
+          }
+        }
+      }
     }
 
-    if (isFunction || fs.existsSync(path)) {
-      if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
-      this.routes[Odac.Route.buff][type][url].cache = isFunction ? file : require(path)
-      this.routes[Odac.Route.buff][type][url].type = isFunction ? 'function' : 'controller'
-      this.routes[Odac.Route.buff][type][url].file = file
-      this.routes[Odac.Route.buff][type][url].mtime = isFunction ? Date.now() : fs.statSync(path).mtimeMs
-      this.routes[Odac.Route.buff][type][url].path = path
-      this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-      this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-      this.routes[Odac.Route.buff][type][url].action = action
-
-      this.routes[Odac.Route.buff][type][url].middlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
-    } else if (file && typeof file === 'string') {
-      console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
-    }
+    this._pendingRouteLoads.push(task())
 
     return this
   }
