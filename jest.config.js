@@ -5,7 +5,7 @@ const config = {
   testMatch: ['**/test/**/*.test.js', '**/?(*.)+(spec|test).js'],
   collectCoverage: true,
   coverageDirectory: 'coverage',
-  collectCoverageFrom: ['core/**/*.js', 'server/**/*.js']
+  collectCoverageFrom: ['src/**/*.js', 'client/**/*.js']
   // Coverage thresholds disabled - focus on test pass/fail only
   // Coverage is still collected and reported, but doesn't block commits
   // This allows incremental test development without artificial barriers

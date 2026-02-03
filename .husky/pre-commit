@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔍 Running Pre-commit Hooks..."
+
+# Run linting and formatting on staged files
+npx lint-staged
+
+# Run tests for changed files to ensure no regressions
+node test/scripts/check-coverage.js

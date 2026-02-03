@@ -1,4 +1,4 @@
-const Route = require('../../framework/src/Route')
+const Route = require('../src/Route')
 
 describe('Route', () => {
   let route

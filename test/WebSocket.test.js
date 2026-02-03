@@ -1,4 +1,4 @@
-const {WebSocketServer} = require('../../framework/src/WebSocket.js')
+const {WebSocketServer} = require('../src/WebSocket.js')
 
 describe('WebSocketServer', () => {
   let server
@@ -67,7 +67,7 @@ describe('WebSocketServer', () => {
 })
 
 describe('Route WebSocket Integration', () => {
-  const Route = require('../../framework/src/Route.js')
+  const Route = require('../src/Route.js')
 
   beforeEach(() => {
     global.Odac = {

@@ -1,4 +1,4 @@
-const Route = require('../../framework/src/Route.js')
+const Route = require('../../src/Route.js')
 
 describe('Middleware System', () => {
   let route
@@ -52,7 +52,7 @@ describe('Middleware System', () => {
 
   test('chaining should work: auth.use().page()', () => {
     route.auth.use('admin').page('/admin', () => {})
-    expect(route.routes.test.page['/admin'].middlewares).toEqual(['admin'])
+    expect(route.routes.test['#page']['/admin'].middlewares).toEqual(['admin'])
   })
 
   test('middlewares should be attached to routes', () => {

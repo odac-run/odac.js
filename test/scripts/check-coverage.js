@@ -17,7 +17,7 @@ function getStagedFiles() {
     return output
       .split('\n')
       .filter(file => file.endsWith('.js'))
-      .filter(file => file.startsWith('core/') || file.startsWith('server/'))
+      .filter(file => file.startsWith('src/') || file.startsWith('client/'))
       .filter(file => !file.includes('.test.js') && !file.includes('.spec.js'))
   } catch (err) {
     console.error('Error getting staged files:', err.message)
@@ -34,7 +34,7 @@ function checkTestFiles(changedFiles) {
     if (!fs.existsSync(file)) continue
 
     // Determine test file path
-    const testFile = file.replace(/^(core|server)\//, 'test/$1/').replace(/\.js$/, '.test.js')
+    const testFile = file.replace(/^(src|client)\//, 'test/').replace(/\.js$/, '.test.js')
 
     if (!fs.existsSync(testFile)) {
       missingTests.push({
@@ -60,7 +60,7 @@ function runTestsForFiles(files) {
     // Create a pattern to match test files for changed source files
     const testPatterns = files
       .map(file => {
-        const testFile = file.replace(/^(core|server)\//, 'test/$1/').replace(/\.js$/, '.test.js')
+        const testFile = file.replace(/^(src|client)\//, 'test/').replace(/\.js$/, '.test.js')
         return testFile
       })
       .filter(testFile => fs.existsSync(testFile))
@@ -98,7 +98,7 @@ function main() {
   const changedFiles = getStagedFiles()
 
   if (changedFiles.length === 0) {
-    console.log('✓ No core or server files changed\n')
+    console.log('✓ No src or client files changed\n')
     process.exit(0)
   }
 
