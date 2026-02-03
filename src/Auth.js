@@ -126,12 +126,15 @@ class Auth {
 
     this.#cleanupExpiredTokens(token)
 
-    let token_y = Odac.Var(Math.random().toString() + Date.now().toString() + this.#request.id + this.#request.ip).md5()
+    // Generate secure token using generic CSPRNG (Cryptographically Secure Pseudo-Random Number Generator)
+    // Why: Math.random() is predictable and MD5 is a broken hashing algorithm.
+    // We use 32 bytes (256 bits) of entropy which is industry standard.
+    let token_y = nodeCrypto.randomBytes(32).toString('hex')
 
     let cookie = {
       id: Odac.DB.nanoid(),
       user: user[key],
-      token_x: Odac.Var(Math.random().toString() + Date.now().toString()).md5(),
+      token_x: nodeCrypto.randomBytes(32).toString('hex'),
       token_y: Odac.Var(token_y).hash(),
       browser: this.#request.header('user-agent'),
       ip: this.#request.ip
