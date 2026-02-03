@@ -22,3 +22,6 @@ trigger: always_on
 ## 4. Modern JavaScript
 - **Standard:** Use ES6+ features (Async/Await, Arrow functions, Destructuring).
 - **Modules:** Strict adherence to ES Modules (import/export).
+
+## 5. Route & Session Logic
+- **Session Initialization:** `Odac.Request.setSession()` MUST be called before any logic that attempts to access `Odac.Request.session()`. This includes global middleware or form processing logic in `Route.js` that runs before the specific controller is resolved.

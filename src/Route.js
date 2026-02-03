@@ -149,6 +149,7 @@ class Route {
     if (['post', 'put', 'patch', 'delete'].includes(Odac.Request.method)) {
       const formToken = await Odac.request('_odac_form_token')
       if (formToken) {
+        Odac.Request.setSession()
         await Internal.processForm(Odac)
       }
     }
