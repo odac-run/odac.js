@@ -53,6 +53,20 @@ cd my-app
 npm run dev
 ```
 
+## 📂 Project Structure
+
+```
+project/
+├── class/          # Business logic classes
+├── controller/     # HTTP request handlers
+├── middleware/     # Route middlewares
+├── public/         # Static assets
+├── route/          # Route definitions
+├── view/           # HTML templates
+├── .env            # Environment variables
+└── config.json     # App configuration
+```
+
 ## 📚 Documentation
 
 For detailed guides, API references, and examples, visit our [official documentation](https://docs.odac.run).
