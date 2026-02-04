@@ -31,13 +31,13 @@ module.exports = {
       this.system = {}
     }
 
-    if (fs.existsSync(__dir + '/config.json')) {
+    if (fs.existsSync(__dir + '/odac.json')) {
       let config = {}
       try {
-        config = JSON.parse(fs.readFileSync(__dir + '/config.json'))
+        config = JSON.parse(fs.readFileSync(__dir + '/odac.json'))
         config = this._interpolate(config)
       } catch (err) {
-        console.error('Error reading config file:', __dir + '/config.json', err.message)
+        console.error('Error reading config file:', __dir + '/odac.json', err.message)
       }
       this._deepMerge(this, config)
     }

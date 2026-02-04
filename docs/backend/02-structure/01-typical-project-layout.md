@@ -34,7 +34,7 @@ project/
 │   ├── header/
 │   └── skeleton/
 ├── .env                # Environment variables (secrets, API keys)
-├── config.json         # App configuration
+├── odac.json           # App configuration
 └── package.json        # Project metadata & npm scripts
 ```
 

@@ -1,6 +1,6 @@
 ## 🔌 Database Connection
 
-When you add a `mysql` object to your `config.json`, the system will automatically connect to your MySQL database. No separate connection setup is needed in your code.
+When you add a `mysql` object to your `odac.json`, the system will automatically connect to your MySQL database. No separate connection setup is needed in your code.
 
 ### Basic Configuration
 
@@ -21,7 +21,7 @@ Once this is configured, you can directly use `Odac.DB` commands to run queries.
 
 For better security, especially in production, you can use environment variables for sensitive information:
 
-**config.json:**
+**odac.json:**
 ```json
 {
   "mysql": {

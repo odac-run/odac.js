@@ -54,7 +54,7 @@ Same flow - hints are sent from the manifest immediately.
 
 ## Configuration (Optional)
 
-While Early Hints works automatically, you can customize it in `config.json`:
+While Early Hints works automatically, you can customize it in `odac.json`:
 
 ```json
 {
@@ -329,7 +329,7 @@ Reduce `maxResources` in config:
 
 ## Disabling Early Hints
 
-Removing the `earlyHints` configuration section from your `config.json` is equivalent to using the default settings, which has the feature enabled. To truly disable Early Hints, you must explicitly set `enabled: false` in your configuration:
+Removing the `earlyHints` configuration section from your `odac.json` is equivalent to using the default settings, which has the feature enabled. To truly disable Early Hints, you must explicitly set `enabled: false` in your configuration:
 
 ```json
 {

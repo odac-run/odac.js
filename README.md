@@ -64,7 +64,7 @@ project/
 ├── route/          # Route definitions
 ├── view/           # HTML templates
 ├── .env            # Environment variables
-└── config.json     # App configuration
+└── odac.json       # App configuration
 ```
 
 ## 📚 Documentation

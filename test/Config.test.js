@@ -37,11 +37,11 @@ describe('Config', () => {
     it('should load project config and merge it', () => {
       os.homedir.mockReturnValue('/home/user')
       fs.existsSync.mockImplementation(path => {
-        if (path === '/mock/project/config.json') return true
+        if (path === '/mock/project/odac.json') return true
         return false
       })
       fs.readFileSync.mockImplementation(path => {
-        if (path === '/mock/project/config.json') {
+        if (path === '/mock/project/odac.json') {
           return JSON.stringify({encrypt: {key: 'secret'}})
         }
         return '{}'

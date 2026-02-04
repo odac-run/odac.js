@@ -113,7 +113,7 @@ module.exports = async function (Odac) {
 
 ## Configuration
 
-Make sure your `config.json` has the auth configuration:
+Make sure your `odac.json` has the auth configuration:
 
 ```json
 {

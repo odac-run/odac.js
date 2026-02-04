@@ -4,7 +4,7 @@ The `<odac:register>` component provides a zero-configuration way to create secu
 
 ## Quick Start
 
-### 1. Configure Database (config.json)
+### 1. Configure Database (odac.json)
 
 ```json
 {
@@ -653,7 +653,7 @@ Then handle the response in JavaScript if needed (though not required for basic 
 
 ### Form Not Submitting
 
-- Check that `config.json` has auth configuration
+- Check that `odac.json` has auth configuration
 - Verify database table exists
 - Check browser console for JavaScript errors
 

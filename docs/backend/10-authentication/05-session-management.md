@@ -31,7 +31,7 @@ Sessions use a **sliding window** approach (similar to NextAuth.js):
 
 ### Configuration
 
-Configure session behavior in `config.json`:
+Configure session behavior in `odac.json`:
 
 ```json
 {

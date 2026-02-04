@@ -4,7 +4,7 @@ Odac supports environment variables through `.env` files, making it easy to mana
 
 ### Creating a .env File
 
-Create a `.env` file in your website's root directory (same location as `config.json`):
+Create a `.env` file in your website's root directory (same location as `odac.json`):
 
 ```bash
 # .env
@@ -37,7 +37,7 @@ FEATURE_BETA=true
 MAINTENANCE_MODE=false
 ```
 
-### Using in config.json
+### Using in odac.json
 
 Reference environment variables using `${VARIABLE_NAME}` syntax:
 
@@ -91,7 +91,7 @@ module.exports = function() {
 }
 ```
 
-#### 3. From Odac.Config (if defined in config.json)
+#### 3. From Odac.Config (if defined in odac.json)
 
 ```javascript
 module.exports = function() {
@@ -222,6 +222,6 @@ MAIL_FROM='noreply@example.com'
 
 - Environment variables are loaded when the application starts
 - Changes to `.env` require restarting the application
-- The `.env` file is **optional** - you can use direct values in `config.json` if preferred
+- The `.env` file is **optional** - you can use direct values in `odac.json` if preferred
 - Variables defined in `.env` are available throughout your entire application
 - If a variable is not found, `Odac.env()` returns the default value or `undefined`

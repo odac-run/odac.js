@@ -1,6 +1,6 @@
 ## ⏱️ Request Timeout
 
-You can configure the global timeout for incoming requests by adding a `request` object to your `config.json`.
+You can configure the global timeout for incoming requests by adding a `request` object to your `odac.json`.
 
 ```json
 "request": {

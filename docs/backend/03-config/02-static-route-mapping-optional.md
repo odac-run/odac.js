@@ -1,6 +1,6 @@
 ## 🗺️ Static Route Mapping (Optional)
 
-Normally, all publicly served files should be in your `public` folder. However, if you need to expose a specific file from somewhere else on your server, you can use the optional `route` object in your `config.json`. This creates a direct mapping from a URL path to that file.
+Normally, all publicly served files should be in your `public` folder. However, if you need to expose a specific file from somewhere else on your server, you can use the optional `route` object in your `odac.json`. This creates a direct mapping from a URL path to that file.
 
 ```json
 "route": {
