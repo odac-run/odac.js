@@ -27,3 +27,4 @@ trigger: always_on
     - **Strict Equality:** Always use strict equality checks (`===`) instead of loose ones.
     - **Loop Optimization:** Use labeled loops (`label: for`) for efficient control flow in nested structures. Eliminate intermediate "flag" variables (`isMatch`, `found`) by using direct `return` or `continue label`.
     - **Direct Returns:** Return a value as soon as it is determined. Avoid assigning to a temporary variable (e.g. `matchedUser`) and breaking the loop, unless post-loop processing is strictly necessary.
+    - **Async State Safety:** When an async function depends on mutable class state (like `pendingMiddlewares`), capture that state into a local `const` *synchronously* before triggering any async operations. This prevents race conditions where the state changes before the async task consumes it.

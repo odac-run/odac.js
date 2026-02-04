@@ -582,6 +582,8 @@ class Route {
   }
 
   set(type, url, file, options = {}) {
+    const capturedMiddlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+
     if (Array.isArray(type)) {
       type = type.map(t => t.toLowerCase())
       for (const t of type) {
@@ -650,8 +652,7 @@ class Route {
         this.routes[Odac.Route.buff][type][url].token = options.token ?? true
         this.routes[Odac.Route.buff][type][url].action = action
 
-        this.routes[Odac.Route.buff][type][url].middlewares =
-          this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+        this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
       } else {
         try {
           const stat = await fsPromises.stat(path)
@@ -665,8 +666,7 @@ class Route {
           this.routes[Odac.Route.buff][type][url].token = options.token ?? true
           this.routes[Odac.Route.buff][type][url].action = action
 
-          this.routes[Odac.Route.buff][type][url].middlewares =
-            this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
         } catch {
           if (file && typeof file === 'string') {
             console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
