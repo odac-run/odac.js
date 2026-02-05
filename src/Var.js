@@ -1,6 +1,5 @@
 const fs = require('fs')
 const nodeCrypto = require('crypto')
-const bcrypt = require('bcrypt')
 
 class Var {
   #value = null
@@ -79,12 +78,22 @@ class Var {
     return encrypted.toString('base64')
   }
 
-  hash(salt = 10) {
-    return bcrypt.hashSync(this.#value, bcrypt.genSaltSync(salt))
+  hash() {
+    const salt = nodeCrypto.randomBytes(16).toString('hex')
+    const derivedKey = nodeCrypto.scryptSync(this.#value, salt, 64)
+    return `$scrypt$${salt}$${derivedKey.toString('hex')}`
   }
 
   hashCheck(check) {
-    return bcrypt.compareSync(check, this.#value)
+    if (!this.#value.startsWith('$scrypt$')) return false
+    const parts = this.#value.split('$')
+    if (parts.length < 4) return false
+
+    const salt = parts[2]
+    const originalHash = Buffer.from(parts[3], 'hex')
+
+    const derivedKey = nodeCrypto.scryptSync(check, salt, 64)
+    return nodeCrypto.timingSafeEqual(originalHash, derivedKey)
   }
 
   html() {
@@ -109,7 +118,7 @@ class Var {
     if (args.includes('alphaspace')) result = (result || any) && ((any && result) || /^[A-Za-z\s]+$/.test(this.#value))
     if (args.includes('alphanumeric')) result = (result || any) && ((any && result) || /^[A-Za-z0-9]+$/.test(this.#value))
     if (args.includes('alphanumericspace')) result = (result || any) && ((any && result) || /^[A-Za-z0-9\s]+$/.test(this.#value))
-    if (args.includes('bcrypt')) result = (result || any) && ((any && result) || /^\$2[ayb]\$.{56}$/.test(this.#value))
+    if (args.includes('hash')) result = (result || any) && ((any && result) || /^\$scrypt\$[a-f0-9]+\$[a-f0-9]+$/.test(this.#value))
     if (args.includes('date')) result = (result || any) && ((any && result) || !isNaN(Date.parse(this.#value)))
     if (args.includes('domain')) result = (result || any) && ((any && result) || /^([a-z0-9-]+\.){1,2}[a-z]{2,6}$/i.test(this.#value))
     if (args.includes('email'))

@@ -70,7 +70,7 @@ class Auth {
           const valueHandler = Odac.Var(userValue)
           let hashMatch = false
 
-          if (valueHandler.is('bcrypt')) {
+          if (valueHandler.is('hash')) {
             hashMatch = valueHandler.hashCheck(targetValue)
           } else if (valueHandler.is('md5')) {
             hashMatch = Odac.Var(targetValue).md5() === userValue
@@ -210,7 +210,7 @@ class Auth {
       return {success: false, error: 'Invalid data provided'}
     }
 
-    if (data[passwordField] && !Odac.Var(data[passwordField]).is('bcrypt')) {
+    if (data[passwordField] && !Odac.Var(data[passwordField]).is('hash')) {
       data[passwordField] = Odac.Var(data[passwordField]).hash()
     }
 

@@ -278,7 +278,7 @@ class Validator {
                       error = true
                     } else {
                       const userData = Odac.Auth.user(vars[1])
-                      if (Odac.Var(userData).is('bcrypt')) {
+                      if (Odac.Var(userData).is('hash')) {
                         error = !Odac.Var(userData).hashCheck(value)
                       } else {
                         error = value !== userData
