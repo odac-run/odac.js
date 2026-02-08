@@ -1,0 +1,4 @@
+node_modules
+storage/sessions.db*
+storage/.cache/*
+!storage/.cache/.gitkeep
