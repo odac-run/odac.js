@@ -35,29 +35,54 @@ class Auth {
 
       // Knex build queries differently than previous builder
       // Need to chain where clauses
-      for (let key in where) {
-        query = query.orWhere(key, where[key] instanceof Promise ? await where[key] : where[key])
+      // Resolve input promises upfront to avoid side effects and race conditions
+      const criteria = {}
+      const keys = Object.keys(where)
+
+      if (keys.length === 0) return false
+
+      for (const key of keys) {
+        criteria[key] = where[key] instanceof Promise ? await where[key] : where[key]
+      }
+
+      // Chain where clauses
+      for (const key in criteria) {
+        query = query.orWhere(key, criteria[key])
       }
 
       // Execute query
-      let get = await query
+      const candidates = await query
 
-      if (!get || get.length === 0) return false
+      if (!candidates || candidates.length === 0) return false
 
-      let equal = false
-      for (var user of get) {
-        equal = Object.keys(where).length > 0
-        for (let key of Object.keys(where)) {
-          if (where[key] instanceof Promise) where[key] = await where[key]
-          if (!user[key]) equal = false
-          if (user[key] === where[key]) equal = equal && true
-          else if (Odac.Var(user[key]).is('bcrypt')) equal = equal && Odac.Var(user[key]).hashCheck(where[key])
-          else if (Odac.Var(user[key]).is('md5')) equal = equal && Odac.Var(where[key]).md5() === user[key]
+      // Iterate candidates to find the exact match
+      candidateLoop: for (const user of candidates) {
+        for (const key of keys) {
+          const userValue = user[key]
+          const targetValue = criteria[key]
+
+          if (!userValue) continue candidateLoop
+
+          // Strict equality check
+          if (userValue === targetValue) continue
+
+          // Security: Check hashed fields (Bcrypt/MD5)
+          const valueHandler = Odac.Var(userValue)
+          let hashMatch = false
+
+          if (valueHandler.is('hash')) {
+            hashMatch = valueHandler.hashCheck(targetValue)
+          } else if (valueHandler.is('md5')) {
+            hashMatch = Odac.Var(targetValue).md5() === userValue
+          }
+
+          if (!hashMatch) continue candidateLoop
         }
-        if (equal) break
+
+        return user
       }
-      if (!equal) return false
-      return user
+
+      return false
     } else if (this.#user) {
       return true
     } else {
@@ -126,12 +151,15 @@ class Auth {
 
     this.#cleanupExpiredTokens(token)
 
-    let token_y = Odac.Var(Math.random().toString() + Date.now().toString() + this.#request.id + this.#request.ip).md5()
+    // Generate secure token using generic CSPRNG (Cryptographically Secure Pseudo-Random Number Generator)
+    // Why: Math.random() is predictable and MD5 is a broken hashing algorithm.
+    // We use 32 bytes (256 bits) of entropy which is industry standard.
+    let token_y = nodeCrypto.randomBytes(32).toString('hex')
 
     let cookie = {
       id: Odac.DB.nanoid(),
       user: user[key],
-      token_x: Odac.Var(Math.random().toString() + Date.now().toString()).md5(),
+      token_x: nodeCrypto.randomBytes(32).toString('hex'),
       token_y: Odac.Var(token_y).hash(),
       browser: this.#request.header('user-agent'),
       ip: this.#request.ip
@@ -182,7 +210,7 @@ class Auth {
       return {success: false, error: 'Invalid data provided'}
     }
 
-    if (data[passwordField] && !Odac.Var(data[passwordField]).is('bcrypt')) {
+    if (data[passwordField] && !Odac.Var(data[passwordField]).is('hash')) {
       data[passwordField] = Odac.Var(data[passwordField]).hash()
     }
 
@@ -557,10 +585,17 @@ class Auth {
     })
   }
 
-  user(col) {
+  /**
+   * Retrieves the authenticated user or a specific column.
+   * Why: To provide access to the current user's session data securely.
+   *
+   * @param {string|null} [col=null] - The column to retrieve, or null for the full user object.
+   * @returns {object|string|number|boolean|false} The user object, column value, or false if not logged in.
+   */
+  user(col = null) {
     if (!this.#user) return false
     if (col === null) return this.#user
-    else return this.#user[col]
+    return this.#user[col]
   }
 }
 

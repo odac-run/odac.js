@@ -10,6 +10,13 @@ class Ipc extends EventEmitter {
     this._subs = new Map() // For memory driver subscriptions
   }
 
+  /**
+   * ARCHITECTURE NOTE:
+   * This module implements a "Primary-Replica" pattern for the 'memory' driver.
+   * - The Primary process holds the 'Source of Truth' in local Maps.
+   * - Workers communicate via IPC (process.send) to read/write to this central store.
+   * This ensures state consistency across the cluster without needing Redis.
+   */
   async init() {
     if (this.initialized) return
     this.initialized = true

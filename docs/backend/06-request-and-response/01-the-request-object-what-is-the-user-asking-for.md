@@ -94,3 +94,20 @@ module.exports = async function (Odac) {
   })
 }
 ```
+
+### Session Data
+
+You can store data in the current user's session using `Odac.session()`. This data persists across requests.
+
+```javascript
+module.exports = async function (Odac) {
+  // Set a session value
+  Odac.session('cart_id', 12345)
+  
+  // Get a session value
+  const cartId = Odac.session('cart_id')
+  
+  // Remove a session value
+  Odac.session('cart_id', null)
+}
+```

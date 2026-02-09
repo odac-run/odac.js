@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Prevent pushing code with High/Critical vulnerabilities
+echo "🛡️  Running Security Gate (npm audit)..."
+
+npm audit --audit-level=high
+
+if [ $? -ne 0 ]; then
+    echo "❌ Security Check Failed! High vulnerabilities detected."
+    echo "Run 'npm audit fix' or add overrides before pushing."
+    exit 1
+fi

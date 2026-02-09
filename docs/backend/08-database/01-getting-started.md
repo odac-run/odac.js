@@ -4,7 +4,7 @@ ODAC supports multiple database connections including **MySQL**, **PostgreSQL** 
 
 ## Configuration
 
-Add your database credentials to `config.json`.
+Add your database credentials to `odac.json`.
 
 Supported configuration options:
 
@@ -79,7 +79,7 @@ DB_USER=myuser
 DB_PASSWORD=mypassword
 ```
 
-**config.json:**
+**odac.json:**
 ```json
 {
   "database": {

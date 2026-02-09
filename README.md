@@ -6,6 +6,7 @@
 ## ✨ Key Features
 
 *   🚀 **Developer Friendly:** Simple setup and intuitive API design let you start building immediately.
+*   🎨 **Built-in Tailwind CSS:** Zero-config integration with Tailwind CSS v4. Automatic compilation and optimization out of the box.
 *   🔗 **Powerful Routing:** Create clean, custom URLs and manage infinite pages with a flexible routing system.
 *   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions eliminates the need for complex client-side code.
 *   🛡️ **Built-in Security:** Automatic CSRF protection and secure default headers keep your application safe.
@@ -13,6 +14,7 @@
 *   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
 *   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
 *   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.
+*   ⚡ **Zero-Config Early Hints:** Intelligent HTTP 103 implementation that requires **no setup**. ODAC automatically analyzes your views and serves assets instantly, drastically improving load times without a single line of code.
 
 ## 🛠️ Advanced Capabilities
 
@@ -49,6 +51,20 @@ npx odac init my-app
 ```bash
 cd my-app
 npm run dev
+```
+
+## 📂 Project Structure
+
+```
+project/
+├── class/          # Business logic classes
+├── controller/     # HTTP request handlers
+├── middleware/     # Route middlewares
+├── public/         # Static assets
+├── route/          # Route definitions
+├── view/           # HTML templates
+├── .env            # Environment variables
+└── odac.json       # App configuration
 ```
 
 ## 📚 Documentation

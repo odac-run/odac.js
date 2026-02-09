@@ -4,7 +4,7 @@ The `<odac:login>` component provides a zero-configuration way to create secure 
 
 ## Quick Start
 
-### 1. Configure Database (config.json)
+### 1. Configure Database (odac.json)
 
 ```json
 {
@@ -559,7 +559,7 @@ The login form supports multiple authentication methods:
 
 ### Form Not Submitting
 
-- Check that `config.json` has MySQL configuration
+- Check that `odac.json` has MySQL configuration
 - Verify database table exists
 - Check browser console for JavaScript errors
 - Ensure CSRF token is valid

@@ -1,10 +1,10 @@
 ## ⚙️ Configuration Overview
 
-Odac uses a simple and flexible configuration system based on `config.json` and optional `.env` files. You can choose the approach that best fits your needs.
+Odac uses a simple and flexible configuration system based on `odac.json` and optional `.env` files. You can choose the approach that best fits your needs.
 
 ### Configuration Files
 
-#### config.json (Required)
+#### odac.json (Required)
 The main configuration file located in your website's root directory. This file contains all your application settings in JSON format.
 
 ```json
@@ -46,7 +46,7 @@ Perfect for development or non-sensitive settings:
 ```
 
 #### 2. Environment Variables (Secure)
-Use `${VARIABLE}` syntax in `config.json` to reference `.env` values:
+Use `${VARIABLE}` syntax in `odac.json` to reference `.env` values:
 
 ```json
 {
@@ -101,7 +101,7 @@ const nodeEnv = process.env.NODE_ENV
 ### Best Practices
 
 **Development:**
-- Use direct values in `config.json` for quick setup
+- Use direct values in `odac.json` for quick setup
 - Keep development credentials simple
 
 **Production:**
@@ -111,7 +111,7 @@ const nodeEnv = process.env.NODE_ENV
 - Copy `.env.example` to `.env` and fill in production values
 
 **Version Control:**
-- Commit `config.json` with `${VARIABLE}` placeholders
+- Commit `odac.json` with `${VARIABLE}` placeholders
 - Commit `.env.example` with dummy values
 - Never commit `.env` with real credentials
 
@@ -176,7 +176,7 @@ See individual documentation sections for detailed configuration options.
 
 ### Example Setup
 
-**config.json** (committed to git):
+**odac.json** (committed to git):
 ```json
 {
   "request": {

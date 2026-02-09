@@ -12,20 +12,26 @@ class Form {
 
   static parseFormType(content, Odac, type) {
     const regex = new RegExp(`<odac:${type}[\\s\\S]*?<\\/odac:${type}>`, 'g')
-    const matches = content.match(regex)
-    if (!matches) return content
+    return content.replace(regex, match => {
+      const formConfig = this.extractConfig(match, null, type)
+      const configStr = JSON.stringify(formConfig)
+      const matchStr = JSON.stringify(match)
+      return `<script:odac>html += await Odac.View.Form.runtime(Odac, '${type}', ${configStr}, ${matchStr});</script:odac>`
+    })
+  }
 
-    for (const match of matches) {
-      const formToken = nodeCrypto.randomBytes(32).toString('hex')
-      const formConfig = this.extractConfig(match, formToken, type)
+  /**
+   * Generates the form at runtime to ensure a fresh token is created and stored
+   * in the current session for every request. This prevents "session expired"
+   * errors caused by caching the form token in the compiled view.
+   */
+  static async runtime(Odac, type, config, originalHtml) {
+    const token = nodeCrypto.randomBytes(32).toString('hex')
+    config.token = token
 
-      this.storeConfig(formToken, formConfig, Odac, type)
+    this.storeConfig(token, config, Odac, type)
 
-      const generatedForm = this.generateForm(match, formConfig, formToken, type)
-      content = content.replace(match, generatedForm)
-    }
-
-    return content
+    return this.generateForm(originalHtml, config, token, type)
   }
 
   static extractConfig(html, formToken, type) {

@@ -64,9 +64,11 @@ module.exports = {
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
 
     if (req) {
-      _odac.Request = new (require('./Request.js'))(id, req, res, _odac)
-      _odac.Auth = new (require('./Auth.js'))(_odac.Request)
-      _odac.Token = new (require('./Token.js'))(_odac.Request)
+      if (typeof req === 'object') {
+        _odac.Request = new (require('./Request.js'))(id, req, res, _odac)
+        _odac.Auth = new (require('./Auth.js'))(_odac.Request)
+        _odac.Token = new (require('./Token.js'))(_odac.Request)
+      }
       _odac.Lang = new (require('./Lang.js'))(_odac)
       if (res) {
         _odac.View = new (require('./View.js'))(_odac)
@@ -110,42 +112,49 @@ module.exports = {
       _odac.__ = function (...args) {
         return _odac.Lang.get(...args)
       }
-      _odac.abort = function (code) {
-        return _odac.Request.abort(code)
-      }
-      _odac.cookie = function (key, value, options) {
-        return _odac.Request.cookie(key, value, options)
-      }
-      _odac.direct = function (url) {
-        return _odac.Request.redirect(url)
+      if (typeof req === 'object') {
+        _odac.abort = function (code) {
+          return _odac.Request.abort(code)
+        }
+        _odac.cookie = function (key, value, options) {
+          return _odac.Request.cookie(key, value, options)
+        }
+        _odac.direct = function (url) {
+          return _odac.Request.redirect(url)
+        }
       }
       _odac.env = function (key, defaultValue) {
         return _odac.Env.get(key, defaultValue)
       }
-      _odac.return = function (data) {
-        return _odac.Request.end(data)
-      }
-      _odac.request = function (key) {
-        return _odac.Request.request(key)
-      }
-      _odac.set = function (key, value) {
-        return _odac.Request.set(key, value)
-      }
-      _odac.share = function (key, value) {
-        return _odac.Request.share(key, value)
-      }
-      _odac.token = function (hash) {
-        return hash ? _odac.Token.check(hash) : _odac.Token.generate()
-      }
-      _odac.validator = function () {
-        return new (require('./Validator.js'))(_odac.Request)
-      }
-      _odac.write = function (value) {
-        return _odac.Request.write(value)
-      }
-      _odac.stream = function (input) {
-        _odac.Request.clearTimeout()
-        return new (require('./Stream'))(_odac.Request.req, _odac.Request.res, input, _odac)
+      if (typeof req === 'object') {
+        _odac.return = function (data) {
+          return _odac.Request.end(data)
+        }
+        _odac.request = function (key) {
+          return _odac.Request.request(key)
+        }
+        _odac.set = function (key, value) {
+          return _odac.Request.set(key, value)
+        }
+        _odac.session = function (key, value) {
+          return _odac.Request.session(key, value)
+        }
+        _odac.share = function (key, value) {
+          return _odac.Request.share(key, value)
+        }
+        _odac.token = function (hash) {
+          return hash ? _odac.Token.check(hash) : _odac.Token.generate()
+        }
+        _odac.validator = function () {
+          return new (require('./Validator.js'))(_odac.Request)
+        }
+        _odac.write = function (value) {
+          return _odac.Request.write(value)
+        }
+        _odac.stream = function (input) {
+          _odac.Request.clearTimeout()
+          return new (require('./Stream'))(_odac.Request.req, _odac.Request.res, input, _odac)
+        }
       }
 
       if (global.Odac?.Route?.class) {

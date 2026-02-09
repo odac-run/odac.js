@@ -1,4 +1,4 @@
-const fs = require('fs')
+const fs = require('fs').promises
 const path = require('path')
 
 class EarlyHints {
@@ -15,61 +15,71 @@ class EarlyHints {
     }
   }
 
-  init() {
+  async init() {
     if (this.#initialized) return
     this.#initialized = true
 
     if (!this.#config.enabled) return
 
-    this.#buildManifest()
+    await this.#buildManifest()
   }
 
-  #buildManifest() {
+  async #buildManifest() {
     const viewDir = path.join(process.cwd(), 'view')
     const skeletonDir = path.join(process.cwd(), 'skeleton')
 
     try {
-      if (fs.existsSync(viewDir)) {
-        const files = this.#getAllViewFiles(viewDir)
-        for (const file of files) {
-          const html = fs.readFileSync(file, 'utf8')
-          const resources = this.#extractResources(html)
+      try {
+        await fs.access(viewDir)
+        const files = await this.#getAllViewFiles(viewDir)
+        await Promise.all(
+          files.map(async file => {
+            const html = await fs.readFile(file, 'utf8')
+            const resources = this.#extractResources(html)
 
-          const relativePath = path.relative(viewDir, file)
-          const viewName = 'view/' + relativePath.replace(/\.html$/, '').replace(/\\/g, '/')
+            const relativePath = path.relative(viewDir, file)
+            const viewName = 'view/' + relativePath.replace(/\.html$/, '').replace(/\\/g, '/')
 
-          if (resources.length > 0) {
-            this.#manifest[viewName] = resources
-          }
-        }
+            if (resources.length > 0) {
+              this.#manifest[viewName] = resources
+            }
+          })
+        )
+      } catch {
+        // viewDir might not exist
       }
 
-      if (fs.existsSync(skeletonDir)) {
-        const files = this.#getAllViewFiles(skeletonDir)
-        for (const file of files) {
-          const html = fs.readFileSync(file, 'utf8')
-          const resources = this.#extractResources(html)
+      try {
+        await fs.access(skeletonDir)
+        const files = await this.#getAllViewFiles(skeletonDir)
+        await Promise.all(
+          files.map(async file => {
+            const html = await fs.readFile(file, 'utf8')
+            const resources = this.#extractResources(html)
 
-          const relativePath = path.relative(skeletonDir, file)
-          const viewName = 'skeleton/' + relativePath.replace(/\.html$/, '').replace(/\\/g, '/')
+            const relativePath = path.relative(skeletonDir, file)
+            const viewName = 'skeleton/' + relativePath.replace(/\.html$/, '').replace(/\\/g, '/')
 
-          if (resources.length > 0) {
-            this.#manifest[viewName] = resources
-          }
-        }
+            if (resources.length > 0) {
+              this.#manifest[viewName] = resources
+            }
+          })
+        )
+      } catch {
+        // skeletonDir might not exist
       }
     } catch {
       // Silently fail, manifest building is optional
     }
   }
 
-  #getAllViewFiles(dir, files = []) {
-    const entries = fs.readdirSync(dir, {withFileTypes: true})
+  async #getAllViewFiles(dir, files = []) {
+    const entries = await fs.readdir(dir, {withFileTypes: true})
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name)
       if (entry.isDirectory()) {
-        this.#getAllViewFiles(fullPath, files)
+        await this.#getAllViewFiles(fullPath, files)
       } else if (entry.isFile() && entry.name.endsWith('.html')) {
         files.push(fullPath)
       }

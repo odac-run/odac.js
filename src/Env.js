@@ -20,7 +20,9 @@ module.exports = {
         // Parse quoted values
         value = this._parseValue(value)
 
-        process.env[key] = value
+        if (process.env[key] === undefined) {
+          process.env[key] = value
+        }
       })
     } catch (err) {
       console.error('Error reading .env file:', err.message)

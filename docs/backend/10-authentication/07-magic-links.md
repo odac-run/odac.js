@@ -79,7 +79,7 @@ Odac handles the verification route automatically at `/_odac/magic-verify`. Howe
 
 ## Configuration
 
-Magic links usage is configured in your `config.json` file under the `auth` object.
+Magic links usage is configured in your `odac.json` file under the `auth` object.
 
 ```json
 {

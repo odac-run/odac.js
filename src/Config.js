@@ -5,13 +5,13 @@ const os = require('os')
 module.exports = {
   auth: {
     key: 'id',
-    token: 'odac_auth'
+    token: 'odac_auth' // This is the TABLE NAME for tokens, not a secret token.
   },
   request: {
     timeout: 10000
   },
   encrypt: {
-    key: 'odac'
+    key: 'odac' // Default encryption key. MUST be overridden in production.
   },
   earlyHints: {
     enabled: true,
@@ -22,7 +22,7 @@ module.exports = {
     driver: 'memory',
     redis: 'default'
   },
-  debug: false,
+  debug: process.env.NODE_ENV !== 'production',
 
   init: function () {
     try {
@@ -31,17 +31,17 @@ module.exports = {
       this.system = {}
     }
 
-    if (fs.existsSync(__dir + '/config.json')) {
+    if (fs.existsSync(__dir + '/odac.json')) {
       let config = {}
       try {
-        config = JSON.parse(fs.readFileSync(__dir + '/config.json'))
+        config = JSON.parse(fs.readFileSync(__dir + '/odac.json'))
         config = this._interpolate(config)
       } catch (err) {
-        console.error('Error reading config file:', __dir + '/config.json', err.message)
+        console.error('Error reading config file:', __dir + '/odac.json', err.message)
       }
       this._deepMerge(this, config)
     }
-    this.encrypt.key = nodeCrypto.createHash('md5').update(this.encrypt.key).digest('hex')
+    this.encrypt.key = nodeCrypto.createHash('sha256').update(this.encrypt.key).digest()
   },
 
   _interpolate: function (obj) {

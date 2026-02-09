@@ -22,6 +22,10 @@ class OdacStorage {
       this.db = open({
         path: dbPath,
         compression: true
+        // CLUSTER SAFETY NOTE:
+        // LMDB uses memory-mapped files with OS-level locking logic.
+        // Multiple workers can safely read/write to this DB simultaneously.
+        // Data committed by Worker A is immediately visible to Worker B.
       })
       this.ready = true
     } catch (error) {

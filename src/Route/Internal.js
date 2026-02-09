@@ -528,7 +528,7 @@ class Internal {
         if (error.message === 'Database connection failed') {
           return Odac.return({
             result: {success: false},
-            errors: {_odac_form: 'Database not configured. Please check your config.json'}
+            errors: {_odac_form: 'Database not configured. Please check your odac.json'}
           })
         }
 

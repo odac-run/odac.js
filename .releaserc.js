@@ -129,7 +129,7 @@ Powered by [⚡ ODAC](https://odac.run)
       '@semantic-release/git',
       {
         assets: ['package.json', 'CHANGELOG.md'],
-        message: '⚡ ODAC v${nextRelease.version} Released'
+        message: '⚡ ODAC.JS v${nextRelease.version} Released'
       }
     ],
     '@semantic-release/github'
