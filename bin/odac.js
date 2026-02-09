@@ -39,7 +39,7 @@ function getTailwindConfigs() {
 
       // Ensure output directory exists
       const cssOutputDir = path.dirname(cssOutput)
-      if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, {recursive: true})
+      fs.mkdirSync(cssOutputDir, {recursive: true})
 
       configs.push({
         input,
@@ -54,11 +54,15 @@ function getTailwindConfigs() {
   if (configs.length === 0) {
     fs.mkdirSync(cacheDir, {recursive: true})
     if (!fs.existsSync(defaultCssInput)) {
-      fs.writeFileSync(defaultCssInput, '@import "tailwindcss";')
+      try {
+        fs.writeFileSync(defaultCssInput, '@import "tailwindcss";', {flag: 'wx'})
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e
+      }
     }
 
     const cssOutputDir = path.dirname(defaultCssOutput)
-    if (!fs.existsSync(cssOutputDir)) fs.mkdirSync(cssOutputDir, {recursive: true})
+    fs.mkdirSync(cssOutputDir, {recursive: true})
 
     configs.push({
       input: defaultCssInput,
@@ -76,7 +80,7 @@ async function run() {
     const projectName = args[0] || '.'
     const targetDir = path.resolve(process.cwd(), projectName)
 
-    if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, {recursive: true})
+    fs.mkdirSync(targetDir, {recursive: true})
 
     console.log(`🚀 Initializing new Odac project in: ${targetDir}`)
     const templateDir = path.resolve(__dirname, '../template')
