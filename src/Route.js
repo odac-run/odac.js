@@ -189,29 +189,26 @@ class Route {
 
       const filePath = Odac.Config.route[url]
       try {
-        const stat = await fsPromises.stat(filePath)
-        if (stat.isFile()) {
-          let type = 'text/html'
-          if (filePath.includes('.')) {
-            let arr = filePath.split('.')
-            type = mime[arr[arr.length - 1]]
-          }
-          const content = await fsPromises.readFile(filePath)
-
-          // PROD CACHE SET
-          if (!Odac.Config.debug) {
-            this.#configCache[url] = {
-              content,
-              type,
-              size: stat.size
-            }
-          }
-
-          Odac.Request.header('Content-Type', type)
-          Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-          Odac.Request.header('Content-Length', stat.size)
-          return content
+        const content = await fsPromises.readFile(filePath)
+        let type = 'text/html'
+        if (filePath.includes('.')) {
+          let arr = filePath.split('.')
+          type = mime[arr[arr.length - 1]]
         }
+
+        // PROD CACHE SET
+        if (!Odac.Config.debug) {
+          this.#configCache[url] = {
+            content,
+            type,
+            size: content.length
+          }
+        }
+
+        Odac.Request.header('Content-Type', type)
+        Odac.Request.header('Cache-Control', 'public, max-age=31536000')
+        Odac.Request.header('Content-Length', content.length)
+        return content
       } catch {
         // File not found or error, continue routing
       }
