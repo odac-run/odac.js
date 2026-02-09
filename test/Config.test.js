@@ -1,6 +1,6 @@
 const fs = require('fs')
 const os = require('os')
-const nodeCrypto = require('crypto')
+
 const Config = require('../src/Config')
 
 jest.mock('fs')
