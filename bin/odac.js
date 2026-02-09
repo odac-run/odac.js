@@ -53,12 +53,10 @@ function getTailwindConfigs() {
   // Fallback to default if no custom files found
   if (configs.length === 0) {
     fs.mkdirSync(cacheDir, {recursive: true})
-    if (!fs.existsSync(defaultCssInput)) {
-      try {
-        fs.writeFileSync(defaultCssInput, '@import "tailwindcss";', {flag: 'wx'})
-      } catch (e) {
-        if (e.code !== 'EEXIST') throw e
-      }
+    try {
+      fs.writeFileSync(defaultCssInput, '@import "tailwindcss";', {flag: 'wx'})
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e
     }
 
     const cssOutputDir = path.dirname(defaultCssOutput)
