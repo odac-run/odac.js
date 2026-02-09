@@ -1,3 +1,70 @@
+### agent
+
+- Clarify logging strategies for development and production environments
+
+### deps
+
+- update `tar` override version and add `@semantic-release/npm` override.
+
+### ⚙️ Engine Tuning
+
+- add JSDoc and default parameter to `Auth.user` method for improved clarity and robustness.
+- enable method chaining for cron job condition definitions
+- Enhance cryptographic security by using CSPRNG for token generation, SHA-256 for encryption key derivation, and adding clarifying configuration comments.
+- Improve authentication logic by adopting fail-fast patterns, upfront promise resolution, and optimized loop control, aligning with new code quality guidelines.
+- Improve view file reading by using `fsPromises.open` for better resource management and atomic operations.
+- Migrate route and middleware loading to asynchronous file system operations for improved performance.
+- Remove redundant `fs.existsSync` checks before `fs.mkdirSync` and add `EEXIST` handling for `fs.writeFileSync`.
+- remove unused nodeCrypto import from Config.test.js
+- rename config.json to odac.json for brand consistency
+- Streamline default CSS file creation using `fs.writeFileSync` 'wx' flag.
+- Use raw Buffer for encryption key hashing, aligning with enterprise-grade development standards.
+
+### ⚡️ Performance Upgrades
+
+- Implement enterprise-grade HTTP server performance configurations
+- Optimize file serving by eliminating redundant `fs.stat` calls and deriving content length directly from the read file.
+- **route:** implementation of async I/O and metadata caching for static assets
+- **view:** switch to async I/O and implement aggressive production caching
+
+### ✨ What's New
+
+- add built-in tailwindcss v4 support with zero-config
+- Enhance cron job scheduling with new `.at()` and `.raw()` methods, update cron documentation.
+- Enhance Tailwind CSS watcher to prioritize local CLI over npx for improved reliability and adjust shell option accordingly.
+- **framework:** add Odac.session() helper and update docs
+- implement Class-Based Controllers support and update docs
+- Implement conditional environment variable loading, configure server workers based on debug mode
+- Replaced bcrypt with native Node.js crypto.scrypt for hashing, removed bcrypt and axios dependencies, and updated related validation checks.
+- support multiple Tailwind CSS entry points in build and dev processes.
+
+### 📚 Documentation
+
+- add documentation for multiple CSS file support
+- add project structure overview to README
+- Add Tailwind CSS v4 integration to README features list
+- Introduce architectural and cluster safety notes to Token, Ipc, and Storage modules.
+
+### 🛠️ Fixes & Improvements
+
+- Add null safety checks for `odac.Request` and its `header` method when determining the default language.
+- add options support to authenticated routes (GET/POST)
+- Conditionally initialize Odac request-dependent components and provide a dedicated Odac instance with cleanup to cron jobs.
+- Enhance server port configuration to prioritize command-line arguments and environment variables
+- Initialize session in Route.js during form processing to ensure proper session availability before access, aligning with new coding standards.
+- **package:** resolve high severity npm vulnerabilities
+- Prevent form token expiration errors by dynamically generating forms at runtime.
+- Prevent middleware race conditions by synchronously capturing state and improve Tailwind CSS watcher robustness with auto-restart.
+- Refine error message styling in form validation
+- Replace insecure token generation with cryptographically secure random bytes for `token_x` and `token_y`.
+- **session:** change cookie SameSite policy to Lax for OAuth support
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### Fix
 
 - Resolve WebSocket handshake error by echoing subprotocol header
