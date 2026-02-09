@@ -382,15 +382,25 @@ class View {
     }
 
     let mtime = 0
+    let content = null
+
     try {
-      const stats = await fsPromises.stat(file)
-      mtime = stats.mtimeMs
+      const handle = await fsPromises.open(file, 'r')
+      try {
+        const stats = await handle.stat()
+        mtime = stats.mtimeMs
+
+        if (global.Odac.View.cache[file]?.mtime !== mtime) {
+          content = await handle.readFile('utf8')
+        }
+      } finally {
+        await handle.close()
+      }
     } catch {
       return ''
     }
 
-    if (global.Odac.View.cache[file]?.mtime !== mtime) {
-      let content = await fsPromises.readFile(file, 'utf8')
+    if (content !== null) {
       content = Form.parse(content, this.#odac)
 
       const jsBlocks = []
