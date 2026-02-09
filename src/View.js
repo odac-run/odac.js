@@ -116,6 +116,8 @@ class View {
     } else {
       this.#earlyHints = global.Odac.View.EarlyHints
     }
+    global.Odac.View.Form = Form
+    this.Form = Form
   }
 
   all(name) {
