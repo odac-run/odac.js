@@ -294,8 +294,10 @@ class Route {
     if (this.routes[route][method][url]) return this.routes[route][method][url]
     let arr = url.split('/')
     for (let key in this.routes[route][method]) {
-      if (!key.includes('{') || !key.includes('}')) continue
-      let route_arr = key.split('/')
+      const routeObj = this.routes[route][method][key]
+      if (!routeObj.isParameterized) continue
+
+      let route_arr = routeObj.split
       if (route_arr.length !== arr.length) continue
       let params = {}
       let next = false
@@ -638,6 +640,9 @@ class Route {
         }
       }
 
+      const isParameterized = url.includes('{') && url.includes('}')
+      const split = isParameterized ? url.split('/') : null
+
       if (isFunction) {
         if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
         this.routes[Odac.Route.buff][type][url].cache = file
@@ -650,6 +655,9 @@ class Route {
         this.routes[Odac.Route.buff][type][url].action = action
 
         this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+
+        this.routes[Odac.Route.buff][type][url].isParameterized = isParameterized
+        this.routes[Odac.Route.buff][type][url].split = split
       } else {
         try {
           const stat = await fsPromises.stat(path)
@@ -664,6 +672,9 @@ class Route {
           this.routes[Odac.Route.buff][type][url].action = action
 
           this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+
+          this.routes[Odac.Route.buff][type][url].isParameterized = isParameterized
+          this.routes[Odac.Route.buff][type][url].split = split
         } catch {
           if (file && typeof file === 'string') {
             console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
