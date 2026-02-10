@@ -447,8 +447,11 @@ class Route {
         delete Odac.Route.buff
       }
     } catch (e) {
-      // route dir issue?
-      console.error(e)
+      if (e.code === 'ENOENT') {
+        console.error(`[ODAC] Route directory not found: \x1b[33m${__dir}/route/\x1b[0m`)
+      } else {
+        console.error(e)
+      }
     }
 
     Cron.init()
