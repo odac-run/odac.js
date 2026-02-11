@@ -117,6 +117,9 @@ async function run() {
     if (cluster.isPrimary) {
       const configs = getTailwindConfigs()
       const tails = []
+      const names = configs.map(c => c.name).join(', ')
+
+      console.log(`🎨 \x1b[36mODAC Styles:\x1b[0m Watching for changes (${names})`)
 
       configs.forEach(({input, cssOutput, name, isCustom}) => {
         let tailwindProcess = null
@@ -129,17 +132,28 @@ async function run() {
             ? ['-i', input, '-o', cssOutput, '--watch=always']
             : ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch=always']
 
-          console.log(`🎨 Starting Tailwind CSS for ${name} (${isCustom ? 'Custom' : 'Default'})...`)
-          console.log(`📂 Watching directory: ${process.cwd()}`)
-
           tailwindProcess = spawn(cmd, args, {
-            stdio: ['pipe', 'inherit', 'inherit'],
+            stdio: ['pipe', 'ignore', 'pipe'],
             shell: !useLocal, // Valid for npm/npx compatibility if local not found
             cwd: process.cwd()
           })
 
+          // Filter stderr: suppress status noise, forward only real errors
+          tailwindProcess.stderr.on('data', chunk => {
+            const raw = chunk.toString()
+            const lines = raw.split('\n')
+            for (const line of lines) {
+              // Strip ANSI escape codes to ensure reliable filtering
+              const clean = line.replace(/\x1B\[[0-9;]*[JKmsu]/g, '').trim()
+
+              if (!clean || clean.startsWith('Done in') || clean.startsWith('≈')) continue
+
+              process.stderr.write(`\x1b[31m[ODAC Style Error]\x1b[0m ${line}\n`)
+            }
+          })
+
           tailwindProcess.on('error', err => {
-            console.error(`❌ Tailwind watcher failed to start for ${name}:`, err.message)
+            console.error(`❌ \x1b[31m[ODAC Style Error]\x1b[0m Failed to start watcher for ${name}:`, err.message)
           })
 
           tailwindProcess.on('exit', code => {
