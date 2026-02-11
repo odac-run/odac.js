@@ -125,13 +125,15 @@ async function run() {
           const localCli = path.join(process.cwd(), 'node_modules', '.bin', 'tailwindcss')
           const useLocal = fs.existsSync(localCli)
           const cmd = useLocal ? localCli : 'npx'
-          const args = useLocal ? ['-i', input, '-o', cssOutput, '--watch'] : ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch']
+          const args = useLocal
+            ? ['-i', input, '-o', cssOutput, '--watch=always']
+            : ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch=always']
 
           console.log(`🎨 Starting Tailwind CSS for ${name} (${isCustom ? 'Custom' : 'Default'})...`)
           console.log(`📂 Watching directory: ${process.cwd()}`)
 
           tailwindProcess = spawn(cmd, args, {
-            stdio: 'inherit',
+            stdio: ['pipe', 'inherit', 'inherit'],
             shell: !useLocal, // Valid for npm/npx compatibility if local not found
             cwd: process.cwd()
           })
