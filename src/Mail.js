@@ -409,7 +409,7 @@ class Mail {
             ]
           }
 
-          const socketPath = process.env.ODAC_API_SOCKET || '/var/run/odac.sock'
+          const socketPath = process.env.ODAC_API_SOCKET || '/odac/api.sock'
 
           if (Odac.Config.debug) console.log(`[Mail] Connecting to Odac Core via Unix Socket: ${socketPath}...`)
 
@@ -431,7 +431,13 @@ class Mail {
           })
 
           client.on('error', error => {
-            console.error('[Mail] Socket Error:', error)
+            if (error.code === 'ENOENT' && error.address === socketPath) {
+              console.error(
+                '[Mail] Socket Error: If you are using ODAC, you must grant permissions or enter SMTP information in the config.'
+              )
+            } else {
+              console.error('[Mail] Socket Error:', error)
+            }
             resolve(false)
           })
 
