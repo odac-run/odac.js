@@ -149,7 +149,7 @@ class View {
         if (this.#part[element]) {
           let viewPath = this.#part[element]
           if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
-          if (fs.existsSync(`./view/${element}/${viewPath}.html`)) {
+          if (await this.#exists(`./view/${element}/${viewPath}.html`)) {
             const html = await this.#render(`./view/${element}/${viewPath}.html`)
             output[element] = html
 
@@ -169,7 +169,7 @@ class View {
           if (this.#part[key] && !this.#odac.Request.ajaxLoad.includes(key)) {
             let viewPath = this.#part[key]
             if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
-            if (fs.existsSync(`./view/${key}/${viewPath}.html`)) {
+            if (await this.#exists(`./view/${key}/${viewPath}.html`)) {
               try {
                 const partHtml = await this.#render(`./view/${key}/${viewPath}.html`)
                 const titleMatch = partHtml.match(TITLE_REGEX)
@@ -217,7 +217,7 @@ class View {
         if (['all', 'skeleton'].includes(key)) continue
         if (!this.#part[key]) continue
         if (this.#part[key].includes('.')) this.#part[key] = this.#part[key].replace(/\./g, '/')
-        if (fs.existsSync(`./view/${key}/${this.#part[key]}.html`)) {
+        if (await this.#exists(`./view/${key}/${this.#part[key]}.html`)) {
           result = result.replace(`{{ ${key.toUpperCase()} }}`, await this.#render(`./view/${key}/${this.#part[key]}.html`))
         }
       }
@@ -229,7 +229,7 @@ class View {
             let file = this.#part.all.split('.')
             file.splice(-1, 0, part.toLowerCase())
             file = file.join('/')
-            if (fs.existsSync(`./view/${file}.html`)) {
+            if (await this.#exists(`./view/${file}.html`)) {
               result = result.replace(`{{ ${part.toUpperCase()} }}`, await this.#render(`./view/${file}.html`))
             }
           }
@@ -485,8 +485,8 @@ class View {
         }
       }
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
-      if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, {recursive: true})
-      fs.writeFileSync(
+      await fsPromises.mkdir(CACHE_DIR, {recursive: true})
+      await fsPromises.writeFile(
         `${CACHE_DIR}/${cache}`,
         `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
       )

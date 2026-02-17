@@ -1,6 +1,7 @@
 const net = require('net')
 const nodeCrypto = require('crypto')
 const fs = require('fs')
+const fsPromises = fs.promises
 // const Form = require('./View/Form')
 
 const CACHE_DIR = './storage/.cache'
@@ -155,13 +156,14 @@ class Mail {
   }
 
   async #render(file, data) {
-    const fd = fs.openSync(file, 'r')
     let mtime, content
+    const handle = await fsPromises.open(file, 'r')
     try {
-      mtime = fs.fstatSync(fd).mtimeMs
-      content = fs.readFileSync(fd, 'utf8')
+      const stats = await handle.stat()
+      mtime = stats.mtimeMs
+      content = await handle.readFile('utf8')
     } finally {
-      fs.closeSync(fd)
+      await handle.close()
     }
 
     // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile.
@@ -251,8 +253,8 @@ class Mail {
       }
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
-      if (!fs.existsSync(CACHE_DIR)) fs.mkdirSync(CACHE_DIR, {recursive: true})
-      fs.writeFileSync(
+      await fsPromises.mkdir(CACHE_DIR, {recursive: true})
+      await fsPromises.writeFile(
         `${CACHE_DIR}/${cache}`,
         `module.exports = async (Odac, data, get, __) => {\n
            // Destructure data keys into local scope variables
@@ -351,7 +353,9 @@ class Mail {
           let textContent = ''
 
           if (this.#template) {
-            if (!fs.existsSync(__dir + '/view/mail/' + this.#template + '.html')) {
+            try {
+              await fsPromises.access(__dir + '/view/mail/' + this.#template + '.html')
+            } catch {
               console.error(`[Mail] Template not found: ${__dir}/view/mail/${this.#template}.html`)
               return resolve(false)
             }

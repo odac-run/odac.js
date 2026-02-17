@@ -28,6 +28,7 @@ trigger: always_on
     - **Loop Optimization:** Use labeled loops (`label: for`) for efficient control flow in nested structures. Eliminate intermediate "flag" variables (`isMatch`, `found`) by using direct `return` or `continue label`.
     - **Direct Returns:** Return a value as soon as it is determined. Avoid assigning to a temporary variable (e.g. `matchedUser`) and breaking the loop, unless post-loop processing is strictly necessary.
     - **Async State Safety:** When an async function depends on mutable class state (like `pendingMiddlewares`), capture that state into a local `const` *synchronously* before triggering any async operations. This prevents race conditions where the state changes before the async task consumes it.
+    - **Async I/O Preference:** Prefer asynchronous file system operations (`fs.promises` or `await fs.promises.*`) over synchronous methods (`fs.readFileSync`, `fs.writeFileSync`) to prevent blocking the event loop and ensure high concurrency, especially in request handling paths.
 
 ## Dependency Management
 - **Prefer Native Fetch:** Use the native `fetch` API for network requests in both Node.js (18+) and browser environments to reduce dependencies and bundle size.
