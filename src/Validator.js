@@ -1,5 +1,6 @@
 const https = require('https')
 const fs = require('fs')
+const fsPromises = fs.promises
 const os = require('os')
 const path = require('path')
 
@@ -16,16 +17,16 @@ async function loadDisposableDomains() {
 
   try {
     try {
-      const fd = fs.openSync(CACHE_FILE, 'r')
+      const handle = await fsPromises.open(CACHE_FILE, 'r')
       try {
-        const stats = fs.fstatSync(fd)
+        const stats = await handle.stat()
         const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
         if (ageInHours < 24) {
-          content = fs.readFileSync(fd, 'utf8')
+          content = await handle.readFile('utf8')
           shouldUpdate = false
         }
       } finally {
-        fs.closeSync(fd)
+        await handle.close()
       }
     } catch {
       // Cache error check failed, proceed to validation update
@@ -48,18 +49,25 @@ async function loadDisposableDomains() {
           req.end()
         })
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        const fd = fs.openSync(tempFile, 'wx')
+        const handle = await fsPromises.open(tempFile, 'wx')
         try {
-          // Sanitize content before writing to file to avoid injection attacks
+          // SECURITY NOTE: Supply Chain Attack Mitigation
+          // We strictly sanitize the content fetched from the remote source before writing it to the local file system.
+          // The regex whitelist /[^a-zA-Z0-9.\-\n\r]/g restricts the content to only alphanumeric characters, dots, hyphens, and newlines.
+          // This aggressively neutralizes any potential malicious payloads (e.g., specific code injection, shell commands, or scrips)
+          // even if the remote source (hub.odac.run) is compromised.
           const sanitizedContent = content.replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
-          fs.writeSync(fd, sanitizedContent)
+          await handle.write(sanitizedContent)
         } finally {
-          fs.closeSync(fd)
+          await handle.close()
         }
-        fs.renameSync(tempFile, CACHE_FILE)
+        await fsPromises.rename(tempFile, CACHE_FILE)
       } catch {
-        if (fs.existsSync(CACHE_FILE)) {
-          content = fs.readFileSync(CACHE_FILE, 'utf8')
+        try {
+          await fsPromises.access(CACHE_FILE)
+          content = await fsPromises.readFile(CACHE_FILE, 'utf8')
+        } catch {
+          // No cache file available
         }
       }
     }
