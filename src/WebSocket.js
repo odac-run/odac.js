@@ -1,7 +1,10 @@
 const nodeCrypto = require('crypto')
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-const MAX_PAYLOAD_LENGTH = 10 * 1024 * 1024
+const DEFAULT_MAX_PAYLOAD = 10 * 1024 * 1024
+const DEFAULT_RATE_LIMIT_MAX = 50
+const DEFAULT_RATE_LIMIT_WINDOW = 1000
+
 const OPCODE = {
   CONTINUATION: 0x0,
   TEXT: 0x1,
@@ -18,13 +21,29 @@ class WebSocketClient {
   #server
   #id
   #rooms = new Set()
+  #maxPayload
+  #rateLimitMax
+  #rateLimitWindow
+  #messageCount = 0
+  #rateLimitTimer
   data = {}
 
-  constructor(socket, server, id) {
+  constructor(socket, server, id, options = {}) {
     this.#socket = socket
     this.#socket.pause()
     this.#server = server
     this.#id = id
+    this.#maxPayload = options.maxPayload || DEFAULT_MAX_PAYLOAD
+
+    this.#rateLimitMax = options.rateLimit?.max ?? DEFAULT_RATE_LIMIT_MAX
+    this.#rateLimitWindow = options.rateLimit?.window ?? DEFAULT_RATE_LIMIT_WINDOW
+
+    if (this.#rateLimitMax > 0) {
+      this.#rateLimitTimer = setInterval(() => {
+        this.#messageCount = 0
+      }, this.#rateLimitWindow)
+    }
+
     this.#setupListeners()
   }
 
@@ -93,7 +112,7 @@ class WebSocketClient {
       offset = 10
     }
 
-    if (payloadLength > MAX_PAYLOAD_LENGTH) {
+    if (payloadLength > this.#maxPayload) {
       this.close(1009, 'Payload too large')
       return null
     }
@@ -125,6 +144,14 @@ class WebSocketClient {
   }
 
   #handleFrame(frame) {
+    if (this.#rateLimitMax > 0) {
+      this.#messageCount++
+      if (this.#messageCount > this.#rateLimitMax) {
+        this.close(1008, 'Rate limit exceeded')
+        return
+      }
+    }
+
     switch (frame.opcode) {
       case OPCODE.TEXT:
         this.#handleMessage(frame.payload.toString('utf8'))
@@ -158,6 +185,8 @@ class WebSocketClient {
     if (this.#closed) return
     this.#closed = true
 
+    if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
+
     this.#socket.removeAllListeners()
 
     for (const room of this.#rooms) {
@@ -169,8 +198,7 @@ class WebSocketClient {
   }
 
   #sendFrame(opcode, data) {
-    if (this.#closed) return
-
+    if (this.#closed && opcode !== OPCODE.CLOSE) return
     const payload = Buffer.isBuffer(data) ? data : Buffer.from(data)
     const length = payload.length
 
@@ -240,6 +268,8 @@ class WebSocketClient {
     if (this.#closed) return
     this.#closed = true
 
+    if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
+
     const reasonBuffer = Buffer.from(reason)
     const payload = Buffer.alloc(2 + reasonBuffer.length)
     payload.writeUInt16BE(code, 0)
@@ -287,14 +317,14 @@ class WebSocketServer {
   #rooms = new Map()
   #routes = new Map()
 
-  route(path, handler) {
-    this.#routes.set(path, handler)
+  route(path, handler, options = {}) {
+    this.#routes.set(path, {handler, options})
   }
 
   getRoute(path) {
     if (this.#routes.has(path)) return this.#routes.get(path)
 
-    for (const [pattern, handler] of this.#routes) {
+    for (const [pattern, config] of this.#routes) {
       if (!pattern.includes('{')) continue
       const regex = new RegExp('^' + pattern.replace(/\{[^}]+\}/g, '([^/]+)') + '$')
       const match = path.match(regex)
@@ -304,7 +334,11 @@ class WebSocketServer {
         paramNames.forEach((name, i) => {
           params[name.slice(1, -1)] = match[i + 1]
         })
-        return {handler, params}
+        return {
+          handler: config.handler,
+          options: config.options,
+          params
+        }
       }
     }
     return null
@@ -320,8 +354,7 @@ class WebSocketServer {
       return
     }
 
-    const handler = typeof routeInfo === 'function' ? routeInfo : routeInfo.handler
-    const params = routeInfo.params || {}
+    const {handler, params = {}, options = {}} = routeInfo
 
     const key = req.headers['sec-websocket-key']
     if (!key) {
@@ -353,7 +386,7 @@ class WebSocketServer {
     if (head && head.length > 0) socket.unshift(head)
 
     const clientId = nodeCrypto.randomUUID()
-    const client = new WebSocketClient(socket, this, clientId)
+    const client = new WebSocketClient(socket, this, clientId, options)
     this.#clients.set(clientId, client)
 
     if (params) {

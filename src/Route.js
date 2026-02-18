@@ -872,7 +872,7 @@ class Route {
       return res
     }
 
-    this.#wsServer.route(path, wrappedHandler)
+    this.#wsServer.route(path, wrappedHandler, options)
   }
 
   handleWebSocketUpgrade(req, socket, head, Odac) {
