@@ -381,7 +381,7 @@ class View {
       }
     }
 
-    let mtime = 0
+    let mtime
     let content = null
 
     try {

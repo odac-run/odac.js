@@ -30,27 +30,27 @@
     "tailwindcss": "^4.1.18"
   },
   "overrides": {
-    "tar": "^7.5.7",
-    "undici": "^6.23.0"
+    "tar": "7.5.9",
+    "cross-spawn": "7.0.6"
   },
   "devDependencies": {
-    "@eslint/js": "^9.33.0",
+    "@eslint/js": "^9.39.2",
     "@semantic-release/changelog": "^6.0.3",
     "@semantic-release/commit-analyzer": "^13.0.1",
     "@semantic-release/git": "^10.0.1",
-    "@semantic-release/github": "^12.0.2",
-    "@semantic-release/npm": "^13.1.2",
+    "@semantic-release/github": "^12.0.6",
+    "@semantic-release/npm": "^13.1.4",
     "@semantic-release/release-notes-generator": "^14.1.0",
     "conventional-changelog-conventionalcommits": "^9.1.0",
-    "eslint": "^9.33.0",
+    "eslint": "^9.39.2",
     "eslint-config-prettier": "^10.1.8",
-    "eslint-plugin-prettier": "^5.5.4",
-    "globals": "^16.3.0",
+    "eslint-plugin-prettier": "^5.5.5",
+    "globals": "^17.3.0",
     "husky": "^9.1.7",
-    "jest": "^30.0.5",
-    "lint-staged": "^16.1.5",
-    "prettier": "3.6.2",
-    "semantic-release": "^25.0.2",
+    "jest": "^30.2.0",
+    "lint-staged": "^16.2.7",
+    "prettier": "^3.8.1",
+    "semantic-release": "^25.0.3",
     "sqlite3": "^5.1.7"
   },
   "scripts": {

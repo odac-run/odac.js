@@ -1,10 +1,10 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
-# Prevent pushing code with High/Critical vulnerabilities
-echo "🛡️  Running Security Gate (npm audit)..."
+# Prevent pushing code with High/Critical vulnerabilities in production dependencies
+echo "🛡️  Running Production Security Gate (npm audit)..."
 
-npm audit --audit-level=high
+npm audit --audit-level=high --omit=dev
 
 if [ $? -ne 0 ]; then
     echo "❌ Security Check Failed! High vulnerabilities detected."

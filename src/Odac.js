@@ -64,6 +64,32 @@ module.exports = {
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
 
     if (req) {
+      _odac.setInterval = function (callback, delay, ...args) {
+        const id = setInterval(callback, delay, ...args)
+        if (!_odac._intervals) _odac._intervals = []
+        _odac._intervals.push(id)
+        return id
+      }
+      _odac.setTimeout = function (callback, delay, ...args) {
+        const id = setTimeout(callback, delay, ...args)
+        if (!_odac._timeouts) _odac._timeouts = []
+        _odac._timeouts.push(id)
+        return id
+      }
+      _odac.clearInterval = function (id) {
+        const index = _odac._intervals?.indexOf(id) ?? -1
+        if (index > -1) _odac._intervals.splice(index, 1)
+        clearInterval(id)
+      }
+      _odac.clearTimeout = function (id) {
+        const index = _odac._timeouts?.indexOf(id) ?? -1
+        if (index > -1) _odac._timeouts.splice(index, 1)
+        clearTimeout(id)
+      }
+
+      _odac._intervals = []
+      _odac._timeouts = []
+
       if (typeof req === 'object') {
         _odac.Request = new (require('./Request.js'))(id, req, res, _odac)
         _odac.Auth = new (require('./Auth.js'))(_odac.Request)
@@ -72,29 +98,6 @@ module.exports = {
       _odac.Lang = new (require('./Lang.js'))(_odac)
       if (res) {
         _odac.View = new (require('./View.js'))(_odac)
-      }
-
-      _odac._intervals = []
-      _odac._timeouts = []
-      _odac.setInterval = function (callback, delay, ...args) {
-        const id = setInterval(callback, delay, ...args)
-        _odac._intervals.push(id)
-        return id
-      }
-      _odac.setTimeout = function (callback, delay, ...args) {
-        const id = setTimeout(callback, delay, ...args)
-        _odac._timeouts.push(id)
-        return id
-      }
-      _odac.clearInterval = function (id) {
-        const index = _odac._intervals.indexOf(id)
-        if (index > -1) _odac._intervals.splice(index, 1)
-        clearInterval(id)
-      }
-      _odac.clearTimeout = function (id) {
-        const index = _odac._timeouts.indexOf(id)
-        if (index > -1) _odac._timeouts.splice(index, 1)
-        clearTimeout(id)
       }
       _odac.cleanup = function () {
         for (const id of _odac._intervals) clearInterval(id)
