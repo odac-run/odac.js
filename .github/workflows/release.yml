@@ -72,11 +72,35 @@ jobs:
       - name: Cleanup Actions
         if: always()
         run: rm -rf .github/odac-actions
+
+      - name: Update PR Title
+        uses: actions/github-script@v7
+        if: steps.ai_notes.outcome == 'success'
+        env:
+          AI_TITLE: ${{ steps.ai_notes.outputs.release-title }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+            if (prs.data.length > 0) {
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prs.data[0].number,
+                title: process.env.AI_TITLE
+              });
+            }
+
       - name: Update Release
         uses: softprops/action-gh-release@v1
         if: steps.ai_notes.outcome == 'success' && steps.version.outputs.version != ''
         with:
           tag_name: v${{ steps.version.outputs.version }}
+          name: ${{ steps.ai_notes.outputs.release-title }}
           body_path: RELEASE_NOTE.md
           draft: false
           prerelease: false
