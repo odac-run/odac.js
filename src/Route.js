@@ -72,6 +72,8 @@ class Route {
   _pendingRouteLoads = []
   #wsServer = new WebSocketServer()
   #configCache = {}
+  #paramIndex = {}
+  #paramIndexDirty = false
   #publicCache = {}
   auth = {
     page: (path, authFile, file) => this.authPage(path, authFile, file),
@@ -289,36 +291,94 @@ class Route {
     return Odac.Request.abort(404)
   }
 
+  /**
+   * Resolves a URL to its matching route controller using a two-phase strategy:
+   * Phase 1 — O(1) exact hash-map match for static routes.
+   * Phase 2 — Pre-indexed parametric match grouped by segment count to avoid full iteration.
+   */
   #controller(route, method, url) {
-    if (!this.routes[route] || !this.routes[route][method]) return false
-    if (this.routes[route][method][url]) return this.routes[route][method][url]
-    let arr = url.split('/')
-    for (let key in this.routes[route][method]) {
-      if (!key.includes('{') || !key.includes('}')) continue
-      let route_arr = key.split('/')
-      if (route_arr.length !== arr.length) continue
-      let params = {}
-      let next = false
-      for (let i = 0; i < route_arr.length; i++) {
-        if (route_arr[i].includes('{') && route_arr[i].includes('}')) {
-          params[route_arr[i].replace('{', '').replace('}', '')] = arr[i]
-          arr[i] = route_arr[i]
-        } else if (route_arr[i] !== arr[i]) {
-          next = true
-          break
+    const methodRoutes = this.routes[route]?.[method]
+    if (!methodRoutes) return false
+
+    // Phase 1: O(1) exact match
+    if (methodRoutes[url]) return methodRoutes[url]
+
+    // Phase 2: Parametric match via pre-built index (lazy rebuild on dirty)
+    if (this.#paramIndexDirty) {
+      this.#buildParamIndex()
+      this.#paramIndexDirty = false
+    }
+    const methodIndex = this.#paramIndex[route]?.[method]
+    if (!methodIndex) return false
+
+    const urlSegments = url.split('/')
+    const candidates = methodIndex.get(urlSegments.length)
+    if (!candidates) return false
+
+    candidateLoop: for (const {paramMap, staticChecks, routeObj} of candidates) {
+      for (const {index, value} of staticChecks) {
+        if (urlSegments[index] !== value) continue candidateLoop
+      }
+
+      const params = {}
+      for (const {index, name} of paramMap) {
+        params[name] = urlSegments[index]
+      }
+
+      return {
+        action: routeObj.action,
+        cache: routeObj.cache,
+        file: routeObj.file,
+        middlewares: routeObj.middlewares,
+        params,
+        token: routeObj.token
+      }
+    }
+
+    return false
+  }
+
+  /**
+   * Builds a segment-count-grouped index of parametric routes for O(1) lookup by segment count.
+   * Eliminates per-request string parsing by pre-computing segment metadata at init time.
+   * Called after every route initialization cycle (startup + hot-reload).
+   */
+  #buildParamIndex() {
+    const index = {}
+    for (const route in this.routes) {
+      index[route] = {}
+      for (const method in this.routes[route]) {
+        const methodMap = new Map()
+        for (const key in this.routes[route][method]) {
+          if (!key.includes('{')) continue
+          const routeObj = this.routes[route][method][key]
+          if (!routeObj) continue
+
+          const segments = key.split('/')
+          const paramMap = []
+          const staticChecks = []
+          for (let i = 0; i < segments.length; i++) {
+            if (segments[i].startsWith('{') && segments[i].endsWith('}')) {
+              paramMap.push({index: i, name: segments[i].slice(1, -1)})
+            } else {
+              staticChecks.push({index: i, value: segments[i]})
+            }
+          }
+
+          const count = segments.length
+          let bucket = methodMap.get(count)
+          if (!bucket) {
+            bucket = []
+            methodMap.set(count, bucket)
+          }
+          bucket.push({key, paramMap, routeObj, staticChecks})
+        }
+        if (methodMap.size > 0) {
+          index[route][method] = methodMap
         }
       }
-      if (next) continue
-      if (arr.join('/') === key)
-        return {
-          params: params,
-          cache: this.routes[route][method][key].cache,
-          token: this.routes[route][method][key].token,
-          middlewares: this.routes[route][method][key].middlewares,
-          file: this.routes[route][method][key].file
-        }
     }
-    return false
+    this.#paramIndex = index
   }
 
   async #loadMiddlewares() {
@@ -455,6 +515,7 @@ class Route {
     }
 
     Cron.init()
+    this.#buildParamIndex()
     this.loading = false
   }
 
@@ -676,6 +737,9 @@ class Route {
     }
 
     this._pendingRouteLoads.push(task())
+
+    // Mark parametric index for rebuild when route contains dynamic segments
+    if (url.includes('{')) this.#paramIndexDirty = true
 
     return this
   }
