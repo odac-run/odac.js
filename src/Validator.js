@@ -64,7 +64,6 @@ async function loadDisposableDomains() {
         await fsPromises.rename(tempFile, CACHE_FILE)
       } catch {
         try {
-          await fsPromises.access(CACHE_FILE)
           content = await fsPromises.readFile(CACHE_FILE, 'utf8')
         } catch {
           // No cache file available
