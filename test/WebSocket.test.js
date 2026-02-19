@@ -48,24 +48,30 @@ describe('WebSocketServer', () => {
   })
 
   describe('broadcast', () => {
-    it('should register a route', () => {
-      const handler = jest.fn()
-      server.route('/chat', handler)
-      expect(server.getRoute('/chat').handler).toBe(handler)
+    it('should send message to all connected clients', () => {
+      const client1 = {id: 'c1', send: jest.fn()}
+      const client2 = {id: 'c2', send: jest.fn()}
+
+      server.clients.set('c1', client1)
+      server.clients.set('c2', client2)
+
+      server.broadcast('hello')
+
+      expect(client1.send).toHaveBeenCalledWith('hello')
+      expect(client2.send).toHaveBeenCalledWith('hello')
     })
 
-    it('should return null for unregistered route', () => {
-      expect(server.getRoute('/unknown')).toBeNull()
-    })
+    it('should exclude specified client from broadcast', () => {
+      const client1 = {id: 'c1', send: jest.fn()}
+      const client2 = {id: 'c2', send: jest.fn()}
 
-    it('should match parameterized routes', () => {
-      const handler = jest.fn()
-      server.route('/room/{id}', handler)
+      server.clients.set('c1', client1)
+      server.clients.set('c2', client2)
 
-      const result = server.getRoute('/room/123')
-      expect(result).toBeDefined()
-      expect(result.handler).toBe(handler)
-      expect(result.params).toEqual({id: '123'})
+      server.broadcast('hello', 'c1')
+
+      expect(client1.send).not.toHaveBeenCalled()
+      expect(client2.send).toHaveBeenCalledWith('hello')
     })
   })
 
