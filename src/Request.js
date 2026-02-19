@@ -35,7 +35,11 @@ class OdacRequest {
     if (!Odac.Route.routes[route]) route = 'www'
     this.route = route
     if (this.res) {
-      this.#timeout = setTimeout(() => !this.res.finished && this.abort(408), Odac.Config.request.timeout)
+      if (typeof this.#odac.setTimeout === 'function') {
+        this.#timeout = this.#odac.setTimeout(() => !this.res.finished && this.abort(408), Odac.Config.request.timeout)
+      } else {
+        this.#timeout = setTimeout(() => !this.res.finished && this.abort(408), Odac.Config.request.timeout)
+      }
     }
     this.#data()
     if (!Odac.Request) Odac.Request = {}

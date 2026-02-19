@@ -1,10 +1,10 @@
 const https = require('https')
 const fs = require('fs')
-const os = require('os')
+const fsPromises = fs.promises
 const path = require('path')
 
 let disposableDomains = null
-const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
+const CACHE_FILE = path.join(global.__dir || process.cwd(), 'storage', '.cache', 'odac_disposable_domains.conf')
 const SOURCE_URL = 'https://hub.odac.run/blocklist/disposable-emails'
 
 async function loadDisposableDomains() {
@@ -16,16 +16,16 @@ async function loadDisposableDomains() {
 
   try {
     try {
-      const fd = fs.openSync(CACHE_FILE, 'r')
+      const handle = await fsPromises.open(CACHE_FILE, 'r')
       try {
-        const stats = fs.fstatSync(fd)
+        const stats = await handle.stat()
         const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
         if (ageInHours < 24) {
-          content = fs.readFileSync(fd, 'utf8')
+          content = await handle.readFile('utf8')
           shouldUpdate = false
         }
       } finally {
-        fs.closeSync(fd)
+        await handle.close()
       }
     } catch {
       // Cache error check failed, proceed to validation update
@@ -48,18 +48,25 @@ async function loadDisposableDomains() {
           req.end()
         })
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        const fd = fs.openSync(tempFile, 'wx')
+        await fsPromises.mkdir(path.dirname(CACHE_FILE), {recursive: true})
+        const handle = await fsPromises.open(tempFile, 'wx', 0o600)
         try {
-          // Sanitize content before writing to file to avoid injection attacks
+          // SECURITY NOTE: Supply Chain Attack Mitigation
+          // We strictly sanitize the content fetched from the remote source before writing it to the local file system.
+          // The regex whitelist /[^a-zA-Z0-9.\-\n\r]/g restricts the content to only alphanumeric characters, dots, hyphens, and newlines.
+          // This aggressively neutralizes any potential malicious payloads (e.g., specific code injection, shell commands, or scrips)
+          // even if the remote source (hub.odac.run) is compromised.
           const sanitizedContent = content.replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
-          fs.writeSync(fd, sanitizedContent)
+          await handle.write(sanitizedContent)
         } finally {
-          fs.closeSync(fd)
+          await handle.close()
         }
-        fs.renameSync(tempFile, CACHE_FILE)
+        await fsPromises.rename(tempFile, CACHE_FILE)
       } catch {
-        if (fs.existsSync(CACHE_FILE)) {
-          content = fs.readFileSync(CACHE_FILE, 'utf8')
+        try {
+          content = await fsPromises.readFile(CACHE_FILE, 'utf8')
+        } catch {
+          // No cache file available
         }
       }
     }
@@ -73,7 +80,9 @@ async function loadDisposableDomains() {
       })
     }
   } catch (error) {
-    console.error('Validator Warning: Could not load disposable domains.', error.message)
+    console.error(
+      JSON.stringify({level: 'error', tag: 'ODAC Validator', message: 'Could not load disposable domains.', error: error.message})
+    )
   }
 }
 

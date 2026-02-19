@@ -11,7 +11,7 @@ describe('WebSocketServer', () => {
     it('should register a route', () => {
       const handler = jest.fn()
       server.route('/chat', handler)
-      expect(server.getRoute('/chat')).toBe(handler)
+      expect(server.getRoute('/chat').handler).toBe(handler)
     })
 
     it('should return null for unregistered route', () => {
@@ -48,8 +48,30 @@ describe('WebSocketServer', () => {
   })
 
   describe('broadcast', () => {
-    it('should have broadcast method', () => {
-      expect(typeof server.broadcast).toBe('function')
+    it('should send message to all connected clients', () => {
+      const client1 = {id: 'c1', send: jest.fn()}
+      const client2 = {id: 'c2', send: jest.fn()}
+
+      server.clients.set('c1', client1)
+      server.clients.set('c2', client2)
+
+      server.broadcast('hello')
+
+      expect(client1.send).toHaveBeenCalledWith('hello')
+      expect(client2.send).toHaveBeenCalledWith('hello')
+    })
+
+    it('should exclude specified client from broadcast', () => {
+      const client1 = {id: 'c1', send: jest.fn()}
+      const client2 = {id: 'c2', send: jest.fn()}
+
+      server.clients.set('c1', client1)
+      server.clients.set('c2', client2)
+
+      server.broadcast('hello', 'c1')
+
+      expect(client1.send).not.toHaveBeenCalled()
+      expect(client2.send).toHaveBeenCalledWith('hello')
     })
   })
 
@@ -62,6 +84,122 @@ describe('WebSocketServer', () => {
   describe('cleanup on disconnect', () => {
     it('should be handled by Route.setWs wrapper', () => {
       expect(true).toBe(true)
+    })
+  })
+  describe('maxPayload', () => {
+    it('should close connection if payload exceeds limit', () => {
+      const socket = {
+        pause: jest.fn(),
+        resume: jest.fn(),
+        on: jest.fn(),
+        write: jest.fn(),
+        end: jest.fn(),
+        removeAllListeners: jest.fn()
+      }
+      const {WebSocketClient} = require('../src/WebSocket.js')
+      new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
+
+      // We must send a MASKED frame because server expects masked frames from client
+      const buffer = Buffer.alloc(100)
+      buffer[0] = 0x81 // fin + text
+      buffer[1] = 0x80 | 20 // masked + length 20
+      // Mask key (4 bytes) + Payload (20 bytes) needed but header check happens first
+
+      const dataHandler = socket.on.mock.calls.find(call => call[0] === 'data')[1]
+      dataHandler(buffer)
+
+      expect(socket.end).toHaveBeenCalled()
+      // Verify close frame sent with 1009
+      // socket.write is called to send the Close frame
+      const writeCall = socket.write.mock.calls[0][0]
+      expect(writeCall[2]).toBe(0x03) // 1009 >> 8
+      expect(writeCall[3]).toBe(0xf1) // 1009 & 0xff
+    })
+  })
+
+  describe('rateLimit', () => {
+    it('should close connection if rate limit exceeded', () => {
+      const socket = {
+        pause: jest.fn(),
+        resume: jest.fn(),
+        on: jest.fn(),
+        write: jest.fn(),
+        end: jest.fn(),
+        removeAllListeners: jest.fn()
+      }
+      const {WebSocketClient} = require('../src/WebSocket.js')
+      new WebSocketClient(socket, server, 'test-id', {
+        rateLimit: {max: 2, window: 1000}
+      })
+
+      // Valid MASKED frame (exact size 7 bytes)
+      const buffer = Buffer.alloc(7)
+      buffer[0] = 0x81
+      buffer[1] = 0x80 | 1 // masked + length 1
+      buffer[2] = 0x00
+      buffer[3] = 0x00
+      buffer[4] = 0x00
+      buffer[5] = 0x00 // mask key (0)
+      buffer[6] = 0x61 // 'a' (masked with 0 remains 'a')
+
+      const dataHandler = socket.on.mock.calls.find(call => call[0] === 'data')[1]
+
+      // Send 3 messages (limit is 2)
+      dataHandler(buffer)
+      dataHandler(buffer)
+      dataHandler(buffer)
+
+      expect(socket.end).toHaveBeenCalled()
+      // Verify close frame sent with 1008
+      const writeCalls = socket.write.mock.calls
+      const writeCall = writeCalls[writeCalls.length - 1][0]
+      expect(writeCall[2]).toBe(0x03) // 1008 >> 8
+      expect(writeCall[3]).toBe(0xf0) // 1008 & 0xff
+    })
+
+    it('should reset count after window', done => {
+      const socket = {
+        pause: jest.fn(),
+        resume: jest.fn(),
+        on: jest.fn(),
+        write: jest.fn(),
+        end: jest.fn(),
+        removeAllListeners: jest.fn()
+      }
+      const {WebSocketClient} = require('../src/WebSocket.js')
+      const client = new WebSocketClient(socket, server, 'test-id', {
+        rateLimit: {max: 2, window: 200}
+      })
+
+      const buffer = Buffer.alloc(7)
+      buffer[0] = 0x81
+      buffer[1] = 0x80 | 1
+      buffer[2] = 0x00
+      buffer[3] = 0x00
+      buffer[4] = 0x00
+      buffer[5] = 0x00
+      buffer[6] = 0x61
+
+      const dataHandler = socket.on.mock.calls.find(call => call[0] === 'data')[1]
+
+      // Send 2 messages
+      dataHandler(buffer)
+      dataHandler(buffer)
+      expect(socket.end).not.toHaveBeenCalled()
+
+      setTimeout(() => {
+        // Send 1 more after window reset
+        dataHandler(buffer)
+
+        try {
+          expect(socket.end).not.toHaveBeenCalled()
+          client.close()
+          done()
+        } catch (error) {
+          client.close()
+          done(error)
+        }
+      }, 300)
     })
   })
 })

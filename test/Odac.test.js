@@ -52,23 +52,25 @@ describe('Odac', () => {
 
     it('should create a context object with req/res', () => {
       const mockReq = {url: '/', method: 'GET', headers: {host: 'example.com'}, connection: {remoteAddress: '127.0.0.1'}, on: jest.fn()}
-      const mockRes = {}
+      const mockRes = {writeHead: jest.fn(), end: jest.fn(), finished: false}
       const ctx = Odac.instance('id-123', mockReq, mockRes)
       expect(ctx.Request).toBeDefined()
       expect(ctx.Auth).toBeDefined()
       expect(ctx.Token).toBeDefined()
       expect(ctx.Lang).toBeDefined()
       expect(ctx.View).toBeDefined()
+      ctx.cleanup()
     })
 
     it('should provide helper methods on the context', () => {
       const mockReq = {url: '/', method: 'GET', headers: {host: 'example.com'}, connection: {remoteAddress: '127.0.0.1'}, on: jest.fn()}
-      const mockRes = {end: jest.fn(), write: jest.fn()}
+      const mockRes = {writeHead: jest.fn(), end: jest.fn(), write: jest.fn(), finished: false}
       const ctx = Odac.instance('id-123', mockReq, mockRes)
 
       expect(typeof ctx.env).toBe('function')
       expect(typeof ctx.return).toBe('function')
       expect(typeof ctx.write).toBe('function')
+      ctx.cleanup()
     })
 
     it('should handle Ipc subscription through Proxy', async () => {

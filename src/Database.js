@@ -18,7 +18,7 @@ class DatabaseManager {
       if (db.type === 'postgres' || db.type === 'pg' || db.type === 'postgresql') client = 'pg'
       if (db.type === 'sqlite' || db.type === 'sqlite3') client = 'sqlite3'
 
-      let connectionConfig = {}
+      let connectionConfig
 
       if (client === 'sqlite3') {
         connectionConfig = {

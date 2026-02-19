@@ -240,6 +240,110 @@ describe('Route', () => {
     })
   })
 
+  describe('parametric route matching (#controller via check)', () => {
+    const createMockOdac = (url, method = 'get') => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {},
+      Request: {
+        abort: jest.fn().mockReturnValue('aborted'),
+        cookie: jest.fn(() => null),
+        data: {url: {}},
+        header: jest.fn(() => ''),
+        host: 'example.com',
+        isAjaxLoad: false,
+        method,
+        page: null,
+        res: {finished: false, writableEnded: false},
+        route: 'test_route',
+        setSession: jest.fn(),
+        ssl: false,
+        url
+      },
+      request: jest.fn().mockResolvedValue(null),
+      token: jest.fn().mockReturnValue(true)
+    })
+
+    const setupParamRoute = async (routeInstance, urlPattern, handler) => {
+      global.Odac.Route.buff = 'test_route'
+      routeInstance.set('get', urlPattern, handler, {token: false})
+      await Promise.all(routeInstance._pendingRouteLoads)
+      routeInstance._pendingRouteLoads = []
+    }
+
+    it('should match single parametric segment and extract params', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/users/{id}', handler)
+
+      const mockOdac = createMockOdac('/users/42')
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.id).toBe('42')
+    })
+
+    it('should match multi-parameter route and extract all params', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/users/{userId}/posts/{postId}', handler)
+
+      const mockOdac = createMockOdac('/users/7/posts/99')
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.userId).toBe('7')
+      expect(mockOdac.Request.data.url.postId).toBe('99')
+    })
+
+    it('should not match when static segments differ', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/users/{id}', handler)
+
+      const mockOdac = createMockOdac('/posts/42')
+      await route.check(mockOdac)
+
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('should not match when segment count differs', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/users/{id}', handler)
+
+      const mockOdac = createMockOdac('/users/42/extra')
+      await route.check(mockOdac)
+
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('should correctly match among multiple parametric routes (no arr mutation bug)', async () => {
+      const usersHandler = jest.fn().mockReturnValue({users: true})
+      const postsHandler = jest.fn().mockReturnValue({posts: true})
+
+      await setupParamRoute(route, '/users/{id}', usersHandler)
+      await setupParamRoute(route, '/posts/{id}', postsHandler)
+
+      // Request to /posts/5 should match postsHandler, not usersHandler
+      const mockOdac = createMockOdac('/posts/5')
+      await route.check(mockOdac)
+
+      expect(usersHandler).not.toHaveBeenCalled()
+      expect(postsHandler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.id).toBe('5')
+    })
+
+    it('should prefer exact match over parametric match', async () => {
+      const exactHandler = jest.fn().mockReturnValue({exact: true})
+      const paramHandler = jest.fn().mockReturnValue({param: true})
+
+      await setupParamRoute(route, '/users/admin', exactHandler)
+      await setupParamRoute(route, '/users/{id}', paramHandler)
+
+      const mockOdac = createMockOdac('/users/admin')
+      await route.check(mockOdac)
+
+      expect(exactHandler).toHaveBeenCalled()
+      expect(paramHandler).not.toHaveBeenCalled()
+    })
+  })
+
   describe('WebSocket cleanup', () => {
     it('should call ws() method successfully', () => {
       const handler = jest.fn()

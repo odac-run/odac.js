@@ -9,9 +9,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+
 
 # Logs
 logs/
@@ -32,6 +30,9 @@ dist/
 build/
 tmp/
 temp/
+
+# Storage (runtime data)
+storage/
 
 # Test Coverage
 coverage/

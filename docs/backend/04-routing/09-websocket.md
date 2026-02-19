@@ -188,7 +188,12 @@ If the user is not authenticated, the connection is automatically closed with co
 
 ```javascript
 Odac.Route.ws('/path', handler, {
-  token: true  // Require CSRF token (default: true)
+  token: true,                  // Require CSRF token (default: true)
+  maxPayload: 10 * 1024 * 1024, // Max payload size in bytes (default: 10MB)
+  rateLimit: {                  // Message rate limiting
+    max: 50,                    // Max messages allowed per window (default: 50)
+    window: 1000                // Time window in ms (default: 1000ms)
+  }
 })
 ```
 
@@ -197,6 +202,14 @@ Odac.Route.ws('/path', handler, {
 ```javascript
 // Public WebSocket (no token, no auth)
 Odac.Route.ws('/public', handler, {token: false})
+
+// Large file upload support (50MB limit)
+Odac.Route.ws('/upload', handler, {maxPayload: 50 * 1024 * 1024})
+
+// High-speed game socket (100 msgs/sec)
+Odac.Route.ws('/game', handler, {
+  rateLimit: {max: 100, window: 1000}
+})
 
 // Token required, no auth (default)
 Odac.Route.ws('/chat', handler)

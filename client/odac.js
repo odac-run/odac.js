@@ -23,9 +23,7 @@ class OdacWebSocket {
   connect() {
     if (this.#isClosed) return
 
-    this.#socket = this.#protocols.length > 0 
-      ? new WebSocket(this.#url, this.#protocols) 
-      : new WebSocket(this.#url)
+    this.#socket = this.#protocols.length > 0 ? new WebSocket(this.#url, this.#protocols) : new WebSocket(this.#url)
 
     this.#socket.onopen = () => {
       this.#reconnectAttempts = 0
@@ -43,11 +41,7 @@ class OdacWebSocket {
 
     this.#socket.onclose = e => {
       this.emit('close', e)
-      if (
-        this.#options.autoReconnect && 
-        !this.#isClosed && 
-        this.#reconnectAttempts < this.#options.maxReconnectAttempts
-      ) {
+      if (this.#options.autoReconnect && !this.#isClosed && this.#reconnectAttempts < this.#options.maxReconnectAttempts) {
         this.#reconnectAttempts++
         this.#reconnectTimer = setTimeout(() => this.connect(), this.#options.reconnectDelay)
       }
@@ -112,13 +106,13 @@ if (typeof window !== 'undefined') {
     #formSubmitHandlers = new Map()
     #loader = {elements: {}, callback: null}
     #isNavigating = false
-  
+
     constructor() {
       // In constructor we can't call this.data() easily if it uses 'this' for caching properly before init
       // But based on original code logic:
       this.#data = this.data()
     }
-  
+
     #ajax(options) {
       const {
         url,
@@ -132,19 +126,19 @@ if (typeof window !== 'undefined') {
         contentType = 'application/x-www-form-urlencoded; charset=UTF-8',
         xhr: xhrFactory
       } = options
-  
+
       const xhr = xhrFactory ? xhrFactory() : new XMLHttpRequest()
-  
+
       xhr.open(type, url, true)
-  
+
       Object.keys(headers).forEach(key => {
         xhr.setRequestHeader(key, headers[key])
       })
-  
+
       if (contentType && !(data instanceof FormData)) {
         xhr.setRequestHeader('Content-Type', contentType)
       }
-  
+
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           let responseData = xhr.responseText
@@ -157,42 +151,42 @@ if (typeof window !== 'undefined') {
               return
             }
           }
-  
+
           document.dispatchEvent(
             new CustomEvent('odac:ajaxSuccess', {
               detail: {response: responseData, status: xhr.statusText, xhr, requestUrl: url}
             })
           )
-  
+
           success(responseData, xhr.statusText, xhr)
         } else {
           error(xhr, xhr.statusText)
         }
       }
-  
+
       xhr.onerror = () => error(xhr, 'error')
       xhr.onloadend = () => complete()
       xhr.send(data)
     }
-  
+
     #fade(element, type, duration = 400, callback) {
       const isIn = type === 'in'
       const startOpacity = isIn ? 0 : 1
       const endOpacity = isIn ? 1 : 0
-  
+
       element.style.opacity = startOpacity
       if (isIn) {
         element.style.display = 'block'
       }
-  
+
       let startTime = null
-  
+
       const animate = currentTime => {
         if (!startTime) startTime = currentTime
         const progress = currentTime - startTime
         const opacity = startOpacity + (endOpacity - startOpacity) * Math.min(progress / duration, 1)
         element.style.opacity = opacity
-  
+
         if (progress < duration) {
           requestAnimationFrame(animate)
         } else {
@@ -204,15 +198,15 @@ if (typeof window !== 'undefined') {
       }
       requestAnimationFrame(animate)
     }
-  
+
     #fadeIn(element, duration, callback) {
       this.#fade(element, 'in', duration, callback)
     }
-  
+
     #fadeOut(element, duration, callback) {
       this.#fade(element, 'out', duration, callback)
     }
-  
+
     #on(element, event, selector, handler) {
       element.addEventListener(event, e => {
         let target = e.target.closest(selector)
@@ -221,7 +215,7 @@ if (typeof window !== 'undefined') {
         }
       })
     }
-  
+
     #serialize(form) {
       const params = []
       form.querySelectorAll('input, select, textarea').forEach(el => {
@@ -243,22 +237,21 @@ if (typeof window !== 'undefined') {
       })
       return params.join('&')
     }
-  
+
     action(obj) {
       if (obj.function) for (let func in obj.function) this.fn[func] = obj.function[func]
-  
+
       if (obj.navigate !== undefined && obj.navigate !== false) {
         let selector, elements, callback
-  
+
         if (typeof obj.navigate === 'string') {
           selector = 'a[href^="/"]:not([data-navigate="false"]):not(.no-navigate)'
           elements = {content: obj.navigate}
           callback = null
-        }
-        else if (typeof obj.navigate === 'object') {
+        } else if (typeof obj.navigate === 'object') {
           let baseSelector = obj.navigate.links || obj.navigate.selector || 'a[href^="/"]'
           selector = `${baseSelector}:not([data-navigate="false"]):not(.no-navigate)`
-  
+
           if (obj.navigate.update) {
             elements = typeof obj.navigate.update === 'string' ? {content: obj.navigate.update} : obj.navigate.update
           } else if (obj.navigate.elements) {
@@ -266,15 +259,14 @@ if (typeof window !== 'undefined') {
           } else {
             elements = {content: 'main'}
           }
-  
+
           callback = obj.navigate.on || obj.navigate.callback || null
-        }
-        else if (obj.navigate === true) {
+        } else if (obj.navigate === true) {
           selector = 'a[href^="/"]:not([data-navigate="false"]):not(.no-navigate)'
           elements = {content: 'main'}
           callback = null
         }
-  
+
         if (document.readyState === 'loading') {
           document.addEventListener('DOMContentLoaded', () => {
             this.loader(selector, elements, callback)
@@ -283,7 +275,7 @@ if (typeof window !== 'undefined') {
           this.loader(selector, elements, callback)
         }
       }
-  
+
       if (obj.start) document.addEventListener('DOMContentLoaded', () => obj.start())
       if (obj.load) {
         if (!this.actions.load) this.actions.load = []
@@ -312,12 +304,11 @@ if (typeof window !== 'undefined') {
           if (typeof obj[key][key2] == 'function') {
             this.#on(document, key, key2, obj[key][key2])
           } else {
-            let func = ''
             let split = ''
             if (obj[key][key2].includes('.')) split = '.'
             else if (obj[key][key2].includes('#')) split = '#'
             else if (obj[key][key2].includes(' ')) split = ' '
-            func = split != '' ? obj[key][key2].split(split) : [obj[key][key2]]
+            const func = split != '' ? obj[key][key2].split(split) : [obj[key][key2]]
             if (func != '') {
               let getfunc = obj
               func.forEach(function (item) {
@@ -329,12 +320,12 @@ if (typeof window !== 'undefined') {
         }
       }
     }
-  
+
     client() {
       if (!document.cookie.includes('odac_client=')) return null
       return document.cookie.split('odac_client=')[1].split(';')[0]
     }
-  
+
     data(key) {
       if (!this.#data) {
         const script = document.getElementById('odac-data')
@@ -346,30 +337,30 @@ if (typeof window !== 'undefined') {
           }
         }
       }
-      
+
       if (this.#data) {
         if (key) return this.#data[key] ?? null
         return this.#data
       }
-      
+
       return null
     }
-  
+
     form(obj, callback) {
       if (typeof obj != 'object') obj = {form: obj}
       const formSelector = obj.form
-  
+
       if (this.#formSubmitHandlers.has(formSelector)) {
         const oldHandler = this.#formSubmitHandlers.get(formSelector)
         document.removeEventListener('submit', oldHandler)
       }
-  
+
       const handler = e => {
         const formElement = e.target.closest(formSelector)
         if (!formElement) return
-  
+
         e.preventDefault()
-  
+
         if (obj.messages !== false) {
           if (obj.messages == undefined || obj.messages == true || obj.messages.includes('error')) {
             formElement.querySelectorAll('*[odac-form-error]').forEach(el => (el.style.display = 'none'))
@@ -378,29 +369,31 @@ if (typeof window !== 'undefined') {
             formElement.querySelectorAll('*[odac-form-success]').forEach(el => (el.style.display = 'none'))
           }
         }
-  
+
         const inputs = formElement.querySelectorAll('input:not([type="hidden"]), textarea, select')
         let isValid = true
         let firstInvalidInput = null
-  
+
         const showError = (input, errorType) => {
           isValid = false
           firstInvalidInput = input
-  
+
           if (input.type !== 'checkbox' && input.type !== 'radio') {
             input.style.borderColor = '#dc3545'
           }
-  
+
           const customMessage = input.getAttribute(`data-error-${errorType}`)
           if (customMessage) {
             let errorSpan = formElement.querySelector(`[odac-form-error="${input.name}"]`)
-  
+
             if (!errorSpan) {
               errorSpan = document.createElement('span')
               errorSpan.setAttribute('odac-form-error', input.name)
               if ((input.type === 'checkbox' || input.type === 'radio') && input.id) {
                 const label = formElement.querySelector(`label[for="${input.id}"]`)
-                label ? label.parentNode.insertBefore(errorSpan, label.nextSibling) : input.parentNode.insertBefore(errorSpan, input.nextSibling)
+                label
+                  ? label.parentNode.insertBefore(errorSpan, label.nextSibling)
+                  : input.parentNode.insertBefore(errorSpan, input.nextSibling)
               } else {
                 input.parentNode.insertBefore(errorSpan, input.nextSibling)
               }
@@ -409,7 +402,7 @@ if (typeof window !== 'undefined') {
             errorSpan.style.cssText = 'display:block;color:#dc3545;font-size:0.875rem;margin-top:0.25rem'
           }
         }
-  
+
         for (const input of inputs) {
           input.style.borderColor = ''
           const errorSpan = formElement.querySelector(`[odac-form-error="${input.name}"]`)
@@ -417,49 +410,62 @@ if (typeof window !== 'undefined') {
             errorSpan.style.display = 'none'
             errorSpan.textContent = ''
           }
-  
+
           if (input.hasAttribute('required')) {
             const isEmpty = input.type === 'checkbox' || input.type === 'radio' ? !input.checked : !input.value.trim()
-            if (isEmpty) { showError(input, 'required'); break; }
+            if (isEmpty) {
+              showError(input, 'required')
+              break
+            }
           }
-  
+
           if (input.hasAttribute('minlength') && input.value && input.value.trim().length < parseInt(input.getAttribute('minlength'))) {
-            showError(input, 'minlength'); break;
+            showError(input, 'minlength')
+            break
           }
-  
+
           if (input.hasAttribute('maxlength') && input.value && input.value.trim().length > parseInt(input.getAttribute('maxlength'))) {
-            showError(input, 'maxlength'); break;
+            showError(input, 'maxlength')
+            break
           }
-  
+
           if (input.hasAttribute('pattern') && input.value) {
-            if (!new RegExp(input.getAttribute('pattern')).test(input.value.trim())) { showError(input, 'pattern'); break; }
+            if (!new RegExp(input.getAttribute('pattern')).test(input.value.trim())) {
+              showError(input, 'pattern')
+              break
+            }
           }
-  
+
           if (input.type === 'email' && input.value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value.trim())) {
-            showError(input, 'email'); break;
+            showError(input, 'email')
+            break
           }
         }
-  
+
         if (!isValid) {
           if (firstInvalidInput) firstInvalidInput.focus()
           return
         }
-  
+
         if (this.actions.odac?.form?.input?.class?.invalid) {
           const invalidClass = this.actions.odac.form.input.class.invalid
           formElement.querySelectorAll(`.${invalidClass}`).forEach(el => el.classList.remove(invalidClass))
         }
-  
+
         let datastring, cache, contentType, processData
         if (formElement.querySelector('input[type=file]')) {
           datastring = new FormData(formElement)
           datastring.append('token', this.token())
-          cache = false; contentType = false; processData = false
+          cache = false
+          contentType = false
+          processData = false
         } else {
           datastring = this.#serialize(formElement) + '&_token=' + this.token()
-          cache = true; contentType = 'application/x-www-form-urlencoded; charset=UTF-8'; processData = true
+          cache = true
+          contentType = 'application/x-www-form-urlencoded; charset=UTF-8'
+          processData = true
         }
-  
+
         const submitButtons = formElement.querySelectorAll('button[type="submit"], input[type="submit"]')
         submitButtons.forEach(btn => {
           btn.disabled = true
@@ -469,9 +475,9 @@ if (typeof window !== 'undefined') {
             btn.textContent = loadingText
           }
         })
-  
+
         formElement.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => (el.disabled = true))
-  
+
         this.#ajax({
           type: formElement.getAttribute('method'),
           url: formElement.getAttribute('action'),
@@ -494,32 +500,36 @@ if (typeof window !== 'undefined') {
                   span.innerHTML = this.textToHtml(data.result.message)
                   formElement.appendChild(span)
                 }
-  
+
                 if (data.result._token) {
-                   const tokenInput = formElement.querySelector('input[name="_odac_form_token"]')
-                   if (tokenInput) tokenInput.value = data.result._token
-                   
-                   const formTokenAttr = formElement.getAttribute('data-odac-form')
-                   if (formTokenAttr) {
-                     formElement.setAttribute('data-odac-form', data.result._token)
-                     if (!formElement.matches(formSelector)) {
-                       if (this.#formSubmitHandlers.has(formSelector)) {
-                         document.removeEventListener('submit', this.#formSubmitHandlers.get(formSelector))
-                         this.#formSubmitHandlers.delete(formSelector)
-                       }
-                       const newObj = {...obj, form: `form[data-odac-form="${data.result._token}"]`}
-                       this.form(newObj, callback)
-                     }
-                   }
+                  const tokenInput = formElement.querySelector('input[name="_odac_form_token"]')
+                  if (tokenInput) tokenInput.value = data.result._token
+
+                  const formTokenAttr = formElement.getAttribute('data-odac-form')
+                  if (formTokenAttr) {
+                    formElement.setAttribute('data-odac-form', data.result._token)
+                    if (!formElement.matches(formSelector)) {
+                      if (this.#formSubmitHandlers.has(formSelector)) {
+                        document.removeEventListener('submit', this.#formSubmitHandlers.get(formSelector))
+                        this.#formSubmitHandlers.delete(formSelector)
+                      }
+                      const newObj = {...obj, form: `form[data-odac-form="${data.result._token}"]`}
+                      this.form(newObj, callback)
+                    }
+                  }
                 }
-                 
-                 if (obj.clear !== false && formElement.getAttribute('clear') !== 'false' && !data.result.redirect) {
-                    formElement.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([readonly]), textarea, select').forEach(el => {
-                        if (el.type === 'checkbox' || el.type === 'radio') el.checked = false
-                        else if (el.tagName === 'SELECT') el.selectedIndex = 0
-                        else el.value = ''
+
+                if (obj.clear !== false && formElement.getAttribute('clear') !== 'false' && !data.result.redirect) {
+                  formElement
+                    .querySelectorAll(
+                      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([readonly]), textarea, select'
+                    )
+                    .forEach(el => {
+                      if (el.type === 'checkbox' || el.type === 'radio') el.checked = false
+                      else if (el.tagName === 'SELECT') el.selectedIndex = 0
+                      else el.value = ''
                     })
-                 }
+                }
               } else if (!data.result.success && data.errors) {
                 Object.entries(data.errors).forEach(([name, message]) => {
                   if (message) {
@@ -537,10 +547,12 @@ if (typeof window !== 'undefined') {
                         errorEl.setAttribute('odac-form-error', name)
                         errorEl.innerHTML = this.textToHtml(message)
                         errorEl.style.cssText = 'display:block;color:#dc3545;font-size:0.875rem;margin-top:0.25rem'
-                        
+
                         if ((inputEl.type === 'checkbox' || inputEl.type === 'radio') && inputEl.id) {
                           const label = formElement.querySelector(`label[for="${inputEl.id}"]`)
-                          label ? label.parentNode.insertBefore(errorEl, label.nextSibling) : inputEl.parentNode.insertBefore(errorEl, inputEl.nextSibling)
+                          label
+                            ? label.parentNode.insertBefore(errorEl, label.nextSibling)
+                            : inputEl.parentNode.insertBefore(errorEl, inputEl.nextSibling)
                         } else {
                           inputEl.parentNode.insertBefore(errorEl, inputEl.nextSibling)
                         }
@@ -559,12 +571,19 @@ if (typeof window !== 'undefined') {
                   const inputEl = formElement.querySelector(`*[name="${name}"]`)
                   if (inputEl) {
                     if (inputEl.type !== 'checkbox' && inputEl.type !== 'radio') inputEl.style.borderColor = '#dc3545'
-                    inputEl.addEventListener('focus', function handler() {
+                    inputEl.addEventListener(
+                      'focus',
+                      function handler() {
                         inputEl.style.borderColor = ''
                         const errorEl = formElement.querySelector(`[odac-form-error="${name}"]`)
-                        if (errorEl) { errorEl.style.display = 'none'; errorEl.textContent = '' }
+                        if (errorEl) {
+                          errorEl.style.display = 'none'
+                          errorEl.textContent = ''
+                        }
                         inputEl.removeEventListener('focus', handler)
-                    }, {once: true})
+                      },
+                      {once: true}
+                    )
                   }
                 })
               }
@@ -578,9 +597,13 @@ if (typeof window !== 'undefined') {
           },
           xhr: () => {
             var xhr = new window.XMLHttpRequest()
-            xhr.upload.addEventListener('progress', evt => {
-              if (evt.lengthComputable && obj.loading) obj.loading(parseInt((100 / evt.total) * evt.loaded))
-            }, false)
+            xhr.upload.addEventListener(
+              'progress',
+              evt => {
+                if (evt.lengthComputable && obj.loading) obj.loading(parseInt((100 / evt.total) * evt.loaded))
+              },
+              false
+            )
             return xhr
           },
           error: () => console.error('Odac:', 'Request failed', '\nForm: ' + obj.form + '\nRequest: ' + formElement.getAttribute('action')),
@@ -588,35 +611,38 @@ if (typeof window !== 'undefined') {
             submitButtons.forEach(btn => {
               btn.disabled = false
               const originalText = btn.getAttribute('data-original-text')
-              if (originalText) { btn.textContent = originalText; btn.removeAttribute('data-original-text') }
+              if (originalText) {
+                btn.textContent = originalText
+                btn.removeAttribute('data-original-text')
+              }
             })
             formElement.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => (el.disabled = false))
           }
         })
       }
-  
+
       document.addEventListener('submit', handler)
       this.#formSubmitHandlers.set(formSelector, handler)
     }
-  
+
     get(url, callback) {
       url = url + '?_token=' + this.token()
       this.#ajax({url: url, success: callback})
     }
-  
+
     page() {
       if (!this.#page) {
         this.#page = document.documentElement.dataset.odacPage || ''
       }
       return this.#page
     }
-  
+
     storage(key, value) {
       if (value === undefined) return localStorage.getItem(key)
       else if (value === null) return localStorage.removeItem(key)
       else localStorage.setItem(key, value)
     }
-  
+
     token() {
       if (!this.#token.listener) {
         document.addEventListener('odac:ajaxSuccess', event => {
@@ -625,8 +651,8 @@ if (typeof window !== 'undefined') {
           try {
             const token = detail.xhr.getResponseHeader('X-Odac-Token')
             if (token) {
-               this.#token.hash.push(token)
-               if (this.#token.hash.length > 2) this.#token.hash.shift()
+              this.#token.hash.push(token)
+              if (this.#token.hash.length > 2) this.#token.hash.shift()
             }
           } catch (e) {
             console.error('Error in ajaxSuccess token handler:', e)
@@ -657,55 +683,66 @@ if (typeof window !== 'undefined') {
         })
       return return_token
     }
-  
+
     textToHtml(str) {
       if (typeof str !== 'string') return str
       return str
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#039;').replace(/\n/g, '<br>')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+        .replace(/\n/g, '<br>')
     }
-  
+
     load(url, callback, push = true) {
       if (this.#isNavigating) return false
-  
+
       const currentUrl = window.location.href
       url = new URL(url, currentUrl).href
-      if (url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.includes('#')) return false
-  
+      if (url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.includes('#'))
+        return false
+
       this.#isNavigating = true
-  
+
       const currentSkeleton = document.documentElement.dataset.odacSkeleton
       const elements = Object.entries(this.#loader.elements)
-  
+
       const elementsToUpdate = []
       elements.forEach(([key, selector]) => {
         const element = document.querySelector(selector)
         if (element) elementsToUpdate.push({key, element})
       })
-  
-      let ajaxData = null, ajaxXhr = null, fadeOutComplete = false, ajaxComplete = false
-  
+
+      let ajaxData = null,
+        ajaxXhr = null,
+        fadeOutComplete = false,
+        ajaxComplete = false
+
       const applyUpdate = () => {
         if (!fadeOutComplete || !ajaxComplete || !ajaxData) return
-  
+
         const finalUrl = ajaxXhr.responseURL || url
-        if (ajaxData.skeletonChanged) { window.location.href = finalUrl; return }
+        if (ajaxData.skeletonChanged) {
+          window.location.href = finalUrl
+          return
+        }
         if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
-  
+
         const newPage = ajaxXhr.getResponseHeader('X-Odac-Page')
         if (newPage !== null) {
           this.#page = newPage
           document.documentElement.dataset.odacPage = newPage
         }
-  
+
         if (ajaxData.data) this.#data = ajaxData.data
         if (ajaxData.title) document.title = ajaxData.title
-  
+
         if (elementsToUpdate.length === 0) {
           this.#handleLoadComplete(ajaxData, callback)
           return
         }
-  
+
         let completed = 0
         elementsToUpdate.forEach(({key, element}) => {
           if (ajaxData.output && ajaxData.output[key] !== undefined) element.innerHTML = ajaxData.output[key]
@@ -715,7 +752,7 @@ if (typeof window !== 'undefined') {
           })
         })
       }
-  
+
       if (elementsToUpdate.length > 0) {
         let fadeOutCount = 0
         elementsToUpdate.forEach(({element}) => {
@@ -730,7 +767,7 @@ if (typeof window !== 'undefined') {
       } else {
         fadeOutComplete = true
       }
-  
+
       this.#ajax({
         url: url,
         type: 'GET',
@@ -741,7 +778,10 @@ if (typeof window !== 'undefined') {
         },
         dataType: 'json',
         success: (data, status, xhr) => {
-          ajaxData = data; ajaxXhr = xhr; ajaxComplete = true; applyUpdate()
+          ajaxData = data
+          ajaxXhr = xhr
+          ajaxComplete = true
+          applyUpdate()
         },
         error: () => {
           this.#isNavigating = false
@@ -749,52 +789,72 @@ if (typeof window !== 'undefined') {
         }
       })
     }
-  
+
     #handleLoadComplete(data, callback) {
-      if (this.actions.load) (Array.isArray(this.actions.load) ? this.actions.load : [this.actions.load]).forEach(fn => fn(this.page(), data.variables))
-      if (this.actions.page && this.actions.page[this.page()]) (Array.isArray(this.actions.page[this.page()]) ? this.actions.page[this.page()] : [this.actions.page[this.page()]]).forEach(fn => fn(data.variables))
-      
+      if (this.actions.load)
+        (Array.isArray(this.actions.load) ? this.actions.load : [this.actions.load]).forEach(fn => fn(this.page(), data.variables))
+      if (this.actions.page && this.actions.page[this.page()])
+        (Array.isArray(this.actions.page[this.page()]) ? this.actions.page[this.page()] : [this.actions.page[this.page()]]).forEach(fn =>
+          fn(data.variables)
+        )
+
       if (callback && typeof callback === 'function') callback(this.page(), data.variables)
-      
+
       window.scrollTo({top: 0, behavior: 'smooth'})
       this.#isNavigating = false
     }
-  
+
     loader(selector, elements, callback) {
       this.#loader.elements = elements
       this.#loader.callback = callback
       const odacInstance = this
-  
+
       this.#on(document, 'click', selector, function (e) {
         if (e.ctrlKey || e.metaKey) return
         const anchor = this
         if (!anchor) return
         const url = anchor.getAttribute('href')
         const target = anchor.getAttribute('target')
-        if (!url || url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.startsWith('#')) return
+        if (
+          !url ||
+          url === '' ||
+          url.startsWith('javascript:') ||
+          url.startsWith('data:') ||
+          url.startsWith('vbscript:') ||
+          url.startsWith('#')
+        )
+          return
         const isExternal = url.includes('://') && !url.includes(window.location.host)
         if ((target === null || target === '_self') && !isExternal) {
           e.preventDefault()
           odacInstance.load(url, callback)
         }
       })
-  
+
       window.addEventListener('popstate', () => {
         this.load(window.location.href, callback, false)
       })
     }
-  
+
     listen(url, onMessage, options = {}) {
       const {onError = null, onOpen = null, autoReconnect = false, reconnectDelay = 3000} = options
-      let eventSource = null, reconnectTimer = null, isClosed = false
-  
+      let eventSource = null,
+        reconnectTimer = null,
+        isClosed = false
+
       const connect = () => {
         if (isClosed) return
         const urlWithToken = url + (url.includes('?') ? '&' : '?') + '_token=' + encodeURIComponent(this.token())
         eventSource = new EventSource(urlWithToken)
-        eventSource.onopen = e => { if (onOpen) onOpen(e) }
+        eventSource.onopen = e => {
+          if (onOpen) onOpen(e)
+        }
         eventSource.onmessage = e => {
-          try { onMessage(JSON.parse(e.data)) } catch { onMessage(e.data) }
+          try {
+            onMessage(JSON.parse(e.data))
+          } catch {
+            onMessage(e.data)
+          }
         }
         eventSource.onerror = e => {
           if (onError) onError(e)
@@ -805,24 +865,26 @@ if (typeof window !== 'undefined') {
         }
       }
       connect()
-  
+
       return {
         close: () => {
           isClosed = true
           if (reconnectTimer) clearTimeout(reconnectTimer)
           if (eventSource) eventSource.close()
         },
-        send: () => { throw new Error('SSE is one-way. Use POST requests to send data.') }
+        send: () => {
+          throw new Error('SSE is one-way. Use POST requests to send data.')
+        }
       }
     }
-  
+
     ws(path, options = {}) {
       const {autoReconnect = true, reconnectDelay = 3000, maxReconnectAttempts = 10, shared = false, token = true} = options
-  
+
       if (shared && typeof SharedWorker !== 'undefined') {
         return this.#createSharedWebSocket(path, {autoReconnect, reconnectDelay, maxReconnectAttempts, token})
       }
-  
+
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsUrl = `${protocol}//${window.location.host}${path}`
       const protocols = []
@@ -830,10 +892,10 @@ if (typeof window !== 'undefined') {
         const csrfToken = this.token()
         if (csrfToken) protocols.push(`odac-token-${csrfToken}`)
       }
-  
+
       return new OdacWebSocket(wsUrl, protocols, options)
     }
-  
+
     #createSharedWebSocket(path, options) {
       const scriptUrl = (() => {
         if (document.currentScript) return document.currentScript.src
@@ -846,11 +908,11 @@ if (typeof window !== 'undefined') {
       const worker = new SharedWorker(scriptUrl, `odac-ws-${path}`)
       const handlers = {}
       let isConnected = false
-  
+
       const emit = (event, ...args) => {
         if (handlers[event]) handlers[event].forEach(fn => fn(...args))
       }
-  
+
       worker.port.onmessage = e => {
         const {type, data} = e.data
         switch (type) {
@@ -870,11 +932,11 @@ if (typeof window !== 'undefined') {
             break
         }
       }
-  
+
       worker.port.start()
-  
+
       const token = options.token ? this.token() : null
-  
+
       worker.port.postMessage({
         type: 'connect',
         path,
@@ -883,7 +945,7 @@ if (typeof window !== 'undefined') {
         token,
         options
       })
-  
+
       return {
         on: (event, handler) => {
           if (!handlers[event]) handlers[event] = []
@@ -916,9 +978,8 @@ if (typeof window !== 'undefined') {
       }
     }
   }
-  
+
   window.Odac = new _odac()
-  
   ;(function initAutoNavigate() {
     const init = () => {
       const contentEl = document.querySelector('[data-odac-navigate="content"]')
@@ -928,9 +989,9 @@ if (typeof window !== 'undefined') {
     }
     document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init()
   })()
-  
+
   document.addEventListener('DOMContentLoaded', () => {
-    ['register', 'login'].forEach(type => {
+    ;['register', 'login'].forEach(type => {
       document.querySelectorAll(`form.odac-${type}-form[data-odac-${type}]`).forEach(form => {
         const token = form.getAttribute(`data-odac-${type}`)
         window.Odac.form({form: `form[data-odac-${type}="${token}"]`})
@@ -965,8 +1026,8 @@ if (typeof window !== 'undefined') {
             socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
             socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
           } else if (socket.connected) {
-             // If already connected, notify the new port immediately
-             port.postMessage({type: 'open'})
+            // If already connected, notify the new port immediately
+            port.postMessage({type: 'open'})
           }
           break
         case 'send':
