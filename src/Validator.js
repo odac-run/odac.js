@@ -1,11 +1,10 @@
 const https = require('https')
 const fs = require('fs')
 const fsPromises = fs.promises
-const os = require('os')
 const path = require('path')
 
 let disposableDomains = null
-const CACHE_FILE = path.join(os.tmpdir(), 'odac_disposable_domains.conf')
+const CACHE_FILE = path.join(global.__dir || process.cwd(), 'storage', '.cache', 'odac_disposable_domains.conf')
 const SOURCE_URL = 'https://hub.odac.run/blocklist/disposable-emails'
 
 async function loadDisposableDomains() {
@@ -49,6 +48,7 @@ async function loadDisposableDomains() {
           req.end()
         })
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        await fsPromises.mkdir(path.dirname(CACHE_FILE), {recursive: true})
         const handle = await fsPromises.open(tempFile, 'wx')
         try {
           // SECURITY NOTE: Supply Chain Attack Mitigation
@@ -81,7 +81,9 @@ async function loadDisposableDomains() {
       })
     }
   } catch (error) {
-    console.error('Validator Warning: Could not load disposable domains.', error.message)
+    console.error(
+      JSON.stringify({level: 'error', tag: 'ODAC Validator', message: 'Could not load disposable domains.', error: error.message})
+    )
   }
 }
 
