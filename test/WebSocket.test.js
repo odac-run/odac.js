@@ -91,7 +91,7 @@ describe('WebSocketServer', () => {
         removeAllListeners: jest.fn()
       }
       const {WebSocketClient} = require('../src/WebSocket.js')
-      const client = new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
+      new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
 
       // We must send a MASKED frame because server expects masked frames from client
       const buffer = Buffer.alloc(100)
@@ -122,7 +122,7 @@ describe('WebSocketServer', () => {
         removeAllListeners: jest.fn()
       }
       const {WebSocketClient} = require('../src/WebSocket.js')
-      const client = new WebSocketClient(socket, server, 'test-id', {
+      new WebSocketClient(socket, server, 'test-id', {
         rateLimit: {max: 2, window: 1000}
       })
 
