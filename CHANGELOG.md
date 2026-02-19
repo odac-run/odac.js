@@ -1,3 +1,35 @@
+### ⚙️ Engine Tuning
+
+- Improve disposable domain cache management by relocating the cache path, ensuring directory existence, and standardizing error logging.
+- Migrate file system operations in Mail and View to use async `fs.promises` for non-blocking I/O, aligning with new memory.md guidelines.
+- remove unused `WebSocketClient` variable assignments in `WebSocket.test.js`
+- streamline cache file reading by removing redundant access check.
+- **validator:** Migrate file operations to `fs.promises` for asynchronous I/O and enhance security with explicit content sanitization.
+
+### ⚡️ Performance Upgrades
+
+- Optimize parametric route matching by implementing a two-phase, pre-indexed lookup strategy grouped by segment count.
+
+### ✨ What's New
+
+- Add configurable max payload size and message rate limiting options to WebSocket routes.
+- Refined pre-push security audit to omit dev dependencies, optimized variable initializations, enhanced test mocks with `writeHead` and `finished` properties, introduced conditional `setTimeout` for request handling, and improved code formatting in client-side WebSocket and AJAX logic.
+- update `.gitignore` to no longer ignore package manager lock files and to ignore the `storage/` directory
+
+### 🛠️ Fixes & Improvements
+
+- Enhance route directory not found error logging and add ODAC casing convention to memory rules.
+- Set owner-only read/write permissions (0o600) for temporary cache files created during validation.
+- suppress tailwind process stdout output
+- Update default Unix socket path and enhance socket connection error handling with specific guidance for `ENOENT` errors.
+- Update Tailwind CSS watch flag to '--watch=always' and refine child process stdio configuration.
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### agent
 
 - Clarify logging strategies for development and production environments
