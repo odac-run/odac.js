@@ -49,7 +49,7 @@ async function loadDisposableDomains() {
         })
         const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
         await fsPromises.mkdir(path.dirname(CACHE_FILE), {recursive: true})
-        const handle = await fsPromises.open(tempFile, 'wx')
+        const handle = await fsPromises.open(tempFile, 'wx', 0o600)
         try {
           // SECURITY NOTE: Supply Chain Attack Mitigation
           // We strictly sanitize the content fetched from the remote source before writing it to the local file system.
