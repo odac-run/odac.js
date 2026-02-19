@@ -275,7 +275,7 @@ describe('Route', () => {
       await setupParamRoute(route, '/users/{id}', handler)
 
       const mockOdac = createMockOdac('/users/42')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(handler).toHaveBeenCalled()
       expect(mockOdac.Request.data.url.id).toBe('42')
@@ -286,7 +286,7 @@ describe('Route', () => {
       await setupParamRoute(route, '/users/{userId}/posts/{postId}', handler)
 
       const mockOdac = createMockOdac('/users/7/posts/99')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(handler).toHaveBeenCalled()
       expect(mockOdac.Request.data.url.userId).toBe('7')
@@ -298,7 +298,7 @@ describe('Route', () => {
       await setupParamRoute(route, '/users/{id}', handler)
 
       const mockOdac = createMockOdac('/posts/42')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(handler).not.toHaveBeenCalled()
     })
@@ -308,7 +308,7 @@ describe('Route', () => {
       await setupParamRoute(route, '/users/{id}', handler)
 
       const mockOdac = createMockOdac('/users/42/extra')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(handler).not.toHaveBeenCalled()
     })
@@ -322,7 +322,7 @@ describe('Route', () => {
 
       // Request to /posts/5 should match postsHandler, not usersHandler
       const mockOdac = createMockOdac('/posts/5')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(usersHandler).not.toHaveBeenCalled()
       expect(postsHandler).toHaveBeenCalled()
@@ -337,7 +337,7 @@ describe('Route', () => {
       await setupParamRoute(route, '/users/{id}', paramHandler)
 
       const mockOdac = createMockOdac('/users/admin')
-      const result = await route.check(mockOdac)
+      await route.check(mockOdac)
 
       expect(exactHandler).toHaveBeenCalled()
       expect(paramHandler).not.toHaveBeenCalled()
