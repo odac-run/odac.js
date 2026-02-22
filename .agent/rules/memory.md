@@ -40,3 +40,6 @@ trigger: always_on
 - **Mandatory Test Coverage:** Every new feature, method, or significant logic change MUST be accompanied by a corresponding unit or integration test.
     - **Verify Correctness:** do not assume code works; prove it with a test that covers both success and failure scenarios (e.g., edge cases, error conditions).
     - **Update Existing Tests:** If a feature modifies existing behavior, update the relevant tests to reflect the new logic and ensure they pass.
+
+## Client Library (odac.js)
+- **Automatic JSON Parsing:** The `#ajax` method (and by extension `odac.get`) must automatically parse the response if the `Content-Type` header contains `application/json`, even if `dataType` is not explicitly set to `json`.
