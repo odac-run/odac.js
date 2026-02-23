@@ -58,6 +58,7 @@ class View {
       function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
       end: '}}',
       arguments: {
+        in: null,
         var: null,
         get: null,
         key: 'key',
@@ -83,6 +84,7 @@ class View {
     },
     list: {
       arguments: {
+        in: null,
         var: null,
         get: null,
         key: 'key',
@@ -453,12 +455,15 @@ class View {
           let fun = func.function
 
           if (key === 'for' || key === 'list') {
-            if (!vars.var && !vars.get) {
-              console.error(`"var" or "get" is required for "${match}"\n  in "${file}"`)
+            if (!vars.var && !vars.get && !vars.in) {
+              console.error(`"var", "get" or "in" is required for "${match}"\n  in "${file}"`)
               continue
             }
             let constructor
-            if (vars.var) {
+            if (vars.in) {
+              constructor = `await ${vars.in}`
+              delete vars.in
+            } else if (vars.var) {
               constructor = `await ${vars.var}`
               delete vars.var
             } else if (vars.get) {
