@@ -3,6 +3,7 @@ class Auth {
   #request = null
   #table = null
   #user = null
+  static #migrationCache = new Set()
 
   constructor(request) {
     this.#request = request
@@ -98,7 +99,10 @@ class Auth {
 
       // Code First Migration: Ensure token table exists and clean up old tokens
       try {
-        await this.#ensureTokenTableV2(tokenTable)
+        if (!Auth.#migrationCache.has(tokenTable)) {
+          await this.#ensureTokenTableV2(tokenTable)
+          Auth.#migrationCache.add(tokenTable)
+        }
       } catch (e) {
         console.error('Odac Auth Error: Failed to ensure token table exists:', e.message)
       }
@@ -143,11 +147,13 @@ class Auth {
     let user = await this.check(where)
     if (!user) return false
 
-    if (!Odac.Config.auth) Odac.Config.auth = {}
     let key = Odac.Config.auth.key || 'id'
     let token = Odac.Config.auth.token || 'odac_auth'
 
-    await this.#ensureTokenTableV2(token)
+    if (!Auth.#migrationCache.has(token)) {
+      await this.#ensureTokenTableV2(token)
+      Auth.#migrationCache.add(token)
+    }
 
     this.#cleanupExpiredTokens(token)
 
@@ -199,7 +205,10 @@ class Auth {
     const uniqueFields = options.uniqueFields || ['email']
 
     try {
-      await this.#ensureUserTableV2(this.#table, primaryKey, passwordField, uniqueFields, data)
+      if (!Auth.#migrationCache.has(this.#table)) {
+        await this.#ensureUserTableV2(this.#table, primaryKey, passwordField, uniqueFields, data)
+        Auth.#migrationCache.add(this.#table)
+      }
     } catch (e) {
       // If DB not configured or connection failed
       console.error('Odac Auth Error:', e.message)
@@ -326,7 +335,10 @@ class Auth {
 
     // Ensure magic table exists
     try {
-      await this.#ensureMagicLinkTable(magicTable)
+      if (!Auth.#migrationCache.has(magicTable)) {
+        await this.#ensureMagicLinkTable(magicTable)
+        Auth.#migrationCache.add(magicTable)
+      }
     } catch (e) {
       console.error('Failed to ensure magic link table exists:', e)
       // Consider returning an error here to prevent further execution.
