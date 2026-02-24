@@ -14,8 +14,14 @@ class Form {
     const regex = new RegExp(`<odac:${type}[\\s\\S]*?<\\/odac:${type}>`, 'g')
     return content.replace(regex, match => {
       const formConfig = this.extractConfig(match, null, type)
-      const configStr = JSON.stringify(formConfig)
-      const matchStr = JSON.stringify(match)
+      let configStr = JSON.stringify(formConfig)
+      let matchStr = JSON.stringify(match)
+
+      // Unquote dynamic variables to make them live JS expressions in the compiled view
+      // We avoid {{ }} here because View engine would turn them into ${ } which is invalid in naked JS
+      configStr = configStr.replace(/"\{\{([\s\S]*?)\}\}"/g, '(await $1)')
+      matchStr = matchStr.replace(/\{\{([\s\S]*?)\}\}/g, '" + (await Odac.Var(await $1).html()) + "')
+
       return `<script:odac>html += await Odac.View.Form.runtime(Odac, '${type}', ${configStr}, ${matchStr});</script:odac>`
     })
   }
@@ -91,7 +97,7 @@ class Form {
     if (redirectMatch) config.redirect = redirectMatch[1]
     if (autologinMatch) config.autologin = autologinMatch[1] !== 'false'
 
-    const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
     if (submitMatch) {
       const submitTag = submitMatch[1]
       const textMatch = submitTag.match(/text=["']([^"']+)["']/)
@@ -145,22 +151,25 @@ class Form {
       id: null,
       unique: false,
       skip: false,
+      value: null,
       validations: []
     }
 
-    const typeMatch = fieldTag.match(/type=["']([^"']+)["']/)
-    const placeholderMatch = fieldTag.match(/placeholder=["']([^"']+)["']/)
-    const labelMatch = fieldTag.match(/label=["']([^"']+)["']/)
-    const classMatch = fieldTag.match(/class=["']([^"']+)["']/)
-    const idMatch = fieldTag.match(/id=["']([^"']+)["']/)
+    const typeMatch = fieldTag.match(/type=(["'])(.*?)\1/)
+    const placeholderMatch = fieldTag.match(/placeholder=(["'])(.*?)\1/)
+    const labelMatch = fieldTag.match(/label=(["'])(.*?)\1/)
+    const classMatch = fieldTag.match(/class=(["'])(.*?)\1/)
+    const idMatch = fieldTag.match(/id=(["'])(.*?)\1/)
+    const valueMatch = fieldTag.match(/value=(["'])(.*?)\1/)
     const uniqueMatch = fieldTag.match(/unique=["']([^"']+)["']/) || fieldTag.match(/\sunique[\s/>]/)
     const skipMatch = fieldTag.match(/skip=["']([^"']+)["']/) || fieldTag.match(/\sskip[\s/>]/)
 
-    if (typeMatch) field.type = typeMatch[1]
-    if (placeholderMatch) field.placeholder = placeholderMatch[1]
-    if (labelMatch) field.label = labelMatch[1]
-    if (classMatch) field.class = classMatch[1]
-    if (idMatch) field.id = idMatch[1]
+    if (typeMatch) field.type = typeMatch[2]
+    if (placeholderMatch) field.placeholder = placeholderMatch[2]
+    if (labelMatch) field.label = labelMatch[2]
+    if (classMatch) field.class = classMatch[2]
+    if (idMatch) field.id = idMatch[2]
+    if (valueMatch) field.value = valueMatch[2]
     if (uniqueMatch) field.unique = uniqueMatch[1] !== 'false'
     if (skipMatch) field.skip = skipMatch[1] !== 'false'
 
@@ -181,7 +190,7 @@ class Form {
 
     // Capture generic attributes
     const extraAttrs = {}
-    const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip']
+    const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip', 'value']
     const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
     let attrMatch
     // Clean tag to just attributes part for safer regex matching if needed,
@@ -203,11 +212,11 @@ class Form {
   }
 
   static parseSet(html) {
-    const nameMatch = html.match(/name=["']([^"']+)["']/)
+    const nameMatch = html.match(/name=(["'])(.*?)\1/)
     if (!nameMatch) return null
 
     const set = {
-      name: nameMatch[1],
+      name: nameMatch[2],
       value: null,
       compute: null,
       callback: null,
@@ -215,14 +224,14 @@ class Form {
     }
 
     const valueMatch = html.match(/value=(["'])(.*?)\1/)
-    const computeMatch = html.match(/compute=["']([^"']+)["']/)
-    const callbackMatch = html.match(/callback=["']([^"']+)["']/)
-    const ifEmptyMatch = html.match(/if-empty=["']([^"']+)["']/) || html.match(/\sif-empty[\s/>]/)
+    const computeMatch = html.match(/compute=(["'])(.*?)\1/)
+    const callbackMatch = html.match(/callback=(["'])(.*?)\1/)
+    const ifEmptyMatch = html.match(/if-empty=(["'])(.*?)\1/) || html.match(/\sif-empty[\s/>]/)
 
     if (valueMatch) set.value = valueMatch[2]
-    if (computeMatch) set.compute = computeMatch[1]
-    if (callbackMatch) set.callback = callbackMatch[1]
-    if (ifEmptyMatch) set.ifEmpty = ifEmptyMatch[1] !== 'false'
+    if (computeMatch) set.compute = computeMatch[2]
+    if (callbackMatch) set.callback = callbackMatch[2]
+    if (ifEmptyMatch) set.ifEmpty = ifEmptyMatch[2] !== 'false'
 
     return set
   }
@@ -253,6 +262,9 @@ class Form {
     innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
       const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
+      // Sync with resolved config value if available
+      const configField = config.fields.find(f => f.name === field.name)
+      if (configField) field.value = configField.value
       return this.generateFieldHtml(field)
     })
 
@@ -287,23 +299,25 @@ class Form {
 
     const classAttr = field.class ? ` class="${field.class}"` : ''
     const idAttr = field.id ? ` id="${field.id}"` : ` id="odac-${field.name}"`
+    const valueAttr = field.value !== null ? ` value="${String(field.value).replace(/"/g, '&quot;')}"` : ''
 
     if (field.type === 'checkbox') {
       const attrs = this.buildHtml5Attributes(field)
+      const checkedAttr = field.value === '1' || field.value === true || field.value === 'true' ? ' checked' : ''
       if (field.label) {
         html += `<label>\n`
-        html += `  <input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${attrs}>\n`
+        html += `  <input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
         html += `  ${field.label}\n`
         html += `</label>\n`
       } else {
-        html += `<input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${attrs}>\n`
+        html += `<input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
       }
     } else if (field.type === 'textarea') {
       const attrs = this.buildHtml5Attributes(field)
-      html += `<textarea${idAttr} name="${field.name}" placeholder="${field.placeholder}"${classAttr}${attrs}></textarea>\n`
+      html += `<textarea${idAttr} name="${field.name}" placeholder="${field.placeholder}"${classAttr}${attrs}>${field.value || ''}</textarea>\n`
     } else {
       const attrs = this.buildHtml5Attributes(field)
-      html += `<input type="${field.type}"${idAttr} name="${field.name}" placeholder="${field.placeholder}"${classAttr}${attrs}>\n`
+      html += `<input type="${field.type}"${idAttr} name="${field.name}"${valueAttr} placeholder="${field.placeholder}"${classAttr}${attrs}>\n`
     }
 
     return html
@@ -434,7 +448,7 @@ class Form {
 
     if (redirectMatch) config.redirect = redirectMatch[1]
 
-    const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
     if (submitMatch) {
       const submitTag = submitMatch[1]
       const textMatch = submitTag.match(/text=["']([^"']+)["']/)
@@ -489,6 +503,9 @@ class Form {
     innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
       const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
+      // Sync with resolved config value if available
+      const configField = config.fields.find(f => f.name === field.name)
+      if (configField) field.value = configField.value
       return this.generateFieldHtml(field)
     })
 
@@ -552,7 +569,7 @@ class Form {
     if (redirectMatch) config.redirect = redirectMatch
     if (successMatch) config.successMessage = successMatch
 
-    const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
     if (submitMatch) {
       const submitTag = submitMatch[1]
       const textMatch = submitTag.match(/text=["']([^"']+)["']/)
@@ -618,6 +635,9 @@ class Form {
     innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
       const field = this.parseInput(fieldMatch)
       if (!field) return fieldMatch
+      // Sync with resolved config value if available
+      const configField = config.fields.find(f => f.name === field.name)
+      if (configField) field.value = configField.value
       return this.generateFieldHtml(field)
     })
 
@@ -693,7 +713,7 @@ class Form {
       })
     }
 
-    const submitMatch = html.match(/<odac:submit([^>/]*)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
     if (submitMatch) {
       const submitTag = submitMatch[1]
       const textMatch = submitTag.match(/text=["']([^"']+)["']/)
@@ -751,6 +771,9 @@ class Form {
       innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
         const field = this.parseInput(fieldMatch)
         if (!field) return fieldMatch
+        // Sync with resolved config value if available
+        const configField = config.fields.find(f => f.name === field.name)
+        if (configField) field.value = configField.value
         return this.generateFieldHtml(field)
       })
     }
