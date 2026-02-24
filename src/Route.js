@@ -67,15 +67,37 @@ class Route {
     if (middlewareResult !== undefined) return middlewareResult
 
     if (controller.action) {
-      const ControllerClass = controller.cache
+      const ControllerModule = controller.cache
+      const actionParts = controller.action.split('.')
+
       try {
-        const instance = new ControllerClass(Odac)
-        if (typeof instance[controller.action] === 'function') {
-          return instance[controller.action](Odac)
+        const instance = new ControllerModule(Odac)
+        let method = instance
+        let context = instance
+
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+
+        if (typeof method === 'function') {
+          return method.call(context, Odac)
         }
       } catch {
-        if (typeof ControllerClass[controller.action] === 'function') {
-          return ControllerClass[controller.action](Odac)
+        let method = ControllerModule
+        let context = ControllerModule
+
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+
+        if (typeof method === 'function') {
+          return method.call(context, Odac)
         }
       }
       return Odac.Request.abort(500)
@@ -89,6 +111,9 @@ class Route {
   async check(Odac) {
     let url = Odac.Request.url.split('?')[0]
     if (url.endsWith('/')) url = url.slice(0, -1)
+    // Global Auth Check: Load user if valid tokens exist to simplify DX
+    // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
+    if (Odac.Auth) await Odac.Auth.check()
 
     if (url.startsWith('/_odac/')) {
       Odac.Request.route = '_odac_internal'
@@ -827,8 +852,15 @@ class Route {
         }
       })
 
+      // Global Auth Check: Load user if valid tokens exist to simplify DX
+      // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
+      if (Odac.Auth) await Odac.Auth.check()
+
       if (requireAuth) {
-        const isAuthenticated = await Odac.Auth.check()
+        let isAuthenticated = false
+        if (Odac.Auth) {
+          isAuthenticated = await Odac.Auth.check()
+        }
         if (!isAuthenticated) {
           ws.close(4001, 'Unauthorized')
           return
