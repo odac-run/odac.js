@@ -568,6 +568,8 @@ class Form {
     if (tableMatch) config.table = tableMatch
     if (redirectMatch) config.redirect = redirectMatch
     if (successMatch) config.successMessage = successMatch
+    const clearMatch = extractAttr('clear')
+    if (clearMatch !== null) config.clear = clearMatch === 'true' || clearMatch === ''
 
     const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
     if (submitMatch) {
@@ -658,6 +660,7 @@ class Form {
 
     let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(formAction)}" novalidate`
     if (config.id) formAttrs += ` id="${escapeHtml(config.id)}"`
+    if (config.clear !== undefined) formAttrs += ` clear="${config.clear}"`
 
     let html = `<form ${formAttrs}>\n`
     html += `  <input type="hidden" name="_odac_form_token" value="${escapeHtml(formToken)}">\n`
