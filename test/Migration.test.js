@@ -574,7 +574,7 @@ describe('Migration Engine', () => {
         'analytics'
       )
 
-      const result = await Migration.migrate()
+      await Migration.migrate()
 
       // users only on default
       const defaultExists = await db.schema.hasTable('users')
