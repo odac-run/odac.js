@@ -265,8 +265,28 @@ async function runMigration(cmd, cliArgs) {
   try {
     let raw = fs.readFileSync(configPath, 'utf8')
     config = JSON.parse(raw)
-    // Interpolate env vars
-    config = JSON.parse(JSON.stringify(config).replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || ''))
+    // Interpolate env vars safely by traversing parsed object values.
+    const interpolateConfig = input => {
+      if (typeof input === 'string') {
+        return input.replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || '')
+      }
+
+      if (Array.isArray(input)) {
+        return input.map(item => interpolateConfig(item))
+      }
+
+      if (input && typeof input === 'object') {
+        const output = {}
+        for (const key of Object.keys(input)) {
+          output[key] = interpolateConfig(input[key])
+        }
+        return output
+      }
+
+      return input
+    }
+
+    config = interpolateConfig(config)
   } catch (err) {
     console.error('❌ Failed to parse odac.json:', err.message)
     process.exit(1)
