@@ -175,7 +175,7 @@ class Migration {
     if (!fs.existsSync(this.schemaDir)) return schemas
 
     if (connectionKey === 'default') {
-      const files = fs.readdirSync(this.schemaDir).filter(f => f.endsWith('.js'))
+      const files = fs.readdirSync(this.schemaDir).filter(f => f.endsWith('.js') && fs.statSync(path.join(this.schemaDir, f)).isFile())
       for (const file of files) {
         const tableName = path.basename(file, '.js')
         const filePath = path.join(this.schemaDir, file)
@@ -185,7 +185,7 @@ class Migration {
       const subDir = path.join(this.schemaDir, connectionKey)
       if (!fs.existsSync(subDir)) return schemas
 
-      const files = fs.readdirSync(subDir).filter(f => f.endsWith('.js'))
+      const files = fs.readdirSync(subDir).filter(f => f.endsWith('.js') && fs.statSync(path.join(subDir, f)).isFile())
       for (const file of files) {
         const tableName = path.basename(file, '.js')
         const filePath = path.join(subDir, file)
