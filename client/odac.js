@@ -142,13 +142,18 @@ if (typeof window !== 'undefined') {
       xhr.onload = () => {
         if (xhr.status >= 200 && xhr.status < 300) {
           let responseData = xhr.responseText
-          if (dataType === 'json') {
+          const contentTypeHeader = xhr.getResponseHeader('Content-Type')
+          const isJson = dataType === 'json' || (contentTypeHeader && contentTypeHeader.includes('application/json'))
+
+          if (isJson) {
             try {
               responseData = JSON.parse(responseData)
             } catch (e) {
-              console.error('JSON parse error:', e)
-              error(xhr, 'parseerror', e)
-              return
+              if (dataType === 'json') {
+                console.error('JSON parse error:', e)
+                error(xhr, 'parseerror', e)
+                return
+              }
             }
           }
 
@@ -596,7 +601,7 @@ if (typeof window !== 'undefined') {
             }
           },
           xhr: () => {
-            var xhr = new window.XMLHttpRequest()
+            const xhr = new window.XMLHttpRequest()
             xhr.upload.addEventListener(
               'progress',
               evt => {
@@ -661,24 +666,23 @@ if (typeof window !== 'undefined') {
         this.#token.listener = true
       }
       if (!this.#token.hash.length) {
-        var req = new XMLHttpRequest()
+        const req = new XMLHttpRequest()
         req.open('GET', '/', false)
         req.setRequestHeader('X-Odac', 'token')
         req.setRequestHeader('X-Odac-Client', this.client())
         req.send(null)
-        var req_data = JSON.parse(req.response)
+        const req_data = JSON.parse(req.response)
         if (req_data.token) this.#token.hash.push(req_data.token)
       }
-      this.#token.hash.filter(n => n)
-      var return_token = this.#token.hash.shift()
+      this.#token.hash = this.#token.hash.filter(n => n)
+      const return_token = this.#token.hash.shift()
       if (!this.#token.hash.length)
         this.#ajax({
           url: '/',
           type: 'GET',
           headers: {'X-Odac': 'token', 'X-Odac-Client': this.client()},
           success: data => {
-            var result = JSON.parse(JSON.stringify(data))
-            if (result.token) this.#token.hash.push(result.token)
+            if (data.token) this.#token.hash.push(data.token)
           }
         })
       return return_token

@@ -7,62 +7,7 @@ const MiddlewareChain = require('./Route/Middleware.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
 var routes2 = {}
-const mime = {
-  html: 'text/html',
-  css: 'text/css',
-  js: 'text/javascript',
-  json: 'application/json',
-  png: 'image/png',
-  jpg: 'image/jpg',
-  jpeg: 'image/jpeg',
-  svg: 'image/svg+xml',
-  ico: 'image/x-icon',
-  mp3: 'audio/mpeg',
-  mp4: 'video/mp4',
-  webm: 'video/webm',
-  woff: 'font/woff',
-  woff2: 'font/woff2',
-  ttf: 'font/ttf',
-  otf: 'font/otf',
-  eot: 'font/eot',
-  pdf: 'application/pdf',
-  zip: 'application/zip',
-  tar: 'application/x-tar',
-  gz: 'application/gzip',
-  rar: 'application/x-rar-compressed',
-  '7z': 'application/x-7z-compressed',
-  txt: 'text/plain',
-  log: 'text/plain',
-  csv: 'text/csv',
-  xml: 'text/xml',
-  rss: 'application/rss+xml',
-  atom: 'application/atom+xml',
-  yaml: 'application/x-yaml',
-  sh: 'application/x-sh',
-  bat: 'application/x-bat',
-  exe: 'application/x-exe',
-  bin: 'application/x-binary',
-  doc: 'application/msword',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  xls: 'application/vnd.ms-excel',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  ppt: 'application/vnd.ms-powerpoint',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  avi: 'video/x-msvideo',
-  wmv: 'video/x-ms-wmv',
-  flv: 'video/x-flv',
-  webp: 'image/webp',
-  gif: 'image/gif',
-  bmp: 'image/bmp',
-  tiff: 'image/tiff',
-  tif: 'image/tiff',
-  weba: 'audio/webm',
-  wav: 'audio/wav',
-  ogg: 'audio/ogg',
-  flac: 'audio/flac',
-  aac: 'audio/aac',
-  midi: 'audio/midi'
-}
+const mime = require('./Route/MimeTypes.js')
 
 class Route {
   loading = false
@@ -122,15 +67,37 @@ class Route {
     if (middlewareResult !== undefined) return middlewareResult
 
     if (controller.action) {
-      const ControllerClass = controller.cache
+      const ControllerModule = controller.cache
+      const actionParts = controller.action.split('.')
+
       try {
-        const instance = new ControllerClass(Odac)
-        if (typeof instance[controller.action] === 'function') {
-          return instance[controller.action](Odac)
+        const instance = new ControllerModule(Odac)
+        let method = instance
+        let context = instance
+
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+
+        if (typeof method === 'function') {
+          return method.call(context, Odac)
         }
       } catch {
-        if (typeof ControllerClass[controller.action] === 'function') {
-          return ControllerClass[controller.action](Odac)
+        let method = ControllerModule
+        let context = ControllerModule
+
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+
+        if (typeof method === 'function') {
+          return method.call(context, Odac)
         }
       }
       return Odac.Request.abort(500)
@@ -144,6 +111,9 @@ class Route {
   async check(Odac) {
     let url = Odac.Request.url.split('?')[0]
     if (url.endsWith('/')) url = url.slice(0, -1)
+    // Global Auth Check: Load user if valid tokens exist to simplify DX
+    // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
+    if (Odac.Auth) await Odac.Auth.check()
 
     if (url.startsWith('/_odac/')) {
       Odac.Request.route = '_odac_internal'
@@ -882,8 +852,15 @@ class Route {
         }
       })
 
+      // Global Auth Check: Load user if valid tokens exist to simplify DX
+      // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
+      if (Odac.Auth) await Odac.Auth.check()
+
       if (requireAuth) {
-        const isAuthenticated = await Odac.Auth.check()
+        let isAuthenticated = false
+        if (Odac.Auth) {
+          isAuthenticated = await Odac.Auth.check()
+        }
         if (!isAuthenticated) {
           ws.close(4001, 'Unauthorized')
           return

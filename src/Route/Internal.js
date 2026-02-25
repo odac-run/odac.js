@@ -541,23 +541,13 @@ class Internal {
 
     if (Odac.formConfig.action) {
       const actionParts = Odac.formConfig.action.split('.')
-      if (actionParts.length === 2) {
+      if (actionParts.length >= 2) {
         const controllerName = actionParts[0]
-        const methodName = actionParts[1]
-
-        // Dynamically load controller
-        // We need to access Odac.Route.class to find the controller path/module
-        // Or use require directly if we know the path structure.
-        // Since we are in framework/src/Route/Internal.js, controllers are in framework/controller/ OR app/controller/
-        // Ideally Odac.Route.class has the loaded controllers.
 
         let controllerModule = null
 
         if (Odac.Route && Odac.Route.class && Odac.Route.class[controllerName]) {
           controllerModule = Odac.Route.class[controllerName].module
-        } else {
-          // Try to require it if not loaded (though Route.js should have loaded it)
-          // This fallback might be tricky with absolute paths, relying on Route.class is safer.
         }
 
         if (controllerModule) {
@@ -605,16 +595,29 @@ class Internal {
               }
             }
 
-            // Handle Class-based Controller
+            let method = controllerModule
+            let context = null
+            let isClass = false
+
             if (typeof controllerModule === 'function' && controllerModule.prototype) {
-              const instance = new controllerModule(Odac)
-              if (typeof instance[methodName] === 'function') {
-                return await instance[methodName](formHelper)
+              isClass = true
+              context = new controllerModule(Odac)
+              method = context
+            }
+
+            for (let i = 1; i < actionParts.length; i++) {
+              if (method) {
+                context = method
+                method = method[actionParts[i]]
               }
             }
-            // Handle Object-based Controller (Backwards Compatibility)
-            else if (typeof controllerModule[methodName] === 'function') {
-              return await controllerModule[methodName](Odac, formHelper)
+
+            if (typeof method === 'function') {
+              if (isClass) {
+                return await method.call(context, formHelper)
+              } else {
+                return await method.call(context, Odac, formHelper)
+              }
             }
           } catch (e) {
             console.error(e)

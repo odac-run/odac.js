@@ -10,7 +10,7 @@
 *   🔗 **Powerful Routing:** Create clean, custom URLs and manage infinite pages with a flexible routing system.
 *   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions eliminates the need for complex client-side code.
 *   🛡️ **Built-in Security:** Automatic CSRF protection and secure default headers keep your application safe.
-*   🔐 **Authentication:** Ready-to-use session management, password hashing, and authentication helpers.
+*   🔐 **Authentication:** Ready-to-use session management with enterprise-grade **Refresh Token Rotation**, secure password hashing, and authentication helpers.
 *   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
 *   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
 *   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.

@@ -29,6 +29,20 @@ Sessions use a **sliding window** approach (similar to NextAuth.js):
 3. User inactive for 30 days, session expires
 4. Active users stay logged in indefinitely (up to 30 days of inactivity)
 
+### Token Rotation (Enterprise Grade)
+
+Odac implements a non-blocking **Refresh Token Rotation** mechanism to enhance security:
+
+- **rotationAge**: How often to rotate tokens (default: 15 minutes)
+- **Grace Period**: When a token is rotated, the old token remains valid for **60 seconds** to prevent race conditions in Single Page Applications (SPAs) making concurrent requests.
+
+**How it works:**
+1. A request is made with an active token older than `rotationAge`.
+2. Odac issues a brand new token set and sends them as cookies.
+3. The old token is marked as "rotated" and assigned a 60-second lütuf (grace) period.
+4. Subsequent concurrent requests using the old token still pass within those 60 seconds.
+5. After 60 seconds, the old token is naturally expired.
+
 ### Configuration
 
 Configure session behavior in `odac.json`:
@@ -39,20 +53,28 @@ Configure session behavior in `odac.json`:
     "table": "users",
     "token": "user_tokens",
     "maxAge": 2592000000,
-    "updateAge": 86400000
+    "updateAge": 86400000,
+    "rotationAge": 900000,
+    "rotation": true
   }
 }
 ```
 
 **Options:**
 
-- `maxAge` (milliseconds): Maximum inactivity period before session expires
+- `maxAge` (milliseconds): Maximum inactivity period before session expires. **Note:** Cookies also use this value for persistence.
   - Default: `2592000000` (30 days)
   - Example: `604800000` (7 days)
 
-- `updateAge` (milliseconds): How often to update the session timestamp
+- `updateAge` (milliseconds): How often to update the session timestamp (heartbeat)
   - Default: `86400000` (1 day)
   - Example: `3600000` (1 hour)
+
+- `rotationAge` (milliseconds): How often to rotate the session tokens
+  - Default: `900000` (15 minutes)
+
+- `rotation` (boolean): Enable or disable token rotation
+  - Default: `true`
 
 ### Common Configurations
 

@@ -151,6 +151,35 @@ describe('Client (odac.js)', () => {
     })
   })
 
+  describe('get()', () => {
+    test('should automatically parse JSON if Content-Type is application/json', () => {
+      const mockCallback = jest.fn()
+      const mockData = {success: true}
+
+      mockXhr.open.mockClear()
+      mockXhr.send.mockClear()
+
+      // Mock token() to avoid side effects and XHR calls
+      jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
+
+      // Setup response for the get request
+      mockXhr.responseText = JSON.stringify(mockData)
+      mockXhr.status = 200
+      mockXhr.statusText = 'OK'
+      mockXhr.getResponseHeader.mockImplementation(header => {
+        if (header === 'Content-Type') return 'application/json'
+        return null
+      })
+
+      window.Odac.get('/api/test', mockCallback)
+
+      // Trigger the completion of the get request
+      if (mockXhr.onload) mockXhr.onload()
+
+      expect(mockCallback).toHaveBeenCalledWith(mockData, expect.anything(), expect.anything())
+    })
+  })
+
   describe('OdacWebSocket', () => {
     test('should connect to WebSocket and handle events', () => {
       const ws = window.Odac.ws('/test-ws', {token: false})

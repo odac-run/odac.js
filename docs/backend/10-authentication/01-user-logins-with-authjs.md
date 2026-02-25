@@ -11,6 +11,8 @@ The `Odac.Auth` service is your bouncer, managing who gets in and who stays out.
 
 When you call this, `Auth` creates a secure session for the user.
 
+> **💡 Enterprise Security:** ODAC automatically handles **Token Rotation** every 15 minutes (configurable) and includes built-in **CSRF protection** for all forms. Sessions are persistent across browser restarts by default.
+
 #### Checking the Guest List
 
 *   `Odac.Auth.isLogin()`: Is the current user logged in? Returns `true` or `false`.
