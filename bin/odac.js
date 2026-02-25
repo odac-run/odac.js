@@ -227,6 +227,200 @@ async function manageSkills(targetDir = process.cwd()) {
   }
 }
 
+/**
+ * Bootstraps the database and migration engine, then executes the requested migration command.
+ * Why: Migration commands need DB connections but not the full server stack.
+ * @param {string} cmd - The migration subcommand
+ * @param {string[]} cliArgs - CLI arguments (e.g. --db=analytics)
+ */
+async function runMigration(cmd, cliArgs) {
+  const projectDir = process.cwd()
+  const envPath = path.join(projectDir, '.env')
+  const configPath = path.join(projectDir, 'odac.json')
+
+  // Load .env
+  if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf8')
+    envContent.split('\n').forEach(line => {
+      line = line.trim()
+      if (!line || line.startsWith('#')) return
+      const idx = line.indexOf('=')
+      if (idx === -1) return
+      const key = line.slice(0, idx).trim()
+      let value = line.slice(idx + 1).trim()
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      if (process.env[key] === undefined) process.env[key] = value
+    })
+  }
+
+  // Load config
+  if (!fs.existsSync(configPath)) {
+    console.error('❌ No odac.json found in current directory.')
+    process.exit(1)
+  }
+
+  let config
+  try {
+    let raw = fs.readFileSync(configPath, 'utf8')
+    config = JSON.parse(raw)
+    // Interpolate env vars
+    config = JSON.parse(JSON.stringify(config).replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || ''))
+  } catch (err) {
+    console.error('❌ Failed to parse odac.json:', err.message)
+    process.exit(1)
+  }
+
+  const dbConfig = config.database
+  if (!dbConfig) {
+    console.error('❌ No database configuration found in odac.json.')
+    process.exit(1)
+  }
+
+  // Build knex connections (same logic as Database.js)
+  const knex = require('knex')
+  const isMultiple = typeof dbConfig[Object.keys(dbConfig)[0]] === 'object'
+  const dbs = isMultiple ? dbConfig : {default: dbConfig}
+  const connections = {}
+
+  for (const key of Object.keys(dbs)) {
+    const db = dbs[key]
+    let client = 'mysql2'
+    if (db.type === 'postgres' || db.type === 'pg' || db.type === 'postgresql') client = 'pg'
+    if (db.type === 'sqlite' || db.type === 'sqlite3') client = 'sqlite3'
+
+    let connectionConfig
+    if (client === 'sqlite3') {
+      connectionConfig = {filename: db.filename || db.database || './dev.sqlite3'}
+    } else {
+      connectionConfig = {
+        host: db.host || '127.0.0.1',
+        user: db.user,
+        password: db.password,
+        database: db.database,
+        port: db.port
+      }
+    }
+
+    connections[key] = knex({
+      client,
+      connection: connectionConfig,
+      pool: {min: 0, max: db.connectionLimit || 10},
+      useNullAsDefault: true
+    })
+
+    try {
+      await connections[key].raw('SELECT 1')
+    } catch (e) {
+      console.error(`❌ Failed to connect to '${key}' database:`, e.message)
+      process.exit(1)
+    }
+  }
+
+  // Parse --db flag
+  const dbFlag = cliArgs.find(a => a.startsWith('--db='))
+  const options = dbFlag ? {db: dbFlag.split('=')[1]} : {}
+
+  // Initialize migration engine
+  const Migration = require('../src/Database/Migration')
+  Migration.init(projectDir, connections)
+
+  try {
+    if (cmd === 'migrate') {
+      console.log('🔄 Running migrations...\n')
+      const summary = await Migration.migrate(options)
+      printMigrationSummary(summary)
+    } else if (cmd === 'migrate:status') {
+      console.log('📋 Migration Status (dry-run):\n')
+      const summary = await Migration.status(options)
+      printMigrationSummary(summary)
+    } else if (cmd === 'migrate:rollback') {
+      console.log('⏪ Rolling back last batch...\n')
+      const summary = await Migration.rollback(options)
+      printMigrationSummary(summary)
+    } else if (cmd === 'migrate:snapshot') {
+      console.log('📸 Generating schema files from database...\n')
+      const result = await Migration.snapshot(options)
+      for (const [key, files] of Object.entries(result)) {
+        console.log(`  \x1b[36m${key}\x1b[0m: ${files.length} schema file(s) generated`)
+        for (const f of files) {
+          console.log(`    → ${path.relative(projectDir, f)}`)
+        }
+      }
+      console.log('\n✅ Snapshot complete.')
+    }
+  } catch (err) {
+    console.error('❌ Migration error:', err.message)
+    process.exit(1)
+  } finally {
+    for (const conn of Object.values(connections)) {
+      await conn.destroy()
+    }
+  }
+}
+
+/**
+ * Formats and prints migration operation summary to stdout.
+ * @param {object} summary - Migration result per connection
+ */
+function printMigrationSummary(summary) {
+  let totalOps = 0
+
+  for (const [key, result] of Object.entries(summary)) {
+    console.log(`  \x1b[36m[${key}]\x1b[0m`)
+
+    const allOps = [...(result.schema || []), ...(result.files || []), ...(result.seeds || [])]
+
+    if (allOps.length === 0) {
+      console.log('    Nothing to do.')
+    }
+
+    for (const op of allOps) {
+      totalOps++
+      const label = formatOp(op)
+      console.log(`    ${label}`)
+    }
+    console.log('')
+  }
+
+  console.log(totalOps > 0 ? `✅ ${totalOps} operation(s) completed.` : '✅ Everything is up to date.')
+}
+
+/**
+ * Formats a single migration operation for CLI display.
+ * @param {object} op - Operation descriptor
+ * @returns {string} Formatted label
+ */
+function formatOp(op) {
+  switch (op.type) {
+    case 'create_table':
+      return `\x1b[32m+ CREATE TABLE\x1b[0m ${op.table}`
+    case 'add_column':
+      return `\x1b[32m+ ADD COLUMN\x1b[0m ${op.table}.${op.column}`
+    case 'drop_column':
+      return `\x1b[31m- DROP COLUMN\x1b[0m ${op.table}.${op.column}`
+    case 'alter_column':
+      return `\x1b[33m~ ALTER COLUMN\x1b[0m ${op.table}.${op.column}`
+    case 'add_index':
+      return `\x1b[32m+ ADD INDEX\x1b[0m ${op.table} (${op.index.columns.join(', ')})`
+    case 'drop_index':
+      return `\x1b[31m- DROP INDEX\x1b[0m ${op.table} (${op.index.columns.join(', ')})`
+    case 'pending_file':
+      return `\x1b[33m⏳ PENDING\x1b[0m ${op.name}`
+    case 'applied_file':
+      return `\x1b[32m✓ APPLIED\x1b[0m ${op.name}`
+    case 'rolled_back':
+      return `\x1b[33m↩ ROLLED BACK\x1b[0m ${op.name}`
+    case 'seed_insert':
+      return `\x1b[32m+ SEED INSERT\x1b[0m ${op.table} (${op.key})`
+    case 'seed_update':
+      return `\x1b[33m~ SEED UPDATE\x1b[0m ${op.table} (${op.key})`
+    default:
+      return `  ${op.type}`
+  }
+}
+
 async function run() {
   if (command === 'init') {
     const projectName = args[0] || '.'
@@ -376,6 +570,8 @@ async function run() {
     require('../index.js')
   } else if (command === 'skills') {
     await manageSkills()
+  } else if (command === 'migrate' || command === 'migrate:status' || command === 'migrate:rollback' || command === 'migrate:snapshot') {
+    await runMigration(command, args)
   } else {
     console.log('Usage:')
     console.log('  npx odac init            (Interactive mode)')
@@ -384,6 +580,10 @@ async function run() {
     console.log('  npx odac build           (Production build)')
     console.log('  npx odac start           (Start server)')
     console.log('  npx odac skills          (Sync AI Agent skills)')
+    console.log('  npx odac migrate         (Run pending migrations)')
+    console.log('  npx odac migrate:status  (Show pending changes)')
+    console.log('  npx odac migrate:rollback (Rollback last batch)')
+    console.log('  npx odac migrate:snapshot (Reverse-engineer DB to schema/)')
   }
 
   rl.close()

@@ -52,6 +52,38 @@ class DatabaseManager {
         console.error(e.message)
       }
     }
+
+    // Auto-migrate: sync schema/ files with the database on every startup.
+    // Why: Zero-config philosophy — deploy and forget. The app always starts with the correct DB state.
+    await this._autoMigrate()
+  }
+
+  /**
+   * Runs the schema-first migration engine against all active connections.
+   * CLUSTER SAFETY: Only runs on the primary process to prevent race conditions.
+   * Workers are forked AFTER Server.init(), which happens after Database.init(),
+   * so migrations are guaranteed to complete before any worker touches the DB.
+   * Silently skips if no schema/ directory exists (no-op for projects without migrations).
+   */
+  async _autoMigrate() {
+    const cluster = require('node:cluster')
+    if (!cluster.isPrimary) return
+
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const schemaDir = path.join(global.__dir, 'schema')
+
+    if (!fs.existsSync(schemaDir)) return
+    if (Object.keys(this.connections).length === 0) return
+
+    const Migration = require('./Database/Migration')
+    Migration.init(global.__dir, this.connections)
+
+    try {
+      await Migration.migrate()
+    } catch (e) {
+      console.error('Odac Migration Error:', e.message)
+    }
   }
 
   nanoid(size = 21) {

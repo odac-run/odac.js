@@ -31,7 +31,7 @@ class User {
 
   async getProfile(id) {
     // Access database or auth via this.Odac
-    return await this.Odac.Db.table('users').where('id', id).first();
+    return await this.Odac.DB.table('users').where('id', id).first();
   }
 }
 module.exports = User;

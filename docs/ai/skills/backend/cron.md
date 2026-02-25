@@ -21,14 +21,14 @@ Odac.Route.cron('cleanup').at('03:00'); // Runs daily at 03:00
 // controller/cron/cleanup.js
 module.exports = async (Odac) => {
   console.log('Running nightly cleanup...');
-  await Odac.Db.table('logs').where('created_at', '<', 'NOW() - INTERVAL 30 DAY').delete();
+  await Odac.DB.table('logs').where('created_at', '<', 'NOW() - INTERVAL 30 DAY').delete();
 };
 ```
 
 ### 2. Inline Function Cron
 ```javascript
 Odac.Route.cron(async () => {
-  const stats = await Odac.Db.table('orders').count();
+  const stats = await Odac.DB.table('orders').count();
   console.log('Current orders:', stats);
 }).everyHour(1);
 ```
