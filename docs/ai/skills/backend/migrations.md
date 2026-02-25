@@ -1,4 +1,3 @@
-````markdown
 # Backend Migrations Skill
 
 Schema-first, zero-config migration strategy for ODAC.
@@ -72,5 +71,3 @@ npx odac migrate:snapshot
 - Prefer additive changes; drops are destructive and should be intentional.
 - Ensure high-cardinality lookup columns are indexed in schema definitions.
 - For very large tables, plan expensive column rewrites as dedicated data migrations.
-
-````
