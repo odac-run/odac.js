@@ -1,5 +1,6 @@
 const nodeCrypto = require('crypto')
 const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
+const TOKEN_ROTATION_GRACE_PERIOD_MS = 60 * 1000
 class Auth {
   #request = null
   #table = null
@@ -164,7 +165,7 @@ class Auth {
           if (insertOk !== false) {
             // 2. Mark old token as rotated and set exactly 60 seconds grace period
             // Non-blocking I/O (Fire & Forget) -> High Throughput
-            const rotatedActiveDate = new Date(now - maxAge + 60 * 1000)
+            const rotatedActiveDate = new Date(now - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS)
             const epochDate = new Date(0)
 
             Odac.DB[tokenTable]
