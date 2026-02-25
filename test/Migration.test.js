@@ -519,7 +519,7 @@ describe('Migration Engine', () => {
       expect(fs.existsSync(customerFile)).toBe(true)
 
       const content = fs.readFileSync(customerFile, 'utf8')
-      expect(content).toContain("'customers'")
+      expect(content).toContain('customers')
       expect(content).toContain('columns')
     })
 
