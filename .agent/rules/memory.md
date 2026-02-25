@@ -43,3 +43,6 @@ trigger: always_on
 
 ## Client Library (odac.js)
 - **Automatic JSON Parsing:** The `#ajax` method (and by extension `odac.get`) must automatically parse the response if the `Content-Type` header contains `application/json`, even if `dataType` is not explicitly set to `json`.
+
+## Security Logic & Authentication
+- **Enterprise Token Rotation:** The `Auth.js` system utilizes a non-blocking refresh token rotation mechanism for cookies (`odac_x`/`odac_y`). To prevent race conditions during concurrent requests in high-throughput SPAs, rotated tokens are **not** immediately deleted. Instead, their `active` timestamp is set to naturally expire in 60 seconds (Grace Period), and their `date` timestamp is set to the Unix Epoch (`new Date(0)`) as an identifier mark. Never delete rotated tokens immediately.

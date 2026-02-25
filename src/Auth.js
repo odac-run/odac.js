@@ -116,13 +116,21 @@ class Auth {
 
       const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
       const updateAge = Odac.Config.auth?.updateAge || 24 * 60 * 60 * 1000
+      const rotationAge = Odac.Config.auth?.rotationAge || 15 * 60 * 1000 // Default 15 mins for rotation
+      const shouldRotate = Odac.Config.auth?.rotation !== false // Allow disabling rotation
       const now = Date.now()
 
       // Active comes as Date object usually from drivers
       const lastActive = new Date(sql_token[0].active).getTime()
+      const tokenDate = new Date(sql_token[0].date).getTime()
       const inactiveAge = now - lastActive
+      const tokenAge = now - tokenDate
+
+      // If date is before 1971, it's a marker for a rotated (grace period) token
+      const isRotated = tokenDate < 31536000000
 
       if (inactiveAge > maxAge) {
+        // Naturally cleans up expired tokens and rotated tokens after grace period
         await Odac.DB[tokenTable].where('id', sql_token[0].id).delete()
         return false
       }
@@ -130,12 +138,63 @@ class Auth {
       this.#user = await Odac.DB[this.#table].where(primaryKey, sql_token[0].user).first()
       if (!this.#user) return false
 
-      if (inactiveAge > updateAge) {
-        // Use update instead of set for Knex
-        Odac.DB[tokenTable]
-          .where('id', sql_token[0].id)
-          .update({active: new Date()}) // knex uses .update
-          .catch(() => {})
+      if (!isRotated) {
+        if (shouldRotate && tokenAge > rotationAge) {
+          // --- Token Rotation ---
+          const newTokenX = nodeCrypto.randomBytes(32).toString('hex')
+          const newTokenY = nodeCrypto.randomBytes(32).toString('hex')
+          const newToken = {
+            id: Odac.DB.nanoid(),
+            user: sql_token[0].user,
+            token_x: newTokenX,
+            token_y: Odac.Var(newTokenY).hash(),
+            browser: sql_token[0].browser,
+            ip: this.#request.ip,
+            date: new Date(),
+            active: new Date()
+          }
+
+          // 1. Persist new token (await to ensure it exists before client uses new cookies)
+          const insertOk = await Odac.DB[tokenTable].insert(newToken).catch(e => {
+            console.error('Odac Auth Error: Token rotation failed', e.message)
+            return false
+          })
+
+          if (insertOk !== false) {
+            // 2. Mark old token as rotated and set exactly 60 seconds grace period
+            // Non-blocking I/O (Fire & Forget) -> High Throughput
+            const rotatedActiveDate = new Date(now - maxAge + 60 * 1000)
+            const epochDate = new Date(0)
+
+            Odac.DB[tokenTable]
+              .where('id', sql_token[0].id)
+              .update({
+                active: rotatedActiveDate,
+                date: epochDate
+              })
+              .catch(() => {})
+
+            // 3. Issue new cookies immediately
+            this.#request.cookie('odac_x', newTokenX, {
+              httpOnly: true,
+              secure: true,
+              sameSite: 'Lax',
+              maxAge: maxAge
+            })
+            this.#request.cookie('odac_y', newTokenY, {
+              httpOnly: true,
+              secure: true,
+              sameSite: 'Lax',
+              maxAge: maxAge
+            })
+          }
+        } else if (inactiveAge > updateAge) {
+          // Fallback simple active update if rotation is not triggered
+          Odac.DB[tokenTable]
+            .where('id', sql_token[0].id)
+            .update({active: new Date()})
+            .catch(() => {})
+        }
       }
 
       return true
@@ -171,12 +230,20 @@ class Auth {
       ip: this.#request.ip
     }
 
+    const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
+
     this.#request.cookie('odac_x', cookie.token_x, {
       httpOnly: true,
       secure: true,
-      sameSite: 'Lax'
+      sameSite: 'Lax',
+      maxAge: maxAge
     })
-    this.#request.cookie('odac_y', token_y, {httpOnly: true, secure: true, sameSite: 'Lax'})
+    this.#request.cookie('odac_y', token_y, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'Lax',
+      maxAge: maxAge
+    })
 
     // Knex insert returns ids on some dbs, promise resolves to result
     const result = await Odac.DB[token].insert(cookie)
@@ -311,12 +378,16 @@ class Auth {
     if (!this.#user) return false
 
     if (!Odac.Config.auth) Odac.Config.auth = {}
-    const token = Odac.Config.auth.token || 'user_tokens'
+    const tokenTable = Odac.Config.auth.token || 'user_tokens'
+    const primaryKey = Odac.Config.auth.key || 'id'
     const odacX = this.#request.cookie('odac_x')
     const browser = this.#request.header('user-agent')
 
     if (odacX && browser) {
-      await Odac.DB[token].where('token_x', odacX).where('browser', browser).delete()
+      // Delete current token AND any rotated grace-period tokens for this user+browser
+      // Why: After rotation, the old token stays alive for ~60s. Explicit logout must kill it too.
+      const userId = this.#user[primaryKey]
+      await Odac.DB[tokenTable].where('user', userId).where('browser', browser).delete()
     }
 
     this.#request.cookie('odac_x', '', {maxAge: -1})
