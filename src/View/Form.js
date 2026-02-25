@@ -3,6 +3,18 @@ const nodeCrypto = require('crypto')
 class Form {
   static FORM_TYPES = ['register', 'login', 'magic-login', 'form']
 
+  static escapeHtml(value) {
+    if (value === null || value === undefined) return ''
+    const map = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }
+    return String(value).replace(/[&<>"']/g, ch => map[ch])
+  }
+
   static parse(content, Odac) {
     for (const type of this.FORM_TYPES) {
       content = this.parseFormType(content, Odac, type)
@@ -291,33 +303,38 @@ class Form {
 
   static generateFieldHtml(field) {
     let html = ''
+    const escapedName = this.escapeHtml(field.name)
+    const escapedType = this.escapeHtml(field.type)
+    const escapedPlaceholder = this.escapeHtml(field.placeholder)
 
     if (field.label && field.type !== 'checkbox') {
-      const fieldId = field.id || `odac-${field.name}`
-      html += `<label for="${fieldId}">${field.label}</label>\n`
+      const fieldId = this.escapeHtml(field.id || `odac-${field.name}`)
+      html += `<label for="${fieldId}">${this.escapeHtml(field.label)}</label>\n`
     }
 
-    const classAttr = field.class ? ` class="${field.class}"` : ''
-    const idAttr = field.id ? ` id="${field.id}"` : ` id="odac-${field.name}"`
-    const valueAttr = field.value !== null ? ` value="${String(field.value).replace(/"/g, '&quot;')}"` : ''
+    const classAttr = field.class ? ` class="${this.escapeHtml(field.class)}"` : ''
+    const idAttr = field.id ? ` id="${this.escapeHtml(field.id)}"` : ` id="${this.escapeHtml(`odac-${field.name}`)}"`
+    const valueAttr = field.value !== null ? ` value="${this.escapeHtml(field.value)}"` : ''
 
     if (field.type === 'checkbox') {
       const attrs = this.buildHtml5Attributes(field)
       const checkedAttr = field.value === '1' || field.value === true || field.value === 'true' ? ' checked' : ''
       if (field.label) {
         html += `<label>\n`
-        html += `  <input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
-        html += `  ${field.label}\n`
+        html += `  <input type="checkbox"${idAttr} name="${escapedName}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
+        html += `  ${this.escapeHtml(field.label)}\n`
         html += `</label>\n`
       } else {
-        html += `<input type="checkbox"${idAttr} name="${field.name}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
+        html += `<input type="checkbox"${idAttr} name="${escapedName}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
       }
     } else if (field.type === 'textarea') {
       const attrs = this.buildHtml5Attributes(field)
-      html += `<textarea${idAttr} name="${field.name}" placeholder="${field.placeholder}"${classAttr}${attrs}>${field.value || ''}</textarea>\n`
+      html += `<textarea${idAttr} name="${escapedName}" placeholder="${escapedPlaceholder}"${classAttr}${attrs}>${this.escapeHtml(
+        field.value || ''
+      )}</textarea>\n`
     } else {
       const attrs = this.buildHtml5Attributes(field)
-      html += `<input type="${field.type}"${idAttr} name="${field.name}"${valueAttr} placeholder="${field.placeholder}"${classAttr}${attrs}>\n`
+      html += `<input type="${escapedType}"${idAttr} name="${escapedName}"${valueAttr} placeholder="${escapedPlaceholder}"${classAttr}${attrs}>\n`
     }
 
     return html
@@ -333,7 +350,7 @@ class Form {
         if (val === '') {
           attrs += ` ${key}`
         } else {
-          attrs += ` ${key}="${val.replace(/"/g, '&quot;')}"`
+          attrs += ` ${key}="${this.escapeHtml(val)}"`
         }
       }
     }
@@ -420,11 +437,11 @@ class Form {
     if (html5Rules.max) attrs += ` max="${html5Rules.max}"`
     if (html5Rules.pattern) attrs += ` pattern="${html5Rules.pattern}"`
 
-    if (errorMessages.required) attrs += ` data-error-required="${errorMessages.required.replace(/"/g, '&quot;')}"`
-    if (errorMessages.minlength) attrs += ` data-error-minlength="${errorMessages.minlength.replace(/"/g, '&quot;')}"`
-    if (errorMessages.maxlength) attrs += ` data-error-maxlength="${errorMessages.maxlength.replace(/"/g, '&quot;')}"`
-    if (errorMessages.pattern) attrs += ` data-error-pattern="${errorMessages.pattern.replace(/"/g, '&quot;')}"`
-    if (errorMessages.email) attrs += ` data-error-email="${errorMessages.email.replace(/"/g, '&quot;')}"`
+    if (errorMessages.required) attrs += ` data-error-required="${this.escapeHtml(errorMessages.required)}"`
+    if (errorMessages.minlength) attrs += ` data-error-minlength="${this.escapeHtml(errorMessages.minlength)}"`
+    if (errorMessages.maxlength) attrs += ` data-error-maxlength="${this.escapeHtml(errorMessages.maxlength)}"`
+    if (errorMessages.pattern) attrs += ` data-error-pattern="${this.escapeHtml(errorMessages.pattern)}"`
+    if (errorMessages.email) attrs += ` data-error-email="${this.escapeHtml(errorMessages.email)}"`
 
     attrs = this.appendExtraAttributes(attrs, field)
 
@@ -643,27 +660,24 @@ class Form {
       return this.generateFieldHtml(field)
     })
 
-    const escapeHtml = str =>
-      String(str).replace(/[&<>"']/g, m => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[m])
-
     const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
     if (submitMatch) {
-      let submitAttrs = `type="submit" data-submit-text="${escapeHtml(submitText)}" data-loading-text="${escapeHtml(submitLoading)}"`
-      if (config.submitClass) submitAttrs += ` class="${escapeHtml(config.submitClass)}"`
-      if (config.submitStyle) submitAttrs += ` style="${escapeHtml(config.submitStyle)}"`
-      if (config.submitId) submitAttrs += ` id="${escapeHtml(config.submitId)}"`
-      const submitButton = `<button ${submitAttrs}>${escapeHtml(submitText)}</button>`
+      let submitAttrs = `type="submit" data-submit-text="${this.escapeHtml(submitText)}" data-loading-text="${this.escapeHtml(submitLoading)}"`
+      if (config.submitClass) submitAttrs += ` class="${this.escapeHtml(config.submitClass)}"`
+      if (config.submitStyle) submitAttrs += ` style="${this.escapeHtml(config.submitStyle)}"`
+      if (config.submitId) submitAttrs += ` id="${this.escapeHtml(config.submitId)}"`
+      const submitButton = `<button ${submitAttrs}>${this.escapeHtml(submitText)}</button>`
       innerContent = innerContent.replace(submitMatch[0], submitButton)
     }
 
     innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
 
-    let formAttrs = `class="odac-custom-form${config.class ? ' ' + escapeHtml(config.class) : ''}" data-odac-form="${escapeHtml(formToken)}" method="${escapeHtml(method)}" action="${escapeHtml(formAction)}" novalidate`
-    if (config.id) formAttrs += ` id="${escapeHtml(config.id)}"`
+    let formAttrs = `class="odac-custom-form${config.class ? ' ' + this.escapeHtml(config.class) : ''}" data-odac-form="${this.escapeHtml(formToken)}" method="${this.escapeHtml(method)}" action="${this.escapeHtml(formAction)}" novalidate`
+    if (config.id) formAttrs += ` id="${this.escapeHtml(config.id)}"`
     if (config.clear !== undefined) formAttrs += ` clear="${config.clear}"`
 
     let html = `<form ${formAttrs}>\n`
-    html += `  <input type="hidden" name="_odac_form_token" value="${escapeHtml(formToken)}">\n`
+    html += `  <input type="hidden" name="_odac_form_token" value="${this.escapeHtml(formToken)}">\n`
     html += innerContent
     html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
     html += `</form>`
