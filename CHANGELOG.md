@@ -1,5 +1,37 @@
 ### ⚙️ Engine Tuning
 
+- Extract MIME type definitions into a dedicated module.
+
+### ⚡️ Performance Upgrades
+
+- prevent redundant database table migration calls by introducing a static cache to track completed migrations.
+
+### ✨ What's New
+
+- add comprehensive ODAC Agent instructions and guidelines
+- **auth:** implement enterprise refresh token rotation with grace period and session persistence
+- Automatically parse JSON responses in client-side AJAX requests based on the `Content-Type` header.
+- implement comprehensive AI agent skills system and automated CLI setup
+
+### 🛠️ Fixes & Improvements
+
+- add HTML escaping functionality to Form class and corresponding tests
+- **ai:** correct target path for syncing AI skills
+- **auth:** replace magic number with constant for rotated token threshold
+- **auth:** replace magic number with constant for token rotation grace period
+- enhance odac:form parser with nested quotes and dynamic binding support
+- **route:** support nested property paths in actions and resolve App class conflict
+- **view:** ensure odac:for with 'in' attribute parses correctly as javascript
+- **view:** implement clear attribute in odac:form to control auto-clearing
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### ⚙️ Engine Tuning
+
 - Improve disposable domain cache management by relocating the cache path, ensuring directory existence, and standardizing error logging.
 - Migrate file system operations in Mail and View to use async `fs.promises` for non-blocking I/O, aligning with new memory.md guidelines.
 - remove unused `WebSocketClient` variable assignments in `WebSocket.test.js`
