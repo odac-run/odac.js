@@ -140,30 +140,54 @@ class Auth {
       this.#user = await Odac.DB[this.#table].where(primaryKey, sql_token[0].user).first()
       if (!this.#user) return false
 
+      let triggerRotation = false
+      let isRecoveryRotation = false
+
       if (!isRotated) {
         if (shouldRotate && tokenAge > rotationAge) {
-          // --- Token Rotation ---
-          const newTokenX = nodeCrypto.randomBytes(32).toString('hex')
-          const newTokenY = nodeCrypto.randomBytes(32).toString('hex')
-          const newToken = {
-            id: Odac.DB.nanoid(),
-            user: sql_token[0].user,
-            token_x: newTokenX,
-            token_y: Odac.Var(newTokenY).hash(),
-            browser: sql_token[0].browser,
-            ip: this.#request.ip,
-            date: new Date(),
-            active: new Date()
-          }
+          triggerRotation = true
+        } else if (inactiveAge > updateAge) {
+          // Fallback simple active update if rotation is not triggered
+          Odac.DB[tokenTable]
+            .where('id', sql_token[0].id)
+            .update({active: new Date()})
+            .catch(() => {})
+        }
+      } else {
+        // Client still presenting a rotated (grace period) token.
+        // This means the previous rotation response was lost (network hiccup, page navigation, etc.)
+        // Give the client one more chance by re-issuing new credentials.
+        const timeSinceRotation = inactiveAge - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS
+        if (timeSinceRotation > 5000) {
+          triggerRotation = true
+          isRecoveryRotation = true
+        }
+      }
 
-          // 1. Persist new token (await to ensure it exists before client uses new cookies)
-          const insertOk = await Odac.DB[tokenTable].insert(newToken).catch(e => {
-            console.error('Odac Auth Error: Token rotation failed', e.message)
-            return false
-          })
+      if (triggerRotation) {
+        // --- Token Rotation ---
+        const newTokenX = nodeCrypto.randomBytes(32).toString('hex')
+        const newTokenY = nodeCrypto.randomBytes(32).toString('hex')
+        const newToken = {
+          id: Odac.DB.nanoid(),
+          user: sql_token[0].user,
+          token_x: newTokenX,
+          token_y: Odac.Var(newTokenY).hash(),
+          browser: sql_token[0].browser,
+          ip: this.#request.ip,
+          date: new Date(),
+          active: new Date()
+        }
 
-          if (insertOk !== false) {
-            // 2. Mark old token as rotated and set exactly 60 seconds grace period
+        // 1. Persist new token (await to ensure it exists before client uses new cookies)
+        const insertOk = await Odac.DB[tokenTable].insert(newToken).catch(e => {
+          console.error('Odac Auth Error: Token rotation failed', e.message)
+          return false
+        })
+
+        if (insertOk !== false) {
+          if (!isRecoveryRotation) {
+            // 2a. Normal rotation: Mark old token as rotated with 60s grace period
             // Non-blocking I/O (Fire & Forget) -> High Throughput
             const rotatedActiveDate = new Date(now - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS)
             const epochDate = new Date(0)
@@ -175,27 +199,29 @@ class Auth {
                 date: epochDate
               })
               .catch(() => {})
-
-            // 3. Issue new cookies immediately
-            this.#request.cookie('odac_x', newTokenX, {
-              httpOnly: true,
-              secure: true,
-              sameSite: 'Lax',
-              maxAge: maxAge
-            })
-            this.#request.cookie('odac_y', newTokenY, {
-              httpOnly: true,
-              secure: true,
-              sameSite: 'Lax',
-              maxAge: maxAge
-            })
+          } else {
+            // 2b. Recovery rotation: Delete old rotated token immediately.
+            // Why: Prevents unbounded token multiplication. The old token already
+            // had its grace period; one recovery attempt is the maximum.
+            Odac.DB[tokenTable]
+              .where('id', sql_token[0].id)
+              .delete()
+              .catch(() => {})
           }
-        } else if (inactiveAge > updateAge) {
-          // Fallback simple active update if rotation is not triggered
-          Odac.DB[tokenTable]
-            .where('id', sql_token[0].id)
-            .update({active: new Date()})
-            .catch(() => {})
+
+          // 3. Issue new cookies immediately
+          this.#request.cookie('odac_x', newTokenX, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+            'max-age': Math.floor(maxAge / 1000)
+          })
+          this.#request.cookie('odac_y', newTokenY, {
+            httpOnly: true,
+            secure: true,
+            sameSite: 'Lax',
+            'max-age': Math.floor(maxAge / 1000)
+          })
         }
       }
 
@@ -238,13 +264,13 @@ class Auth {
       httpOnly: true,
       secure: true,
       sameSite: 'Lax',
-      maxAge: maxAge
+      'max-age': Math.floor(maxAge / 1000)
     })
     this.#request.cookie('odac_y', token_y, {
       httpOnly: true,
       secure: true,
       sameSite: 'Lax',
-      maxAge: maxAge
+      'max-age': Math.floor(maxAge / 1000)
     })
 
     // Knex insert returns ids on some dbs, promise resolves to result
@@ -392,8 +418,8 @@ class Auth {
       await Odac.DB[tokenTable].where('user', userId).where('browser', browser).delete()
     }
 
-    this.#request.cookie('odac_x', '', {maxAge: -1})
-    this.#request.cookie('odac_y', '', {maxAge: -1})
+    this.#request.cookie('odac_x', '', {'max-age': -1})
+    this.#request.cookie('odac_y', '', {'max-age': -1})
 
     this.#user = null
     return true
