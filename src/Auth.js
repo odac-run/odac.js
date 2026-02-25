@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 class Auth {
   #request = null
   #table = null
@@ -127,7 +128,7 @@ class Auth {
       const tokenAge = now - tokenDate
 
       // If date is before 1971, it's a marker for a rotated (grace period) token
-      const isRotated = tokenDate < 31536000000
+      const isRotated = tokenDate < ROTATED_TOKEN_EPOCH_THRESHOLD_MS
 
       if (inactiveAge > maxAge) {
         // Naturally cleans up expired tokens and rotated tokens after grace period
