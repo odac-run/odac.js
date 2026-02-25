@@ -53,6 +53,16 @@ cd my-app
 npm run dev
 ```
 
+## 🤖 AI Skills in Projects
+
+Load or update ODAC skills from your project root with:
+
+```bash
+npx odac skills
+```
+
+This command syncs built-in skills to your selected AI tool folder and can be re-run anytime to update them.
+
 ## 📂 Project Structure
 
 ```
