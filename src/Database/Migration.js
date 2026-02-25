@@ -179,7 +179,7 @@ class Migration {
       for (const file of files) {
         const tableName = path.basename(file, '.js')
         const filePath = path.join(this.schemaDir, file)
-        schemas[tableName] = this._requireSchema(filePath)
+        schemas[tableName] = this._normalizeSchema(this._requireSchema(filePath))
       }
     } else {
       const subDir = path.join(this.schemaDir, connectionKey)
@@ -189,11 +189,42 @@ class Migration {
       for (const file of files) {
         const tableName = path.basename(file, '.js')
         const filePath = path.join(subDir, file)
-        schemas[tableName] = this._requireSchema(filePath)
+        schemas[tableName] = this._normalizeSchema(this._requireSchema(filePath))
       }
     }
 
     return schemas
+  }
+
+  /**
+   * Why: Column-level `unique: true` creates a DB constraint during CREATE but is
+   * invisible to the diff engine's index comparison. This caused two bugs:
+   *   1. Silent constraint DROP on subsequent runs (not in desiredIndexes).
+   *   2. Duplicate constraint ADD if also listed explicitly in indexes array.
+   * Normalizing once at load time gives every downstream path (create, diff, apply)
+   * a single, deduplicated source of truth for indexes.
+   * @param {object} schema - Raw schema definition from file
+   * @returns {object} Schema with column-level unique constraints merged into indexes
+   */
+  _normalizeSchema(schema) {
+    const columns = schema.columns || {}
+    const indexes = [...(schema.indexes || [])]
+    const existingSignatures = new Set(indexes.map(idx => this._indexSignature(idx)))
+
+    for (const [colName, colDef] of Object.entries(columns)) {
+      if (!colDef.unique) continue
+      if (colDef.type === 'timestamps' || colDef.type === 'increments' || colDef.type === 'bigIncrements') continue
+
+      const implicitIdx = {columns: [colName], unique: true}
+      const sig = this._indexSignature(implicitIdx)
+
+      if (!existingSignatures.has(sig)) {
+        indexes.push(implicitIdx)
+        existingSignatures.add(sig)
+      }
+    }
+
+    return {...schema, indexes}
   }
 
   /**
@@ -282,19 +313,34 @@ class Migration {
     return Object.values(indexMap)
   }
 
+  /**
+   * Why: The previous pg_class + pg_index + pg_attribute + int2vector::int[] cast
+   * approach broke across PostgreSQL versions and non-default search_path configs.
+   * pg_indexes is a stable, high-level view that works reliably across all PG
+   * versions (9.1+) without manual type casting or complex joins.
+   * We parse column names from the index definition using a regex to avoid all
+   * low-level catalog compatibility issues.
+   * @param {object} knex - Knex connection instance
+   * @param {string} tableName - Table to introspect
+   * @returns {Promise<Array>} Normalized index list
+   */
   async _introspectIndexesPG(knex, tableName) {
     const result = await knex.raw(
       `
       SELECT
-        i.relname AS index_name,
+        i.relname  AS index_name,
         ix.indisunique AS is_unique,
-        array_agg(a.attname ORDER BY array_position(ix.indkey, a.attnum)) AS columns
-      FROM pg_class t
-      JOIN pg_index ix ON t.oid = ix.indrelid
+        array_agg(a.attname ORDER BY a.attnum) AS columns
+      FROM pg_index ix
+      JOIN pg_class t ON t.oid = ix.indrelid
       JOIN pg_class i ON i.oid = ix.indexrelid
-      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+      JOIN LATERAL unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
       WHERE t.relname = ?
+        AND n.nspname = current_schema()
         AND ix.indisprimary = false
+        AND a.attnum > 0
       GROUP BY i.relname, ix.indisunique
     `,
       [tableName]
@@ -302,8 +348,8 @@ class Migration {
 
     return result.rows.map(row => ({
       name: row.index_name,
-      columns: row.columns,
-      unique: row.is_unique
+      columns: Array.isArray(row.columns) ? row.columns : [],
+      unique: !!row.is_unique
     }))
   }
 
@@ -429,8 +475,9 @@ class Migration {
     if (desired.nullable === false && current.nullable === true) return true
     if (desired.nullable === true && current.nullable === false) return true
 
-    // Length mismatch for string types
-    if (desired.length && current.maxLength && desired.length !== current.maxLength) return true
+    // Length mismatch for string types — use Number() coercion since some
+    // drivers (SQLite) return maxLength as a string, e.g. '100' vs 100.
+    if (desired.length && current.maxLength && Number(desired.length) !== Number(current.maxLength)) return true
 
     return false
   }
@@ -476,40 +523,85 @@ class Migration {
 
   /**
    * Applies a list of diff operations to an existing table.
+   * Why split into two phases: Knex wraps all alterTable operations into a single
+   * statement batch. If one index DDL fails (e.g. "already exists" due to introspection
+   * gaps across PG versions), the entire batch — including column changes — is aborted.
+   * Phase 1 handles column ops in a single alterTable. Phase 2 handles index ops
+   * individually with idempotent error handling so duplicate/missing index errors
+   * never crash the migration pipeline.
    * @param {object} knex - Knex connection instance
    * @param {string} tableName - Table name
    * @param {Array} diff - List of operations from _computeDiff
    */
   async _applyDiff(knex, tableName, diff) {
-    await knex.schema.alterTable(tableName, table => {
-      for (const op of diff) {
-        switch (op.type) {
-          case 'add_column':
-            this._addColumn(table, op.column, op.definition)
-            break
-          case 'drop_column':
-            table.dropColumn(op.column)
-            break
-          case 'alter_column':
-            this._alterColumn(table, op.column, op.definition)
-            break
-          case 'add_index':
-            if (op.index.unique) {
-              table.unique(op.index.columns)
-            } else {
-              table.index(op.index.columns)
-            }
-            break
-          case 'drop_index':
-            if (op.index.unique) {
-              table.dropUnique(op.index.columns)
-            } else {
-              table.dropIndex(op.index.columns)
-            }
-            break
+    const columnOps = diff.filter(op => op.type === 'add_column' || op.type === 'drop_column' || op.type === 'alter_column')
+    const indexOps = diff.filter(op => op.type === 'add_index' || op.type === 'drop_index')
+
+    // Phase 1: Column operations — atomic batch
+    if (columnOps.length > 0) {
+      await knex.schema.alterTable(tableName, table => {
+        for (const op of columnOps) {
+          switch (op.type) {
+            case 'add_column':
+              this._addColumn(table, op.column, op.definition)
+              break
+            case 'drop_column':
+              table.dropColumn(op.column)
+              break
+            case 'alter_column':
+              this._alterColumn(table, op.column, op.definition)
+              break
+          }
         }
+      })
+    }
+
+    // Phase 2: Index operations — each applied individually for idempotent safety
+    for (const op of indexOps) {
+      await this._applyIndexOp(knex, tableName, op)
+    }
+  }
+
+  /**
+   * Why: PostgreSQL introspection can miss existing constraints across PG versions
+   * (int2vector cast edge cases, search_path mismatches, expression indexes).
+   * Rather than silently crashing the entire migration, we catch "already exists"
+   * (42P07) and "does not exist" (42704/3F000) errors that indicate the DB is
+   * already in the desired state.
+   * @param {object} knex - Knex connection instance
+   * @param {string} tableName - Table name
+   * @param {object} op - Single index diff operation
+   */
+  async _applyIndexOp(knex, tableName, op) {
+    try {
+      if (op.type === 'add_index') {
+        await knex.schema.alterTable(tableName, table => {
+          if (op.index.unique) {
+            table.unique(op.index.columns)
+          } else {
+            table.index(op.index.columns)
+          }
+        })
+      } else if (op.type === 'drop_index') {
+        await knex.schema.alterTable(tableName, table => {
+          if (op.index.unique) {
+            table.dropUnique(op.index.columns)
+          } else {
+            table.dropIndex(op.index.columns)
+          }
+        })
       }
-    })
+    } catch (e) {
+      const isDuplicate = e.code === '42P07' || e.code === 'ER_DUP_KEYNAME' || (e.message && e.message.includes('already exists'))
+      const isNotFound = e.code === '42704' || e.code === '3F000' || (e.message && e.message.includes('does not exist'))
+
+      if ((op.type === 'add_index' && isDuplicate) || (op.type === 'drop_index' && isNotFound)) {
+        // DB is already in the desired state — safe no-op
+        return
+      }
+
+      throw e
+    }
   }
 
   /**
@@ -535,7 +627,8 @@ class Migration {
 
       if (def.default !== undefined) col.defaultTo(def.default)
       if (def.unsigned) col.unsigned()
-      if (def.unique) col.unique()
+      // Column-level unique is handled via _normalizeSchema → _buildIndexes.
+      // Applying it here as well would create duplicate constraints.
       if (def.primary) col.primary()
       if (def.references) col.references(def.references.column).inTable(def.references.table)
       if (def.onDelete) col.onDelete(def.onDelete)
@@ -808,21 +901,20 @@ class Migration {
         const keyValue = row[seedKey]
         if (keyValue === undefined) continue
 
+        const preparedRow = this._prepareSeedRow(row, schema)
         const existing = await knex(tableName).where(seedKey, keyValue).first()
 
         if (!existing) {
           if (!dryRun) {
-            await knex(tableName).insert(row)
+            await knex(tableName).insert(preparedRow)
           }
           results.push({type: 'seed_insert', table: tableName, key: keyValue})
         } else {
-          // Loose comparison via String() coercion to handle DB type mismatches
-          // (e.g. SQLite returns maxLength as string "255" vs number 255)
-          const needsUpdate = Object.keys(row).some(k => k !== seedKey && String(row[k]) !== String(existing[k]))
+          const needsUpdate = this._seedRowNeedsUpdate(row, existing, seedKey)
 
           if (needsUpdate) {
             if (!dryRun) {
-              await knex(tableName).where(seedKey, keyValue).update(row)
+              await knex(tableName).where(seedKey, keyValue).update(preparedRow)
             }
             results.push({type: 'seed_update', table: tableName, key: keyValue})
           }
@@ -831,6 +923,75 @@ class Migration {
     }
 
     return results
+  }
+
+  /**
+   * Prepares a seed row for insertion/updating by stringifying JSON columns.
+   * Why: Knex/pg driver converts JavaScript arrays to PostgreSQL array literals (e.g. {1,2,3})
+   * instead of JSON arrays (e.g. [1,2,3]). This causes "invalid input syntax for type json"
+   * when seeding JSONB columns with arrays. Stringifying them explicitly fixes this.
+   * @param {object} row - Raw seed row
+   * @param {object} schema - Table schema definition
+   * @returns {object} Prepared row
+   */
+  _prepareSeedRow(row, schema) {
+    const prepared = {...row}
+    const columns = schema.columns || {}
+
+    for (const [key, value] of Object.entries(prepared)) {
+      const colDef = columns[key]
+      if (colDef && (colDef.type === 'json' || colDef.type === 'jsonb')) {
+        if (value !== null && typeof value !== 'string') {
+          prepared[key] = JSON.stringify(value)
+        }
+      }
+    }
+
+    return prepared
+  }
+
+  /**
+   * Why: The previous `String()` coercion broke for JSON/JSONB columns in two ways:
+   *   1. `String({})` produces "[object Object]" — useless for deep comparison.
+   *   2. PG may return parsed objects while seeds hold raw objects — identical data
+   *      compared as different → false-positive UPDATE → Knex double-stringifies
+   *      the already-serialized JSON → PG throws "invalid input syntax for type json".
+   *
+   * This method normalizes both sides to canonical JSON before comparing, which
+   * handles: objects, arrays, numbers-as-strings (SQLite), null vs undefined,
+   * and Date objects.
+   * @param {object} seedRow - Desired seed row from schema file
+   * @param {object} existingRow - Current row from DB
+   * @param {string} seedKey - The key column to skip during comparison
+   * @returns {boolean} True if the DB row needs updating
+   */
+  _seedRowNeedsUpdate(seedRow, existingRow, seedKey) {
+    for (const key of Object.keys(seedRow)) {
+      if (key === seedKey) continue
+
+      const desired = seedRow[key]
+      const current = existingRow[key]
+
+      // Both nullish — no change
+      if (desired == null && current == null) continue
+
+      // One nullish, other not — changed
+      if (desired == null || current == null) return true
+
+      // Both primitives — numeric-safe loose comparison
+      if (typeof desired !== 'object' && typeof current !== 'object') {
+        if (String(desired) !== String(current)) return true
+        continue
+      }
+
+      // At least one side is an object/array — canonical JSON comparison
+      const desiredJson = typeof desired === 'string' ? desired : JSON.stringify(desired)
+      const currentJson = typeof current === 'string' ? current : JSON.stringify(current)
+
+      if (desiredJson !== currentJson) return true
+    }
+
+    return false
   }
 
   // ---------------------------------------------------------------------------

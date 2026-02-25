@@ -259,6 +259,127 @@ describe('Migration Engine', () => {
 
       expect(dropIndexOps.length).toBeGreaterThanOrEqual(1)
     })
+
+    it('should normalize column-level unique into indexes and be idempotent', async () => {
+      writeSchema('apps', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100, unique: true}
+        },
+        indexes: []
+      })
+
+      // First run: creates table with unique constraint via _buildIndexes
+      const result1 = await Migration.migrate()
+      const createOps = result1.default.schema.filter(op => op.type === 'create_table')
+      expect(createOps).toHaveLength(1)
+
+      // Second run: introspection finds the unique index, normalization puts it
+      // in desiredIndexes — signatures should match, producing zero index diff ops.
+      const result2 = await Migration.migrate()
+      const indexOps2 = result2.default.schema.filter(op => op.type === 'add_index' || op.type === 'drop_index')
+      expect(indexOps2).toHaveLength(0)
+
+      // Third run: still stable (no index churn)
+      const result3 = await Migration.migrate()
+      const indexOps3 = result3.default.schema.filter(op => op.type === 'add_index' || op.type === 'drop_index')
+      expect(indexOps3).toHaveLength(0)
+    })
+
+    it('should deduplicate column-level unique that also appears in indexes', async () => {
+      writeSchema('orgs', {
+        columns: {
+          id: {type: 'increments'},
+          slug: {type: 'string', length: 255, unique: true}
+        },
+        indexes: [{columns: ['slug'], unique: true}]
+      })
+
+      // Should not throw from duplicate constraint
+      await Migration.migrate()
+
+      // Subsequent run must produce zero index diff
+      const result = await Migration.migrate()
+      const indexOps = result.default.schema.filter(op => op.type === 'add_index' || op.type === 'drop_index')
+      expect(indexOps).toHaveLength(0)
+    })
+
+    it('should not create implicit indexes for increments or timestamps', async () => {
+      writeSchema('counters', {
+        columns: {
+          id: {type: 'increments'},
+          ts: {type: 'timestamps'}
+        },
+        indexes: []
+      })
+
+      await Migration.migrate()
+
+      // Verify the normalized schema didn't inject unexpected indexes
+      const result = await Migration.migrate()
+      expect(result.default.schema).toHaveLength(0)
+    })
+
+    it('should survive add_index when constraint already exists (idempotent)', async () => {
+      // Create a table with a unique index directly via Knex
+      await db.schema.createTable('apps', t => {
+        t.increments('id')
+        t.string('name', 100).notNullable()
+        t.unique(['name'])
+      })
+
+      // Now define a schema that also declares unique on name
+      // This forces _computeDiff to see the unique in desiredIndexes.
+      // Even if introspection misses the existing constraint (PG edge case),
+      // the idempotent _applyIndexOp must catch "already exists" gracefully.
+      writeSchema('apps', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100, nullable: false, unique: true}
+        },
+        indexes: []
+      })
+
+      // Should NOT throw — idempotent handling catches duplicate
+      await expect(Migration.migrate()).resolves.toBeDefined()
+
+      // Running again should also be stable
+      await expect(Migration.migrate()).resolves.toBeDefined()
+    })
+
+    it('should survive drop_index when index already removed', async () => {
+      // Create table WITHOUT an index
+      await db.schema.createTable('widgets', t => {
+        t.increments('id')
+        t.string('code', 50)
+      })
+
+      // Schema says there should be an index — creates it
+      writeSchema('widgets', {
+        columns: {
+          id: {type: 'increments'},
+          code: {type: 'string', length: 50}
+        },
+        indexes: [{columns: ['code'], unique: false}]
+      })
+
+      await Migration.migrate()
+
+      // Now remove the index from schema
+      writeSchema('widgets', {
+        columns: {
+          id: {type: 'increments'},
+          code: {type: 'string', length: 50}
+        },
+        indexes: []
+      })
+
+      // Drop the index manually first to simulate the "already removed" edge case
+      await db.schema.alterTable('widgets', t => t.dropIndex(['code']))
+
+      // Migration should NOT throw — idempotent handling catches "does not exist"
+      await expect(Migration.migrate()).resolves.toBeDefined()
+    })
   })
 
   // ---------------------------------------------------------------------------
@@ -360,6 +481,115 @@ describe('Migration Engine', () => {
       })
 
       await expect(Migration.migrate()).rejects.toThrow('seedKey')
+    })
+
+    it('should correctly compare JSON object seed values without false-positive updates', async () => {
+      writeSchema('apps', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100},
+          config: {type: 'json'}
+        },
+        indexes: [],
+        seed: [{name: 'myapp', config: JSON.stringify({host: 'data', container: '/data'})}],
+        seedKey: 'name'
+      })
+
+      // First migrate — inserts seed
+      const result1 = await Migration.migrate()
+      expect(result1.default.seeds).toEqual(expect.arrayContaining([expect.objectContaining({type: 'seed_insert', table: 'apps'})]))
+
+      // Second migrate — identical JSON seed must NOT trigger update
+      const result2 = await Migration.migrate()
+      const updateOps = result2.default.seeds.filter(s => s.type === 'seed_update')
+      expect(updateOps).toHaveLength(0)
+    })
+
+    it('should detect actual changes in JSON seed values', async () => {
+      writeSchema('services', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100},
+          meta: {type: 'json'}
+        },
+        indexes: [],
+        seed: [{name: 'api', meta: JSON.stringify({version: 1})}],
+        seedKey: 'name'
+      })
+
+      await Migration.migrate()
+
+      // Update the JSON value
+      writeSchema('services', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100},
+          meta: {type: 'json'}
+        },
+        indexes: [],
+        seed: [{name: 'api', meta: JSON.stringify({version: 2, new_field: true})}],
+        seedKey: 'name'
+      })
+
+      const result = await Migration.migrate()
+      expect(result.default.seeds).toEqual(
+        expect.arrayContaining([expect.objectContaining({type: 'seed_update', table: 'services', key: 'api'})])
+      )
+    })
+
+    it('should automatically stringify raw objects/arrays in JSON seed data to prevent PG array conversion errors', async () => {
+      writeSchema('raw_json_seed', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 100},
+          ports: {type: 'jsonb'},
+          volumes: {type: 'jsonb'}
+        },
+        indexes: [],
+        seed: [
+          {
+            name: 'app1',
+            ports: ['80:80', '443:443'],
+            volumes: [{host: 'data', container: '/data'}]
+          }
+        ],
+        seedKey: 'name'
+      })
+
+      // First migrate — inserts seed
+      const result1 = await Migration.migrate()
+      expect(result1.default.seeds).toEqual(
+        expect.arrayContaining([expect.objectContaining({type: 'seed_insert', table: 'raw_json_seed'})])
+      )
+
+      // Verify the data was stringified correctly
+      const rows = await db('raw_json_seed').orderBy('name')
+      expect(rows[0].ports).toBe('["80:80","443:443"]')
+      expect(rows[0].volumes).toBe('[{"host":"data","container":"/data"}]')
+
+      // Second migrate — identical raw JSON seed must NOT trigger update
+      const result2 = await Migration.migrate()
+      const updateOps = result2.default.seeds.filter(s => s.type === 'seed_update')
+      expect(updateOps).toHaveLength(0)
+    })
+
+    it('should handle null values in seed comparison without crashing', async () => {
+      writeSchema('flags', {
+        columns: {
+          id: {type: 'increments'},
+          name: {type: 'string', length: 50},
+          value: {type: 'string', nullable: true}
+        },
+        indexes: [],
+        seed: [{name: 'debug', value: null}],
+        seedKey: 'name'
+      })
+
+      await Migration.migrate()
+
+      // Second run — null stays null, no update needed
+      const result = await Migration.migrate()
+      expect(result.default.seeds.filter(s => s.type === 'seed_update')).toHaveLength(0)
     })
   })
 
