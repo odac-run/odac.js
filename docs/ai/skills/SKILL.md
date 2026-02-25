@@ -22,6 +22,7 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [backend/forms.md](backend/forms.md) - Form processing and Validation logic
 - [backend/ipc.md](backend/ipc.md) - Inter-Process Communication and state sharing
 - [backend/mail.md](backend/mail.md) - Transactional email sending
+- [backend/migrations.md](backend/migrations.md) - Schema-first, auto-run, cluster-safe DB migrations
 - [backend/request_response.md](backend/request_response.md) - Handling Odac.Request and Odac.Response
 - [backend/routing.md](backend/routing.md) - Route definitions, Middlewares, and Error Pages
 - [backend/storage.md](backend/storage.md) - Persistent key-value storage (LMDB)

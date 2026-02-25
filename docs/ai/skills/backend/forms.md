@@ -4,7 +4,7 @@ Processing form data securely and validating inputs.
 
 ## Rules
 1.  **Validator**: Always use `Odac.Validator` for input.
-2.  **Auto-save**: Use `Odac.Db.table().save(Odac.Request.post())` for quick inserts.
+2.  **Auto-save**: Use `Odac.DB.table().save(Odac.Request.post())` for quick inserts.
 3.  **CSRF**: Ensure `{{ TOKEN }}` is in your HTML forms.
 
 ## Patterns
