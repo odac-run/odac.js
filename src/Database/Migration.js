@@ -308,7 +308,8 @@ class Migration {
   }
 
   async _introspectIndexesSQLite(knex, tableName) {
-    const rawIndexes = await knex.raw(`PRAGMA index_list("${tableName}")`)
+    const safeTableName = this._quoteSQLiteIdentifier(tableName)
+    const rawIndexes = await knex.raw(`PRAGMA index_list(${safeTableName})`)
     const indexes = Array.isArray(rawIndexes) ? rawIndexes : []
     const result = []
 
@@ -317,7 +318,8 @@ class Migration {
       // Skip auto-generated unique constraint indexes (created by Knex .unique())
       // These have origin='c' but we still track them since they are user-defined
 
-      const rawCols = await knex.raw(`PRAGMA index_info("${idx.name}")`)
+      const safeIndexName = this._quoteSQLiteIdentifier(idx.name)
+      const rawCols = await knex.raw(`PRAGMA index_info(${safeIndexName})`)
       const cols = Array.isArray(rawCols) ? rawCols : []
       result.push({
         name: idx.name,
@@ -977,6 +979,11 @@ class Migration {
       .trim()
 
     return normalized.length > 0 ? normalized : 'table'
+  }
+
+  _quoteSQLiteIdentifier(value) {
+    const normalized = String(value)
+    return `"${normalized.replace(/"/g, '""')}"`
   }
 
   /**
