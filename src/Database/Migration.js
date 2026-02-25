@@ -856,7 +856,13 @@ class Migration {
       const columns = await this._introspectColumns(knex, tableName)
       const indexes = await this._introspectIndexes(knex, tableName)
       const schemaContent = this._generateSchemaFileContent(tableName, columns, indexes)
-      const filePath = path.join(targetDir, `${tableName}.js`)
+      const safeFileStem = this._toSafeFileStem(tableName)
+      const filePath = path.resolve(targetDir, `${safeFileStem}.js`)
+      const targetRoot = path.resolve(targetDir) + path.sep
+
+      if (!filePath.startsWith(targetRoot)) {
+        throw new Error(`ODAC Migration: Unsafe snapshot path generated for table '${tableName}'.`)
+      }
 
       fs.writeFileSync(filePath, schemaContent, 'utf8')
       generatedFiles.push(filePath)
@@ -959,6 +965,18 @@ class Migration {
     const normalized = String(key)
     if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(normalized)) return normalized
     return this._toJsLiteral(normalized)
+  }
+
+  _toSafeFileStem(name) {
+    const normalized = String(name)
+      .normalize('NFKC')
+      .replace(/[\\/\0]/g, '_')
+      .replace(/\.+/g, '.')
+      .replace(/[^A-Za-z0-9._-]/g, '_')
+      .replace(/^\.+/, '')
+      .trim()
+
+    return normalized.length > 0 ? normalized : 'table'
   }
 
   /**
