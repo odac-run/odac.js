@@ -82,7 +82,7 @@ class DatabaseManager {
     try {
       await Migration.migrate()
     } catch (e) {
-      console.error('Odac Migration Error:', e.message)
+      throw new Error(`Odac Migration Error: ${e.message}`, {cause: e})
     }
   }
 
