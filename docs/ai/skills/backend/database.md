@@ -1,3 +1,10 @@
+---
+name: backend-database-skill
+description: High-performance ODAC database querying patterns using the built-in query builder with secure and efficient data access.
+metadata:
+  tags: backend, database, query-builder, sql, indexing, performance, security
+---
+
 # Backend Database Skill
 
 High-performance database operations using the ODAC Query Builder.

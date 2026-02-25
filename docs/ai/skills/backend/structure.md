@@ -1,3 +1,10 @@
+---
+name: backend-structure-services-skill
+description: ODAC project organization rules for directory structure, service classes, and request-scoped architecture.
+metadata:
+  tags: backend, structure, services, architecture, request-scope, organization
+---
+
 # Backend Structure & Services Skill
 
 ODAC follows a strictly organized directory structure and focuses on request-scoped architecture. This skill explains how to organize code and use Service Classes.

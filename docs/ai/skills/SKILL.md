@@ -1,8 +1,8 @@
 ---
-name: odac-framework
-description: Comprehensive AI developer skills for the ODAC Framework (Backend & Frontend).
+name: odac-framework-skill-catalog
+description: Comprehensive ODAC backend and frontend AI skill index for architecture, security, and high-performance application development.
 metadata:
-  tags: nodejs, framework, backend, frontend, architecture, security
+  tags: odac, skills, backend, frontend, architecture, security, performance
 ---
 
 ## When to use

@@ -1,3 +1,10 @@
+---
+name: backend-authentication-realtime-skill
+description: Secure ODAC authentication patterns for sessions, guards, passwordless flows, and realtime channel protection.
+metadata:
+  tags: backend, authentication, session, auth-guard, magic-link, realtime, security
+---
+
 # Backend Authentication & Realtime Skill
 
 Secure user authentication, session management, and bidirectional communication.

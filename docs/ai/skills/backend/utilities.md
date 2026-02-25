@@ -1,3 +1,10 @@
+---
+name: backend-utilities-skill
+description: Practical ODAC utility patterns for string processing, hashing, encryption, and request flow control.
+metadata:
+    tags: backend, utilities, strings, hashing, encryption, flow-control
+---
+
 # Backend Utilities Skill
 
 String manipulation, hashing, and flow control.

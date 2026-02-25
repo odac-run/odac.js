@@ -1,3 +1,10 @@
+---
+name: backend-migrations-skill
+description: Schema-first ODAC migration strategy for deterministic database evolution, index sync, and cluster-safe execution.
+metadata:
+  tags: backend, migrations, schema, database-evolution, indexes, cluster-safety
+---
+
 # Backend Migrations Skill
 
 Schema-first, zero-config migration strategy for ODAC.

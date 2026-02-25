@@ -1,3 +1,10 @@
+---
+name: backend-views-templates-skill
+description: ODAC server-side rendering guidelines for template performance, skeleton layouts, and safe output rendering.
+metadata:
+  tags: backend, views, templates, ssr, xss-protection, skeleton, rendering
+---
+
 # Backend Views & Templates Skill
 
 High-performance server-side rendering using ODAC's optimized template engine.

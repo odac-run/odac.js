@@ -1,3 +1,10 @@
+---
+name: backend-forms-validation-skill
+description: Secure ODAC form processing workflow with validation, CSRF protection, and safe request-to-database handling.
+metadata:
+  tags: backend, forms, validation, csrf, input-security, request-processing
+---
+
 # Backend Forms & Validation Skill
 
 Processing form data securely and validating inputs.

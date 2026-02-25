@@ -1,3 +1,10 @@
+---
+name: backend-request-response-skill
+description: ODAC request parsing and response composition patterns for consistent, secure, and predictable API behavior.
+metadata:
+  tags: backend, request, response, headers, status-codes, json, api
+---
+
 # Backend Request & Response Skill
 
 Handling incoming data and sending structured responses.

@@ -1,3 +1,10 @@
+---
+name: backend-translations-i18n-skill
+description: Internationalization patterns in ODAC for locale files, placeholders, and multilingual rendering workflows.
+metadata:
+  tags: backend, i18n, translations, locale, placeholders, multilingual
+---
+
 # Backend Translations (i18n) Skill
 
 ODAC provides built-in support for internationalization, allowing for easy multi-language application development.

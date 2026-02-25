@@ -1,3 +1,10 @@
+---
+name: backend-cron-jobs-skill
+description: Reliable ODAC cron scheduling patterns for background automation, timing control, and safe execution design.
+metadata:
+  tags: backend, cron, scheduler, background-jobs, automation, timing
+---
+
 # Backend Cron Jobs Skill
 
 ODAC provides a built-in cron system for automating background tasks without external dependencies.

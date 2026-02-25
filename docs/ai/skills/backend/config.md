@@ -1,3 +1,10 @@
+---
+name: backend-configuration-skill
+description: ODAC configuration standards for odac.json usage, environment variable mapping, and secure runtime settings.
+metadata:
+  tags: backend, configuration, odac-json, environment, secrets, settings
+---
+
 # Backend Configuration Skill
 
 Managing application settings using `odac.json` and environment variables.

@@ -1,3 +1,10 @@
+---
+name: backend-streaming-sse-skill
+description: Server-Sent Events streaming patterns in ODAC for realtime one-way updates with safe connection lifecycle management.
+metadata:
+  tags: backend, streaming, sse, realtime, event-stream, connection-lifecycle
+---
+
 # Backend Streaming API Skill
 
 Real-time data streaming using Server-Sent Events (SSE).

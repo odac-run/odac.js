@@ -1,3 +1,10 @@
+---
+name: frontend-core-skill
+description: Core ODAC frontend architecture patterns based on actions, lifecycle hooks, and event-driven UI behavior.
+metadata:
+  tags: frontend, odac-js, actions, lifecycle, events, ui-architecture
+---
+
 # Frontend Core Skill
 
 The foundational principles of the `odac.js` library for building reactive and interactive user interfaces.
