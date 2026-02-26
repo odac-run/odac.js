@@ -5,6 +5,7 @@ const path = require('node:path')
 const readline = require('node:readline')
 const {execSync, spawn} = require('node:child_process')
 const cluster = require('node:cluster')
+const Env = require('../src/Env')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -247,10 +248,7 @@ async function runMigration(cmd, cliArgs) {
       const idx = line.indexOf('=')
       if (idx === -1) return
       const key = line.slice(0, idx).trim()
-      let value = line.slice(idx + 1).trim()
-      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-        value = value.slice(1, -1)
-      }
+      const value = Env._parseValue(line.slice(idx + 1).trim())
       if (process.env[key] === undefined) process.env[key] = value
     })
   }
