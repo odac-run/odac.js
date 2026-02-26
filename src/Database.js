@@ -1,5 +1,5 @@
 'use strict'
-const knex = require('knex')
+const {buildConnections} = require('./Database/ConnectionFactory')
 
 class DatabaseManager {
   constructor() {
@@ -9,41 +9,9 @@ class DatabaseManager {
   async init() {
     if (!Odac.Config.database) return
 
-    let multiple = typeof Odac.Config.database[Object.keys(Odac.Config.database)[0]] === 'object'
-    let dbs = multiple ? Odac.Config.database : {default: Odac.Config.database}
+    this.connections = buildConnections(Odac.Config.database)
 
-    for (let key of Object.keys(dbs)) {
-      let db = dbs[key]
-      let client = 'mysql2'
-      if (db.type === 'postgres' || db.type === 'pg' || db.type === 'postgresql') client = 'pg'
-      if (db.type === 'sqlite' || db.type === 'sqlite3') client = 'sqlite3'
-
-      let connectionConfig
-
-      if (client === 'sqlite3') {
-        connectionConfig = {
-          filename: db.filename || db.database || './dev.sqlite3'
-        }
-      } else {
-        connectionConfig = {
-          host: db.host || '127.0.0.1',
-          user: db.user,
-          password: db.password,
-          database: db.database,
-          port: db.port
-        }
-      }
-
-      this.connections[key] = knex({
-        client: client,
-        connection: connectionConfig,
-        pool: {
-          min: 0,
-          max: db.connectionLimit || 10
-        },
-        useNullAsDefault: true // For sqlite
-      })
-
+    for (const key of Object.keys(this.connections)) {
       // Test connection
       try {
         await this.connections[key].raw('SELECT 1')

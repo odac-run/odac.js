@@ -6,6 +6,7 @@ const readline = require('node:readline')
 const {execSync, spawn} = require('node:child_process')
 const cluster = require('node:cluster')
 const Env = require('../src/Env')
+const {buildConnections} = require('../src/Database/ConnectionFactory')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -296,38 +297,9 @@ async function runMigration(cmd, cliArgs) {
     process.exit(1)
   }
 
-  // Build knex connections (same logic as Database.js)
-  const knex = require('knex')
-  const isMultiple = typeof dbConfig[Object.keys(dbConfig)[0]] === 'object'
-  const dbs = isMultiple ? dbConfig : {default: dbConfig}
-  const connections = {}
+  const connections = buildConnections(dbConfig)
 
-  for (const key of Object.keys(dbs)) {
-    const db = dbs[key]
-    let client = 'mysql2'
-    if (db.type === 'postgres' || db.type === 'pg' || db.type === 'postgresql') client = 'pg'
-    if (db.type === 'sqlite' || db.type === 'sqlite3') client = 'sqlite3'
-
-    let connectionConfig
-    if (client === 'sqlite3') {
-      connectionConfig = {filename: db.filename || db.database || './dev.sqlite3'}
-    } else {
-      connectionConfig = {
-        host: db.host || '127.0.0.1',
-        user: db.user,
-        password: db.password,
-        database: db.database,
-        port: db.port
-      }
-    }
-
-    connections[key] = knex({
-      client,
-      connection: connectionConfig,
-      pool: {min: 0, max: db.connectionLimit || 10},
-      useNullAsDefault: true
-    })
-
+  for (const key of Object.keys(connections)) {
     try {
       await connections[key].raw('SELECT 1')
     } catch (e) {
