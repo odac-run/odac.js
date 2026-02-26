@@ -1,3 +1,29 @@
+### doc
+
+- enhance AI skills documentation with structured YAML front matter and detailed descriptions
+
+### ⚙️ Engine Tuning
+
+- **database:** centralize knex connection bootstrap for runtime and CLI
+
+### 📚 Documentation
+
+- add section for loading and updating AI skills in projects
+
+### 🛠️ Fixes & Improvements
+
+- **auth:** improve token rotation logic and ensure proper cookie attributes
+- **cli:** parse .env values consistently in migration loader
+- **config:** update interpolation regex to support variable names with hyphens
+- **migration:** normalize column-level unique constraints and enhance idempotency in migrations
+- **release:** add version output to release notes and update release title condition
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ⚙️ Engine Tuning
 
 - Extract MIME type definitions into a dedicated module.
