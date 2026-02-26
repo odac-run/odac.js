@@ -77,6 +77,13 @@ describe('Config', () => {
       expect(result).toBe('hello-bar')
     })
 
+    it('should replace ${VAR} when variable name includes hyphen', () => {
+      process.env['MY-VAR'] = 'hyphen-value'
+      const result = Config._interpolate('hello-${MY-VAR}')
+      expect(result).toBe('hello-hyphen-value')
+      delete process.env['MY-VAR']
+    })
+
     it('should replace ${odac} with client path', () => {
       // __dirname in Config.js is /.../src, so it replaces /src with /client
       const result = Config._interpolate('path-${odac}')

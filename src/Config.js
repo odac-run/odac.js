@@ -46,7 +46,7 @@ module.exports = {
 
   _interpolate: function (obj) {
     if (typeof obj === 'string') {
-      return obj.replace(/\$\{(\w+)\}/g, (_, key) => {
+      return obj.replace(/\$\{([^{}]+)\}/g, (_, key) => {
         // Special variables
         if (key === 'odac') {
           return __dirname.replace(/\/src$/, '/client')

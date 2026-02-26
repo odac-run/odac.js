@@ -266,7 +266,7 @@ async function runMigration(cmd, cliArgs) {
     // Interpolate env vars safely by traversing parsed object values.
     const interpolateConfig = input => {
       if (typeof input === 'string') {
-        return input.replace(/\$\{(\w+)\}/g, (_, key) => process.env[key] || '')
+        return input.replace(/\$\{([^{}]+)\}/g, (_, key) => process.env[key] || '')
       }
 
       if (Array.isArray(input)) {
