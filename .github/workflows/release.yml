@@ -62,6 +62,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           michelangelo: ${{ secrets.MICHELANGELO }}
+          version: ${{ steps.version.outputs.version }}
         timeout-minutes: 15
         continue-on-error: true
 
@@ -96,7 +97,6 @@ jobs:
         if: steps.ai_notes.outcome == 'success' && steps.version.outputs.version != ''
         with:
           tag_name: v${{ steps.version.outputs.version }}
-          name: ${{ steps.ai_notes.outputs.release-title }}
           body_path: RELEASE_NOTE.md
           draft: false
           prerelease: false
