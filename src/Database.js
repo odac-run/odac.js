@@ -54,6 +54,24 @@ class DatabaseManager {
     }
   }
 
+  /**
+   * Gracefully destroys all active database connections.
+   * Called during shutdown to release connection pools and prevent resource leaks.
+   */
+  async close() {
+    const entries = Object.entries(this.connections)
+    if (entries.length === 0) return
+
+    await Promise.allSettled(
+      entries.map(([name, knex]) =>
+        knex.destroy().catch(err => {
+          console.error(`\x1b[31m[Database]\x1b[0m Failed to close '${name}' connection:`, err.message)
+        })
+      )
+    )
+    this.connections = {}
+  }
+
   nanoid(size = 21) {
     const nodeCrypto = require('crypto')
     const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -152,6 +170,7 @@ const rootProxy = new Proxy(manager, {
   get(target, prop) {
     // Access to internal manager methods
     if (prop === 'init') return target.init.bind(target)
+    if (prop === 'close') return target.close.bind(target)
     if (prop === 'connections') return target.connections
 
     // Access to specific database connection: Odac.DB.analytics

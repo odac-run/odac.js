@@ -33,36 +33,72 @@ module.exports = {
         }
       })
 
-      // Graceful shutdown handler for primary
-      const gracefulShutdown = signal => {
+      /**
+       * GRACEFUL SHUTDOWN — PRIMARY PROCESS
+       * ────────────────────────────────────
+       * Shutdown order (deterministic, sequential):
+       *   1. Stop accepting new work       → Cron, session GC
+       *   2. Drain active workers           → send 'shutdown', disconnect, wait
+       *   3. Release shared resources       → IPC, Database, Storage
+       *   4. Exit 0
+       *
+       * A 30-second hard timeout protects against hung workers or I/O.
+       */
+      const gracefulShutdown = async signal => {
         if (isShuttingDown) return
         isShuttingDown = true
 
         console.log(`\n\x1b[33m[Shutdown]\x1b[0m ${signal} received, shutting down gracefully...`)
 
-        // Disconnect all workers
-        for (const id in cluster.workers) {
-          cluster.workers[id].send('shutdown')
-          cluster.workers[id].disconnect()
-        }
-
-        let workersAlive = Object.keys(cluster.workers).length
-
-        cluster.on('exit', () => {
-          workersAlive--
-          if (workersAlive === 0) {
-            console.log('\x1b[32m[Shutdown]\x1b[0m All workers stopped.')
-            Odac.Storage.close()
-            console.log('\x1b[32m[Shutdown]\x1b[0m Storage closed. Goodbye!')
-            process.exit(0)
-          }
-        })
-
-        // Force exit after 30 seconds
-        setTimeout(() => {
+        // Force exit safety net — must be set immediately
+        const forceTimer = setTimeout(() => {
           console.error('\x1b[31m[Shutdown]\x1b[0m Timeout! Forcing exit...')
           process.exit(1)
         }, 30000)
+        forceTimer.unref()
+
+        // Phase 1: Stop schedulers so no new work is queued
+        Odac.Route.stopCron()
+
+        // Phase 2: Gracefully drain all workers
+        await new Promise(resolve => {
+          const workerIds = Object.keys(cluster.workers)
+          let workersAlive = workerIds.length
+
+          if (workersAlive === 0) return resolve()
+
+          cluster.on('exit', () => {
+            workersAlive--
+            if (workersAlive <= 0) resolve()
+          })
+
+          for (const id of workerIds) {
+            const worker = cluster.workers[id]
+            if (worker) {
+              worker.send('shutdown')
+              worker.disconnect()
+            }
+          }
+        })
+
+        console.log('\x1b[32m[Shutdown]\x1b[0m All workers stopped.')
+
+        // Phase 3: Release shared resources (order matters: IPC → DB → Storage)
+        try {
+          await Odac.Ipc.close()
+        } catch {
+          /* best-effort */
+        }
+        try {
+          await Odac.Database.close()
+        } catch {
+          /* best-effort */
+        }
+        Odac.Storage.close()
+
+        console.log('\x1b[32m[Shutdown]\x1b[0m Resources released. Goodbye!')
+        clearTimeout(forceTimer)
+        process.exit(0)
       }
 
       process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
@@ -113,11 +149,28 @@ module.exports = {
 
       server.listen(port)
 
-      // Graceful shutdown handler for worker
-      process.on('message', msg => {
+      /**
+       * GRACEFUL SHUTDOWN — WORKER PROCESS
+       * ──────────────────────────────────
+       * 1. Stop accepting new connections  (server.close)
+       * 2. Release worker-scoped resources (IPC pending requests, DB pools)
+       * 3. Exit 0
+       */
+      process.on('message', async msg => {
         if (msg === 'shutdown') {
           console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Closing server...`)
-          server.close(() => {
+
+          server.close(async () => {
+            try {
+              await Odac.Ipc.close()
+            } catch {
+              /* best-effort */
+            }
+            try {
+              await Odac.Database.close()
+            } catch {
+              /* best-effort */
+            }
             console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Server closed.`)
             process.exit(0)
           })

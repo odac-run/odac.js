@@ -12,6 +12,17 @@ class Cron {
     }
   }
 
+  /**
+   * Stops the cron scheduler. Called during graceful shutdown to prevent
+   * new cron jobs from firing while the process is terminating.
+   */
+  stop() {
+    if (this.#interval) {
+      clearInterval(this.#interval)
+      this.#interval = null
+    }
+  }
+
   check() {
     const now = new Date()
     const minute = now.getMinutes()
