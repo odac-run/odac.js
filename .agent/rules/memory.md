@@ -36,6 +36,9 @@ trigger: always_on
 ## Naming & Text Conventions
 - **ODAC Casing:** Always write "ODAC" in uppercase letters when referring to the framework name in strings, comments, log messages, or user-facing text. **EXCEPTION:** The class name itself (`class Odac`) and variable references to it should remain `Odac` (PascalCase) as per code conventions.
 
+## Documentation Standards
+- **AI Skill Front Matter:** Every file under `docs/ai/skills/**/*.md` must start with YAML front matter containing `name`, `description`, and `metadata.tags`; values must be specific to that document's topic (never copied from generic examples).
+
 ## Testing & Validation
 - **Mandatory Test Coverage:** Every new feature, method, or significant logic change MUST be accompanied by a corresponding unit or integration test.
     - **Verify Correctness:** do not assume code works; prove it with a test that covers both success and failure scenarios (e.g., edge cases, error conditions).

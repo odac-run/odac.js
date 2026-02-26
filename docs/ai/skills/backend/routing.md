@@ -1,3 +1,10 @@
+---
+name: backend-routing-middleware-skill
+description: High-performance ODAC routing and middleware orchestration for secure request pipelines and scalable URL mapping.
+metadata:
+  tags: backend, routing, middleware, pipeline, auth, performance, url-matching
+---
+
 # Backend Routing & Middleware Skill
 
 Routing manages the request pipeline, directing URLs to controllers while applying security and business logic via middlewares.

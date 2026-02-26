@@ -1,8 +1,8 @@
 ---
-name: odac-framework
-description: Comprehensive AI developer skills for the ODAC Framework (Backend & Frontend).
+name: odac-framework-skill-catalog
+description: Comprehensive ODAC backend and frontend AI skill index for architecture, security, and high-performance application development.
 metadata:
-  tags: nodejs, framework, backend, frontend, architecture, security
+  tags: odac, skills, backend, frontend, architecture, security, performance
 ---
 
 ## When to use
@@ -22,6 +22,7 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [backend/forms.md](backend/forms.md) - Form processing and Validation logic
 - [backend/ipc.md](backend/ipc.md) - Inter-Process Communication and state sharing
 - [backend/mail.md](backend/mail.md) - Transactional email sending
+- [backend/migrations.md](backend/migrations.md) - Schema-first, auto-run, cluster-safe DB migrations
 - [backend/request_response.md](backend/request_response.md) - Handling Odac.Request and Odac.Response
 - [backend/routing.md](backend/routing.md) - Route definitions, Middlewares, and Error Pages
 - [backend/storage.md](backend/storage.md) - Persistent key-value storage (LMDB)

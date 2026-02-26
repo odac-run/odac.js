@@ -1,3 +1,10 @@
+---
+name: backend-ipc-skill
+description: ODAC inter-process communication guidance for memory and Redis drivers, shared state, and distributed coordination.
+metadata:
+  tags: backend, ipc, redis, cluster, distributed-state, synchronization
+---
+
 # Backend IPC (Inter-Process Communication) Skill
 
 ODAC provides a built-in IPC system to share data and sync states across application workers or multiple servers.

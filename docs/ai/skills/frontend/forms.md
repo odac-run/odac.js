@@ -1,3 +1,10 @@
+---
+name: frontend-forms-api-skill
+description: AJAX form and API request patterns in odac.js for interactive UX and predictable frontend data flows.
+metadata:
+  tags: frontend, forms, ajax, api-requests, odac-get, odac-post
+---
+
 # Frontend Forms & API Skill
 
 Handling AJAX form submissions and API requests.

@@ -1,3 +1,10 @@
+---
+name: backend-controllers-skill
+description: Best practices for ODAC controller architecture, class-based routing, and clean request handling boundaries.
+metadata:
+  tags: backend, controllers, class-based, route-mapping, architecture, maintainability
+---
+
 # Backend Controllers Skill
 
 Controllers are the bridge between routes and views/services. This skill covers how to write clean, professional controllers in ODAC.

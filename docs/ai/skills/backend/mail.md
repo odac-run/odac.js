@@ -1,3 +1,10 @@
+---
+name: backend-mail-skill
+description: Transactional email integration patterns in ODAC using fluent mail APIs, templating, and transport configuration.
+metadata:
+  tags: backend, mail, smtp, transactional-email, templating, notifications
+---
+
 # Backend Mail Skill
 
 Sending transactional emails using the fluent `Odac.Mail` service.

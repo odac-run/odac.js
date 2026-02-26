@@ -1,3 +1,10 @@
+---
+name: backend-persistent-storage-skill
+description: Embedded ODAC storage usage patterns with LMDB for sub-millisecond key-value persistence across workers.
+metadata:
+  tags: backend, storage, lmdb, key-value, persistence, high-performance
+---
+
 # Backend Persistent Storage Skill
 
 ODAC provides a high-performance, embedded key-value store using LMDB, exposed via `Odac.Storage`.

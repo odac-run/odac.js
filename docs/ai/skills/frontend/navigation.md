@@ -1,3 +1,10 @@
+---
+name: frontend-navigation-spa-skill
+description: Single-page navigation patterns in odac.js for smooth transitions, route control, and lifecycle-safe execution.
+metadata:
+  tags: frontend, navigation, spa, ajax-navigation, page-lifecycle, transitions
+---
+
 # Frontend Navigation & SPA Skill
 
 Smooth transitions and single-page application behavior using `odac.js`.

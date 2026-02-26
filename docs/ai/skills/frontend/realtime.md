@@ -1,3 +1,10 @@
+---
+name: frontend-realtime-websocket-skill
+description: Realtime frontend communication patterns in odac.js using shared WebSockets, SSE, and resilient reconnect behavior.
+metadata:
+  tags: frontend, realtime, websocket, sse, sharedworker, auto-reconnect
+---
+
 # Frontend Realtime & WebSocket Skill
 
 Real-time bidirectional communication and server-sent events with high efficiency.

@@ -1,3 +1,10 @@
+---
+name: backend-validation-skill
+description: Fluent ODAC validation strategies for input hardening, brute-force protection, and standardized error responses.
+metadata:
+  tags: backend, validation, fluent-api, input-security, brute-force, error-handling
+---
+
 # Backend Validation Skill
 
 The `Validator` service provides a fluent, chainable API for securing user input and enforcing business rules.

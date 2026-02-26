@@ -137,11 +137,19 @@ describe('Auth - Refresh Token Rotation', () => {
     // New cookie values must differ from old ones
     expect(xSet[1]).not.toBe('old_x')
     expect(ySet[1]).not.toBe('old_y')
+    // Cookie max-age must use proper HTTP attribute name (hyphenated, not camelCase)
+    expect(xSet[2]['max-age']).toBeDefined()
+    expect(xSet[2].maxAge).toBeUndefined()
   })
 
-  it('should NOT rotate a token already marked as rotated (Epoch Date marker)', async () => {
+  it('should NOT rotate a recently-rotated token still within 5s threshold', async () => {
+    // Simulate a rotated token where active was set to give ~60s grace period
+    // and the rotation JUST happened (< 5 seconds ago)
+    const maxAge = 30 * 24 * 60 * 60 * 1000
+    const rotatedActiveDate = new Date(Date.now() - maxAge + 60000) // Grace period: ~60s left
+
     const mockRecord = {
-      active: new Date(), // Still within maxAge
+      active: rotatedActiveDate,
       browser: 'TestBrowser',
       date: new Date(0), // Epoch marker = already rotated
       id: 'token_2',
@@ -158,9 +166,62 @@ describe('Auth - Refresh Token Rotation', () => {
     const result = await authInstance.check()
 
     expect(result).toBe(true)
-    // No rotation should occur
+    // No rotation should occur (timeSinceRotation < 5000)
     expect(dbMock.insert).not.toHaveBeenCalled()
     expect(dbMock.tracker.updateCalls.length).toBe(0)
+  })
+
+  it('should recovery-rotate and DELETE old token when client lost cookies (rotated token > 5s)', async () => {
+    // Simulate a rotated token where 10 seconds have passed since original rotation
+    // Client still has old cookies → recovery rotation should trigger
+    const maxAge = 30 * 24 * 60 * 60 * 1000
+    const timeSinceRotation = 10000 // 10 seconds since original rotation
+    // active was set to: rotationTime - maxAge + 60000
+    // So: inactiveAge = now - active = now - (rotationTime - maxAge + 60000) = timeSinceRotation + maxAge - 60000
+    // timeSinceRotation formula: inactiveAge - maxAge + 60000 = timeSinceRotation = 10000
+    const rotatedActiveDate = new Date(Date.now() - maxAge + 60000 - timeSinceRotation)
+
+    const mockRecord = {
+      active: rotatedActiveDate,
+      browser: 'TestBrowser',
+      date: new Date(0), // Epoch marker = rotated
+      id: 'token_recovery',
+      ip: '127.0.0.1',
+      token_x: 'old_x',
+      token_y: 'hashed_old_y',
+      user: 'user_10'
+    }
+
+    const dbMock = createDbMock([mockRecord])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    const result = await authInstance.check()
+
+    expect(result).toBe(true)
+
+    // Should insert a new token (recovery rotation)
+    expect(dbMock.insert).toHaveBeenCalledTimes(1)
+    const inserted = dbMock.tracker.insertCalls[0]
+    expect(inserted.user).toBe('user_10')
+    expect(inserted.token_x).toBeDefined()
+
+    // Old token should be DELETED, not updated (prevents token multiplication)
+    expect(dbMock.tracker.deleteCalls.length).toBe(1)
+    expect(dbMock.tracker.updateCalls.length).toBe(0)
+
+    // New cookies should be issued
+    const setCalls = reqMock.cookie.mock.calls.filter(c => c.length >= 2)
+    const xSet = setCalls.find(c => c[0] === 'odac_x' && c[2]?.httpOnly === true)
+    const ySet = setCalls.find(c => c[0] === 'odac_y' && c[2]?.httpOnly === true)
+    expect(xSet).toBeDefined()
+    expect(ySet).toBeDefined()
+    expect(xSet[1]).not.toBe('old_x')
+    expect(ySet[1]).not.toBe('old_y')
+
+    // Cookie max-age attribute should use proper HTTP naming (hyphenated)
+    expect(xSet[2]['max-age']).toBeDefined()
+    expect(xSet[2].maxAge).toBeUndefined()
   })
 
   it('should NOT rotate when tokenAge is within rotationAge threshold', async () => {
