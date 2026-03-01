@@ -1,6 +1,6 @@
-const Form = require('../../src/View/Form')
+const Form = require('../../../src/View/Form')
 
-describe('Form HTML escaping', () => {
+describe('Form.generateFieldHtml()', () => {
   test('should escape textarea content to prevent tag breakout XSS', () => {
     const html = Form.generateFieldHtml({
       name: 'bio',

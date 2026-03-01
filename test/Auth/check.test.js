@@ -1,6 +1,6 @@
-const Auth = require('../src/Auth.js')
+const Auth = require('../../src/Auth.js')
 
-describe('Auth - Refresh Token Rotation', () => {
+describe('Auth.check()', () => {
   let reqMock
   let authInstance
 
@@ -173,12 +173,11 @@ describe('Auth - Refresh Token Rotation', () => {
 
   it('should recovery-rotate and DELETE old token when client lost cookies (rotated token > 5s)', async () => {
     // Simulate a rotated token where 10 seconds have passed since original rotation
-    // Client still has old cookies → recovery rotation should trigger
+    // Client still has old cookies -> recovery rotation should trigger
     const maxAge = 30 * 24 * 60 * 60 * 1000
     const timeSinceRotation = 10000 // 10 seconds since original rotation
     // active was set to: rotationTime - maxAge + 60000
     // So: inactiveAge = now - active = now - (rotationTime - maxAge + 60000) = timeSinceRotation + maxAge - 60000
-    // timeSinceRotation formula: inactiveAge - maxAge + 60000 = timeSinceRotation = 10000
     const rotatedActiveDate = new Date(Date.now() - maxAge + 60000 - timeSinceRotation)
 
     const mockRecord = {
