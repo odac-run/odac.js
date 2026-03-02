@@ -210,7 +210,7 @@ async function manageSkills(targetDir = process.cwd()) {
   }
 
   const targetBase = path.resolve(targetDir, targetSubDir)
-  const targetPath = targetBase
+  const targetPath = copySkillsOnly ? path.join(targetBase, 'odac.js') : targetBase
 
   try {
     fs.mkdirSync(targetPath, {recursive: true})
@@ -222,7 +222,8 @@ async function manageSkills(targetDir = process.cwd()) {
       fs.cpSync(aiSourceDir, targetPath, {recursive: true})
     }
 
-    console.log(`\n✨ AI skills successfully synced to: \x1b[32m${targetSubDir}\x1b[0m`)
+    const finalSubDir = copySkillsOnly ? path.join(targetSubDir, 'odac.js') : targetSubDir
+    console.log(`\n✨ AI skills successfully synced to: \x1b[32m${finalSubDir}\x1b[0m`)
     console.log('Your AI Agent now has full knowledge of the ODAC Framework. 🚀')
   } catch (err) {
     console.error('❌ Failed to sync AI skills:', err.message)
