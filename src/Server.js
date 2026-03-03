@@ -87,13 +87,13 @@ module.exports = {
         // Phase 3: Release shared resources (order matters: IPC → DB → Storage)
         try {
           await Odac.Ipc.close()
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing IPC: ${e.message}`)
         }
         try {
           await Odac.Database.close()
-        } catch {
-          /* best-effort */
+        } catch (e) {
+          console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing Database: ${e.message}`)
         }
         Odac.Storage.close()
 
