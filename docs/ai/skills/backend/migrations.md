@@ -19,7 +19,8 @@ ODAC migrations are **declarative**. The `schema/` directory is the single sourc
 4. **Index Sync**: Define indexes in schema; engine adds/removes them automatically.
 5. **Drop Behavior**: If a column/index is removed from schema, it is removed from DB on next startup.
 6. **Seeds**: Use `seed` + `seedKey` for idempotent reference data.
-7. **Data Transformations**: Use imperative files under `migration/` only for one-time data migration logic.
+7. **NanoID Columns**: `type: 'nanoid'` maps to string columns and missing values are auto-generated on insert/seed.
+8. **Data Transformations**: Use imperative files under `migration/` only for one-time data migration logic.
 
 ## Reference Patterns
 ### 1. Schema File (Final State)
@@ -29,7 +30,7 @@ ODAC migrations are **declarative**. The `schema/` directory is the single sourc
 
 module.exports = {
   columns: {
-    id: {type: 'increments'},
+    id: {type: 'nanoid', primary: true},
     email: {type: 'string', length: 255, nullable: false},
     role: {type: 'enum', values: ['admin', 'user'], default: 'user'},
     timestamps: {type: 'timestamps'}
@@ -43,6 +44,11 @@ module.exports = {
   seedKey: 'email'
 }
 ```
+
+### NanoID Notes
+- `length` can be customized: `{type: 'nanoid', length: 12, primary: true}`.
+- If seed rows omit the nanoid field, ODAC fills it automatically.
+- If seed rows provide an explicit nanoid value, ODAC keeps it unchanged.
 
 ### 2. Multi-Database Layout
 ```

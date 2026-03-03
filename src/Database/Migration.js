@@ -2,6 +2,7 @@
 
 const fs = require('node:fs')
 const path = require('node:path')
+const nanoid = require('./nanoid')
 
 /**
  * ODAC Migration Engine — "Schema-First with Auto-Diff"
@@ -213,7 +214,8 @@ class Migration {
 
     for (const [colName, colDef] of Object.entries(columns)) {
       if (!colDef.unique) continue
-      if (colDef.type === 'timestamps' || colDef.type === 'increments' || colDef.type === 'bigIncrements') continue
+      if (colDef.type === 'timestamps' || colDef.type === 'increments' || colDef.type === 'bigIncrements' || colDef.type === 'nanoid')
+        continue
 
       const implicitIdx = {columns: [colName], unique: true}
       const sig = this._indexSignature(implicitIdx)
@@ -678,6 +680,8 @@ class Migration {
         return table.json(colName)
       case 'jsonb':
         return table.jsonb(colName)
+      case 'nanoid':
+        return table.string(colName, def.length || 21)
       case 'uuid':
         return table.uuid(colName)
       case 'enum':
@@ -905,6 +909,9 @@ class Migration {
         const existing = await knex(tableName).where(seedKey, keyValue).first()
 
         if (!existing) {
+          // Auto-generate nanoid for columns with type 'nanoid' that are missing from seed data
+          this._fillNanoidColumns(preparedRow, schema)
+
           if (!dryRun) {
             await knex(tableName).insert(preparedRow)
           }
@@ -1197,6 +1204,24 @@ class Migration {
       table.timestamp('applied_at').defaultTo(knex.fn.now())
       table.index(['connection', 'type'])
     })
+  }
+
+  /**
+   * Populates missing nanoid columns in a data row before insertion.
+   * Why: Zero-config DX — developers should not manually call nanoid() for every insert.
+   * When a schema defines a column as type 'nanoid', the framework auto-generates
+   * the value if the caller did not provide one.
+   * @param {object} row - Data row to mutate in-place
+   * @param {object} schema - Table schema definition
+   */
+  _fillNanoidColumns(row, schema) {
+    const columns = schema.columns || {}
+
+    for (const [colName, colDef] of Object.entries(columns)) {
+      if (colDef.type === 'nanoid' && !row[colName]) {
+        row[colName] = nanoid(colDef.length || 21)
+      }
+    }
   }
 }
 

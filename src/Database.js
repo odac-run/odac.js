@@ -1,9 +1,12 @@
 'use strict'
 const {buildConnections} = require('./Database/ConnectionFactory')
+const nanoid = require('./Database/nanoid')
 
 class DatabaseManager {
   constructor() {
     this.connections = {}
+    /** @type {Object<string, Array<{column: string, size: number}>>} tableName → nanoid columns */
+    this._nanoidColumns = {}
   }
 
   async init() {
@@ -24,6 +27,10 @@ class DatabaseManager {
     // Auto-migrate: sync schema/ files with the database on every startup.
     // Why: Zero-config philosophy — deploy and forget. The app always starts with the correct DB state.
     await this._autoMigrate()
+
+    // Cache nanoid column metadata from schema files for insert-time auto-generation.
+    // Runs on ALL processes (primary + workers) since every process may insert data.
+    this._loadNanoidMeta()
   }
 
   /**
@@ -73,20 +80,66 @@ class DatabaseManager {
   }
 
   nanoid(size = 21) {
-    const nodeCrypto = require('crypto')
-    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-    let id = ''
-    while (id.length < size) {
-      const bytes = nodeCrypto.randomBytes(size + 5)
-      for (let i = 0; i < bytes.length; i++) {
-        const byte = bytes[i] & 63
-        if (byte < 62) {
-          id += alphabet[byte]
-          if (id.length === size) break
+    return nanoid(size)
+  }
+
+  /**
+   * Scans schema/ directory and caches which columns are type 'nanoid' per table.
+   * Why: The insert() proxy needs O(1) lookup to auto-generate IDs at runtime.
+   * Lightweight — only reads file metadata, no DB introspection.
+   */
+  _loadNanoidMeta() {
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const Module = require('node:module')
+
+    if (!global.__dir) return
+    const schemaDir = path.join(global.__dir, 'schema')
+    if (!fs.existsSync(schemaDir)) return
+
+    const loadDir = dir => {
+      const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && fs.statSync(path.join(dir, f)).isFile())
+
+      for (const file of files) {
+        const filePath = path.join(dir, file)
+        const tableName = path.basename(file, '.js')
+
+        try {
+          const source = fs.readFileSync(filePath, 'utf8')
+          const m = new Module(filePath)
+          m.filename = filePath
+          m.paths = Module._nodeModulePaths(path.dirname(filePath))
+          m._compile(source, filePath)
+          const schema = m.exports
+
+          if (!schema?.columns) continue
+
+          const nanoidCols = []
+          for (const [colName, colDef] of Object.entries(schema.columns)) {
+            if (colDef.type === 'nanoid') {
+              nanoidCols.push({column: colName, size: colDef.length || 21})
+            }
+          }
+
+          if (nanoidCols.length > 0) {
+            this._nanoidColumns[tableName] = nanoidCols
+          }
+        } catch {
+          // Schema file parse error — skip silently, Migration will report it
         }
       }
     }
-    return id
+
+    // Root-level files (default connection)
+    loadDir(schemaDir)
+
+    // Subdirectories (named connections)
+    const entries = fs.readdirSync(schemaDir, {withFileTypes: true})
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        loadDir(path.join(schemaDir, entry.name))
+      }
+    }
   }
 }
 
@@ -120,6 +173,27 @@ const tableProxyHandler = {
     qb.count = function (...args) {
       this._odacIsCount = true
       return originalCount.apply(this, args)
+    }
+
+    // Odac DX Improvement: Auto-generate NanoID for columns defined as type 'nanoid' in schema.
+    // Why: Zero-config ID generation — no manual Odac.DB.nanoid() calls needed.
+    const nanoidCols = manager._nanoidColumns[prop]
+    if (nanoidCols) {
+      const originalInsert = qb.insert
+      qb.insert = function (data, ...args) {
+        if (Array.isArray(data)) {
+          for (const row of data) {
+            for (const {column, size} of nanoidCols) {
+              if (!row[column]) row[column] = manager.nanoid(size)
+            }
+          }
+        } else if (data && typeof data === 'object') {
+          for (const {column, size} of nanoidCols) {
+            if (!data[column]) data[column] = manager.nanoid(size)
+          }
+        }
+        return originalInsert.call(this, data, ...args)
+      }
     }
 
     const originalThen = qb.then
@@ -172,6 +246,8 @@ const rootProxy = new Proxy(manager, {
     if (prop === 'init') return target.init.bind(target)
     if (prop === 'close') return target.close.bind(target)
     if (prop === 'connections') return target.connections
+    if (prop === '_nanoidColumns') return target._nanoidColumns
+    if (prop === '_loadNanoidMeta') return target._loadNanoidMeta.bind(target)
 
     // Access to specific database connection: Odac.DB.analytics
     if (target.connections[prop]) {
@@ -201,6 +277,14 @@ const rootProxy = new Proxy(manager, {
     }
 
     return undefined
+  },
+
+  set(target, prop, value) {
+    if (prop === 'connections' || prop === '_nanoidColumns') {
+      target[prop] = value
+      return true
+    }
+    return false
   }
 })
 
