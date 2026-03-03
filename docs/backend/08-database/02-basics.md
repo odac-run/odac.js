@@ -136,7 +136,7 @@ module.exports = {
 **Usage — just insert, the ID is auto-generated:**
 ```javascript
 await Odac.DB.posts.insert({ title: 'My First Post' });
-// → { id: 'V1StGXR8_Z5jdHi6BmyTa', title: 'My First Post' }
+// → { id: 'V1StGXR8Z5jdHi6BmyTa', title: 'My First Post' }
 ```
 
 This works for single inserts and bulk inserts. If you provide an `id` explicitly, the auto-generation is skipped.
