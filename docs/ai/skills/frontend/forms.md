@@ -11,10 +11,9 @@ Handling ODAC AJAX form submissions generated from server-side form parsing.
 
 ## Rules
 1.  **Bind by form selector**: Use `Odac.form({ form: 'selector' }, callback)` or short form `Odac.form('selector', callback)`.
-2.  **Leverage parser-generated forms**: `odac-register`, `odac-login`, and `odac-custom-form` are auto-bound on page load.
-3.  **Magic-login binding**: `odac-magic-login-form` is not auto-bound; bind it manually.
-4.  **Expect JSON result shape**: Handle `result.success`, `result.message`, `result.redirect`, and `errors` in callback.
-5.  **Message/clear control**: Use `messages` and `clear` options for UX behavior.
+2.  **Leverage parser-generated forms**: `odac-register`, `odac-login`, `odac-magic-login`, and `odac-custom-form` are all auto-bound on page load and after every AJAX navigation.
+3.  **Expect JSON result shape**: Handle `result.success`, `result.message`, `result.redirect`, and `errors` in callback.
+4.  **Message/clear control**: Use `messages` and `clear` options for UX behavior.
 
 ## Patterns
 ```javascript

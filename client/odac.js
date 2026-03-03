@@ -111,6 +111,12 @@ if (typeof window !== 'undefined') {
       // In constructor we can't call this.data() easily if it uses 'this' for caching properly before init
       // But based on original code logic:
       this.#data = this.data()
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => this.#initForms())
+      } else {
+        this.#initForms()
+      }
     }
 
     #ajax(options) {
@@ -795,6 +801,8 @@ if (typeof window !== 'undefined') {
     }
 
     #handleLoadComplete(data, callback) {
+      this.#initForms()
+
       if (this.actions.load)
         (Array.isArray(this.actions.load) ? this.actions.load : [this.actions.load]).forEach(fn => fn(this.page(), data.variables))
       if (this.actions.page && this.actions.page[this.page()])
@@ -806,6 +814,30 @@ if (typeof window !== 'undefined') {
 
       window.scrollTo({top: 0, behavior: 'smooth'})
       this.#isNavigating = false
+    }
+
+    /**
+     * Scans the DOM for ODAC form components and registers submit handlers
+     * for any that haven't been initialized yet. Called on DOMContentLoaded
+     * and after every AJAX navigation to bind freshly rendered forms.
+     */
+    #initForms() {
+      const formTypes = [
+        {cls: 'odac-register-form', attr: 'data-odac-register'},
+        {cls: 'odac-login-form', attr: 'data-odac-login'},
+        {cls: 'odac-magic-login-form', attr: 'data-odac-magic-login'},
+        {cls: 'odac-custom-form', attr: 'data-odac-form'}
+      ]
+
+      for (const {cls, attr} of formTypes) {
+        document.querySelectorAll(`form.${cls}[${attr}]`).forEach(form => {
+          const token = form.getAttribute(attr)
+          const selector = `form[${attr}="${token}"]`
+          if (!this.#formSubmitHandlers.has(selector)) {
+            this.form({form: selector})
+          }
+        })
+      }
     }
 
     loader(selector, elements, callback) {
@@ -993,19 +1025,6 @@ if (typeof window !== 'undefined') {
     }
     document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init()
   })()
-
-  document.addEventListener('DOMContentLoaded', () => {
-    ;['register', 'login'].forEach(type => {
-      document.querySelectorAll(`form.odac-${type}-form[data-odac-${type}]`).forEach(form => {
-        const token = form.getAttribute(`data-odac-${type}`)
-        window.Odac.form({form: `form[data-odac-${type}="${token}"]`})
-      })
-    })
-    document.querySelectorAll('form.odac-custom-form[data-odac-form]').forEach(form => {
-      const token = form.getAttribute('data-odac-form')
-      window.Odac.form({form: `form[data-odac-form="${token}"]`})
-    })
-  })
 } else {
   let socket = null
   const ports = new Set()
