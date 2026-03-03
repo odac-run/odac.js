@@ -59,6 +59,7 @@ module.exports = {
 
         // Phase 1: Stop schedulers so no new work is queued
         Odac.Route.stopCron()
+        Odac.Storage.stopSessionGC()
 
         // Phase 2: Gracefully drain all workers
         await new Promise(resolve => {
