@@ -128,8 +128,11 @@ class DatabaseManager {
           if (nanoidCols.length > 0) {
             this._nanoidColumns[connectionKey][tableName] = nanoidCols
           }
-        } catch {
+        } catch (e) {
           // Schema file parse error — skip silently, Migration will report it
+          if (global.Odac?.Config?.debug) {
+            console.warn(`\x1b[33m[ODAC NanoID Meta]\x1b[0m Failed to parse schema ${filePath}:`, e.message)
+          }
         }
       }
     }
