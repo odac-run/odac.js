@@ -57,6 +57,7 @@ function buildConnections(databaseConfig) {
       pool: {min: 0, max: db.connectionLimit || 10},
       useNullAsDefault: true
     })
+    connections[key]._odacConnectionKey = key
   }
 
   return connections

@@ -5,7 +5,7 @@ const nanoid = require('./Database/nanoid')
 class DatabaseManager {
   constructor() {
     this.connections = {}
-    /** @type {Object<string, Array<{column: string, size: number}>>} tableName → nanoid columns */
+    /** @type {Object<string, Object<string, Array<{column: string, size: number}>>>} connectionKey -> tableName -> nanoid columns */
     this._nanoidColumns = {}
   }
 
@@ -97,7 +97,11 @@ class DatabaseManager {
     const schemaDir = path.join(global.__dir, 'schema')
     if (!fs.existsSync(schemaDir)) return
 
-    const loadDir = dir => {
+    const loadDir = (dir, connectionKey) => {
+      if (!this._nanoidColumns[connectionKey]) {
+        this._nanoidColumns[connectionKey] = {}
+      }
+
       const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && fs.statSync(path.join(dir, f)).isFile())
 
       for (const file of files) {
@@ -122,7 +126,7 @@ class DatabaseManager {
           }
 
           if (nanoidCols.length > 0) {
-            this._nanoidColumns[tableName] = nanoidCols
+            this._nanoidColumns[connectionKey][tableName] = nanoidCols
           }
         } catch {
           // Schema file parse error — skip silently, Migration will report it
@@ -131,13 +135,13 @@ class DatabaseManager {
     }
 
     // Root-level files (default connection)
-    loadDir(schemaDir)
+    loadDir(schemaDir, 'default')
 
     // Subdirectories (named connections)
     const entries = fs.readdirSync(schemaDir, {withFileTypes: true})
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        loadDir(path.join(schemaDir, entry.name))
+        loadDir(path.join(schemaDir, entry.name), entry.name)
       }
     }
   }
@@ -177,7 +181,8 @@ const tableProxyHandler = {
 
     // Odac DX Improvement: Auto-generate NanoID for columns defined as type 'nanoid' in schema.
     // Why: Zero-config ID generation — no manual Odac.DB.nanoid() calls needed.
-    const nanoidCols = manager._nanoidColumns[prop]
+    const connectionKey = knexInstance._odacConnectionKey || 'default'
+    const nanoidCols = manager._nanoidColumns[connectionKey]?.[prop]
     if (nanoidCols) {
       const originalInsert = qb.insert
       qb.insert = function (data, ...args) {

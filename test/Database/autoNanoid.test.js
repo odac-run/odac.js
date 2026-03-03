@@ -39,7 +39,8 @@ describe('Database.js - Auto NanoID Insert', () => {
 
     const DB = require('../../src/Database')
     DB.connections = {default: db}
-    DB._nanoidColumns = {posts: [{column: 'id', size: 21}]}
+    db._odacConnectionKey = 'default'
+    DB._nanoidColumns = {default: {posts: [{column: 'id', size: 21}]}}
 
     // Access through the proxy — Odac.DB.posts.insert()
     await DB.posts.insert({title: 'Hello World'})
@@ -60,7 +61,8 @@ describe('Database.js - Auto NanoID Insert', () => {
 
     const DB = require('../../src/Database')
     DB.connections = {default: db}
-    DB._nanoidColumns = {items: [{column: 'id', size: 21}]}
+    db._odacConnectionKey = 'default'
+    DB._nanoidColumns = {default: {items: [{column: 'id', size: 21}]}}
 
     await DB.items.insert([{name: 'Item A'}, {name: 'Item B'}, {name: 'Item C'}])
 
@@ -84,7 +86,8 @@ describe('Database.js - Auto NanoID Insert', () => {
 
     const DB = require('../../src/Database')
     DB.connections = {default: db}
-    DB._nanoidColumns = {docs: [{column: 'id', size: 21}]}
+    db._odacConnectionKey = 'default'
+    DB._nanoidColumns = {default: {docs: [{column: 'id', size: 21}]}}
 
     await DB.docs.insert({id: 'MY_CUSTOM_ID_1234567', content: 'Test'})
 
@@ -100,7 +103,8 @@ describe('Database.js - Auto NanoID Insert', () => {
 
     const DB = require('../../src/Database')
     DB.connections = {default: db}
-    DB._nanoidColumns = {tokens: [{column: 'code', size: 8}]}
+    db._odacConnectionKey = 'default'
+    DB._nanoidColumns = {default: {tokens: [{column: 'code', size: 8}]}}
 
     await DB.tokens.insert({label: 'discount'})
 
@@ -117,6 +121,7 @@ describe('Database.js - Auto NanoID Insert', () => {
 
     const DB = require('../../src/Database')
     DB.connections = {default: db}
+    db._odacConnectionKey = 'default'
     DB._nanoidColumns = {} // no nanoid metadata
 
     await DB.logs.insert({message: 'test log'})
@@ -142,8 +147,9 @@ describe('Database._loadNanoidMeta()', () => {
     DB._nanoidColumns = {}
     DB._loadNanoidMeta()
 
-    expect(DB._nanoidColumns).toHaveProperty('users')
-    expect(DB._nanoidColumns.users).toEqual([{column: 'id', size: 21}])
+    expect(DB._nanoidColumns).toHaveProperty('default')
+    expect(DB._nanoidColumns.default).toHaveProperty('users')
+    expect(DB._nanoidColumns.default.users).toEqual([{column: 'id', size: 21}])
   })
 
   it('should detect multiple nanoid columns in a single table', () => {
@@ -160,7 +166,7 @@ describe('Database._loadNanoidMeta()', () => {
     DB._nanoidColumns = {}
     DB._loadNanoidMeta()
 
-    expect(DB._nanoidColumns.events).toEqual([
+    expect(DB._nanoidColumns.default.events).toEqual([
       {column: 'id', size: 21},
       {column: 'public_id', size: 12}
     ])
@@ -179,7 +185,7 @@ describe('Database._loadNanoidMeta()', () => {
     DB._nanoidColumns = {}
     DB._loadNanoidMeta()
 
-    expect(DB._nanoidColumns).not.toHaveProperty('logs')
+    expect(DB._nanoidColumns.default).not.toHaveProperty('logs')
   })
 
   it('should handle missing schema directory gracefully', () => {
@@ -204,6 +210,6 @@ describe('Database._loadNanoidMeta()', () => {
     DB._nanoidColumns = {}
     DB._loadNanoidMeta()
 
-    expect(DB._nanoidColumns.metrics).toEqual([{column: 'id', size: 16}])
+    expect(DB._nanoidColumns.analytics.metrics).toEqual([{column: 'id', size: 16}])
   })
 })
