@@ -65,7 +65,8 @@ describe('Auth.check()', () => {
         return cookieStore[name] || null
       }),
       header: jest.fn(() => 'TestBrowser'),
-      ip: '127.0.0.1'
+      ip: '127.0.0.1',
+      res: {} // HTTP context (non-null res indicates Set-Cookie can be delivered)
     }
 
     authInstance = new Auth(reqMock)
@@ -273,6 +274,92 @@ describe('Auth.check()', () => {
     expect(dbMock.tracker.deleteCalls.length).toBe(1)
     // No rotation should occur
     expect(dbMock.insert).not.toHaveBeenCalled()
+  })
+
+  it('should skip rotation for WebSocket connections (res === null) and update active instead', async () => {
+    const createdAt = Date.now() - 20 * 60 * 1000 // 20 mins ago -> exceeds 15 min rotationAge
+
+    const wsReqMock = {
+      cookie: jest.fn((name, value) => {
+        if (value !== undefined) return
+        return {odac_x: 'old_x', odac_y: 'old_y'}[name] || null
+      }),
+      header: jest.fn(() => 'TestBrowser'),
+      ip: '127.0.0.1',
+      res: null // WebSocket context: no HTTP response available
+    }
+
+    const wsAuth = new Auth(wsReqMock)
+
+    const mockRecord = {
+      active: new Date(),
+      browser: 'TestBrowser',
+      date: new Date(createdAt),
+      id: 'token_ws',
+      ip: '127.0.0.1',
+      token_x: 'old_x',
+      token_y: 'hashed_old_y',
+      user: 'user_10'
+    }
+
+    const dbMock = createDbMock([mockRecord])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    const result = await wsAuth.check()
+
+    expect(result).toBe(true)
+    // No rotation: no new token inserted
+    expect(dbMock.insert).not.toHaveBeenCalled()
+    // Active timestamp should be refreshed instead
+    expect(dbMock.tracker.updateCalls.length).toBe(1)
+    expect(dbMock.tracker.updateCalls[0].active).toBeInstanceOf(Date)
+    // No new cookies set (nothing to deliver over WS)
+    const setCalls = wsReqMock.cookie.mock.calls.filter(c => c.length >= 2)
+    expect(setCalls.length).toBe(0)
+  })
+
+  it('should skip recovery rotation for WebSocket connections (res === null)', async () => {
+    const maxAge = 30 * 24 * 60 * 60 * 1000
+    const timeSinceRotation = 10000 // 10 seconds since original rotation
+    const rotatedActiveDate = new Date(Date.now() - maxAge + 60000 - timeSinceRotation)
+
+    const wsReqMock = {
+      cookie: jest.fn((name, value) => {
+        if (value !== undefined) return
+        return {odac_x: 'old_x', odac_y: 'old_y'}[name] || null
+      }),
+      header: jest.fn(() => 'TestBrowser'),
+      ip: '127.0.0.1',
+      res: null // WebSocket context
+    }
+
+    const wsAuth = new Auth(wsReqMock)
+
+    const mockRecord = {
+      active: rotatedActiveDate,
+      browser: 'TestBrowser',
+      date: new Date(0), // Epoch marker = rotated
+      id: 'token_ws_recovery',
+      ip: '127.0.0.1',
+      token_x: 'old_x',
+      token_y: 'hashed_old_y',
+      user: 'user_10'
+    }
+
+    const dbMock = createDbMock([mockRecord])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    const result = await wsAuth.check()
+
+    expect(result).toBe(true)
+    // No recovery rotation: no insert, no delete
+    expect(dbMock.insert).not.toHaveBeenCalled()
+    expect(dbMock.tracker.deleteCalls.length).toBe(0)
+    // No cookies set
+    const setCalls = wsReqMock.cookie.mock.calls.filter(c => c.length >= 2)
+    expect(setCalls.length).toBe(0)
   })
 
   it('should update active timestamp when inactiveAge exceeds updateAge but tokenAge is within rotationAge', async () => {
