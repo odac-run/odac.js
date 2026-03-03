@@ -149,7 +149,7 @@ module.exports = {
           return hash ? _odac.Token.check(hash) : _odac.Token.generate()
         }
         _odac.validator = function () {
-          return new (require('./Validator.js'))(_odac.Request)
+          return new (require('./Validator.js'))(_odac.Request, _odac)
         }
         _odac.write = function (value) {
           return _odac.Request.write(value)
