@@ -27,6 +27,25 @@ await Odac.DB.table('posts').insert({
 });
 ```
 
+## ID Strategy (NanoID)
+1.  **Schema-Driven**: Define string IDs with `type: 'nanoid'` in `schema/*.js`.
+2.  **Auto Generation**: On `insert()`, ODAC auto-generates missing nanoid fields.
+3.  **No Override**: If ID is explicitly provided, ODAC preserves it.
+4.  **Bulk Safe**: Auto-generation works for both single and bulk inserts.
+
+```javascript
+// schema/posts.js
+module.exports = {
+  columns: {
+    id: {type: 'nanoid', primary: true},
+    title: {type: 'string', length: 255}
+  }
+}
+
+// ID is generated automatically
+await Odac.DB.table('posts').insert({title: 'Hello'});
+```
+
 ## Migration Awareness
 1.  **Schema-First**: Structural DB changes must be defined in `schema/*.js`.
 2.  **Auto-Migrate**: Migrations run automatically at startup from `Database.init()`.

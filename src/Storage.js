@@ -5,6 +5,7 @@ class OdacStorage {
   constructor() {
     this.db = null
     this.ready = false
+    this.gcInterval = null
   }
 
   init() {
@@ -72,10 +73,14 @@ class OdacStorage {
       return null
     }
 
+    if (this.gcInterval) {
+      clearInterval(this.gcInterval)
+    }
+
     const BATCH_THRESHOLD = 10000
     const BATCH_SIZE = 1000
 
-    return setInterval(() => {
+    this.gcInterval = setInterval(() => {
       try {
         // Count sessions to decide mode
         let sessionCount = 0
@@ -94,6 +99,15 @@ class OdacStorage {
         console.error('\x1b[31m[Storage GC Error]\x1b[0m', error.message)
       }
     }, intervalMs)
+
+    return this.gcInterval
+  }
+
+  stopSessionGC() {
+    if (this.gcInterval) {
+      clearInterval(this.gcInterval)
+      this.gcInterval = null
+    }
   }
 
   // Simple mode: Load all sessions at once (fast for small datasets)

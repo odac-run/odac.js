@@ -269,6 +269,43 @@ class Ipc extends EventEmitter {
     interval.unref()
   }
 
+  /**
+   * Tears down IPC resources. For Redis driver, disconnects clients.
+   * For memory driver, clears stores and removes cluster listeners.
+   */
+  async close() {
+    if (this.config.driver === 'redis') {
+      if (this.subRedis) {
+        await this.subRedis.quit().catch(() => {})
+        this.subRedis = null
+      }
+      if (this.redis) {
+        await this.redis.quit().catch(() => {})
+        this.redis = null
+      }
+    } else if (cluster.isPrimary) {
+      if (global.__odac_ipc_message_handler) {
+        cluster.removeListener('message', global.__odac_ipc_message_handler)
+        global.__odac_ipc_message_handler = null
+      }
+      if (global.__odac_ipc_exit_handler) {
+        cluster.removeListener('exit', global.__odac_ipc_exit_handler)
+        global.__odac_ipc_exit_handler = null
+      }
+      if (this._memoryStore) this._memoryStore.clear()
+      if (this._memorySubs) this._memorySubs.clear()
+    } else {
+      // Worker: reject all pending requests so they don't hang
+      for (const req of this._requests.values()) {
+        clearTimeout(req.timeout)
+        req.reject(new Error('IPC shutting down'))
+      }
+      this._requests.clear()
+      this._subs.clear()
+    }
+    this.initialized = false
+  }
+
   _handlePrimaryMessage(worker, msg) {
     const {type, id, key, value, ttl, channel, message} = msg
     const action = type.replace('ipc:', '')

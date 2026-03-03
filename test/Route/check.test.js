@@ -1,6 +1,6 @@
-const Route = require('../src/Route')
+const Route = require('../../src/Route')
 
-describe('Route', () => {
+describe('Route.check()', () => {
   let route
 
   beforeEach(() => {
@@ -17,7 +17,7 @@ describe('Route', () => {
     delete global.__dir
   })
 
-  describe('check - token request', () => {
+  describe('token request', () => {
     it('should handle token request with undefined route gracefully', async () => {
       const mockOdac = {
         Request: {
@@ -205,42 +205,7 @@ describe('Route', () => {
     })
   })
 
-  describe('set', () => {
-    it('should register a route with function handler', () => {
-      global.Odac.Route.buff = 'test_route'
-      const handler = jest.fn()
-
-      route.set('get', '/test', handler)
-
-      expect(route.routes.test_route).toBeDefined()
-      expect(route.routes.test_route.get).toBeDefined()
-      expect(route.routes.test_route.get['/test']).toBeDefined()
-      expect(route.routes.test_route.get['/test'].cache).toBe(handler)
-      expect(route.routes.test_route.get['/test'].type).toBe('function')
-    })
-
-    it('should handle array of methods', () => {
-      global.Odac.Route.buff = 'test_route'
-      const handler = jest.fn()
-
-      route.set(['get', 'post'], '/test', handler)
-
-      expect(route.routes.test_route.get['/test']).toBeDefined()
-      expect(route.routes.test_route.post['/test']).toBeDefined()
-    })
-
-    it('should strip trailing slash from url', () => {
-      global.Odac.Route.buff = 'test_route'
-      const handler = jest.fn()
-
-      route.set('get', '/test/', handler)
-
-      expect(route.routes.test_route.get['/test']).toBeDefined()
-      expect(route.routes.test_route.get['/test/']).toBeUndefined()
-    })
-  })
-
-  describe('parametric route matching (#controller via check)', () => {
+  describe('parametric route matching', () => {
     const createMockOdac = (url, method = 'get') => ({
       Auth: {check: jest.fn().mockResolvedValue(true)},
       Config: {},
@@ -341,22 +306,6 @@ describe('Route', () => {
 
       expect(exactHandler).toHaveBeenCalled()
       expect(paramHandler).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('WebSocket cleanup', () => {
-    it('should call ws() method successfully', () => {
-      const handler = jest.fn()
-      expect(() => {
-        route.ws('/test', handler, {token: false})
-      }).not.toThrow()
-    })
-
-    it('should call auth.ws() method successfully', () => {
-      const handler = jest.fn()
-      expect(() => {
-        route.auth.ws('/test', handler)
-      }).not.toThrow()
     })
   })
 })

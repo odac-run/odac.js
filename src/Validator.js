@@ -93,9 +93,11 @@ class Validator {
   #method = 'POST'
   #name = ''
   #request
+  #odac
 
-  constructor(Request) {
+  constructor(Request, Odac) {
     this.#request = Request
+    this.#odac = Odac || global.Odac
   }
 
   check(rules) {
@@ -189,37 +191,37 @@ class Validator {
                     error = !value || (value !== 1 && value !== '1' && value !== 'on' && value !== 'yes' && value !== true)
                     break
                   case 'numeric':
-                    error = value && value !== '' && !Odac.Var(value).is('numeric')
+                    error = value && value !== '' && !this.#odac.Var(value).is('numeric')
                     break
                   case 'alpha':
-                    error = value && value !== '' && !Odac.Var(value).is('alpha')
+                    error = value && value !== '' && !this.#odac.Var(value).is('alpha')
                     break
                   case 'alphaspace':
-                    error = value && value !== '' && !Odac.Var(value).is('alphaspace')
+                    error = value && value !== '' && !this.#odac.Var(value).is('alphaspace')
                     break
                   case 'alphanumeric':
-                    error = value && value !== '' && !Odac.Var(value).is('alphanumeric')
+                    error = value && value !== '' && !this.#odac.Var(value).is('alphanumeric')
                     break
                   case 'alphanumericspace':
-                    error = value && value !== '' && !Odac.Var(value).is('alphanumericspace')
+                    error = value && value !== '' && !this.#odac.Var(value).is('alphanumericspace')
                     break
                   case 'email':
-                    error = value && value !== '' && !Odac.Var(value).is('email')
+                    error = value && value !== '' && !this.#odac.Var(value).is('email')
                     break
                   case 'ip':
-                    error = value && value !== '' && !Odac.Var(value).is('ip')
+                    error = value && value !== '' && !this.#odac.Var(value).is('ip')
                     break
                   case 'float':
-                    error = value && value !== '' && !Odac.Var(value).is('float')
+                    error = value && value !== '' && !this.#odac.Var(value).is('float')
                     break
                   case 'mac':
-                    error = value && value !== '' && !Odac.Var(value).is('mac')
+                    error = value && value !== '' && !this.#odac.Var(value).is('mac')
                     break
                   case 'domain':
-                    error = value && value !== '' && !Odac.Var(value).is('domain')
+                    error = value && value !== '' && !this.#odac.Var(value).is('domain')
                     break
                   case 'url':
-                    error = value && value !== '' && !Odac.Var(value).is('url')
+                    error = value && value !== '' && !this.#odac.Var(value).is('url')
                     break
                   case 'username':
                     error = value && value !== '' && !/^[a-zA-Z0-9]+$/.test(value)
@@ -228,7 +230,7 @@ class Validator {
                     error = value && value !== '' && /<[^>]*>/g.test(value)
                     break
                   case 'usercheck':
-                    error = !(await Odac.Auth.check())
+                    error = !(await this.#odac.Auth.check())
                     break
                   case 'array':
                     error = value && !Array.isArray(value)
@@ -283,12 +285,12 @@ class Validator {
                     error = value && value !== '' && vars[1] && !new RegExp(vars[1]).test(value)
                     break
                   case 'user': {
-                    if (!(await Odac.Auth.check())) {
+                    if (!(await this.#odac.Auth.check())) {
                       error = true
                     } else {
-                      const userData = Odac.Auth.user(vars[1])
-                      if (Odac.Var(userData).is('hash')) {
-                        error = !Odac.Var(userData).hashCheck(value)
+                      const userData = this.#odac.Auth.user(vars[1])
+                      if (this.#odac.Var(userData).is('hash')) {
+                        error = !this.#odac.Var(userData).hashCheck(value)
                       } else {
                         error = value !== userData
                       }
@@ -344,7 +346,7 @@ class Validator {
     const ip = this.#request.ip()
     const now = new Date().toISOString().slice(0, 13).replace(/[-:T]/g, '')
     const page = this.#request.path()
-    const storage = Odac.storage('sys')
+    const storage = this.#odac.storage('sys')
     const validation = storage.get('validation') || {}
 
     this.#name = '_odac_form'
@@ -358,8 +360,8 @@ class Validator {
       validation.brute[now][page][ip]++
 
       if (validation.brute[now][page][ip] >= maxAttempts) {
-        this.#message['_odac_form'] = Odac.Lang
-          ? Odac.Lang.get('Too many failed attempts. Please try again later.')
+        this.#message['_odac_form'] = this.#odac.Lang
+          ? this.#odac.Lang.get('Too many failed attempts. Please try again later.')
           : 'Too many failed attempts. Please try again later.'
       }
     }

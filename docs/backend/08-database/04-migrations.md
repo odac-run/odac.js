@@ -91,6 +91,7 @@ npx odac migrate
 |------|-------|---------|
 | `increments` | Auto-increment primary key | — |
 | `bigIncrements` | Big auto-increment | — |
+| `nanoid` | NanoID string key (auto-generated on insert) | `length` (default: 21) |
 | `integer` | Integer | `unsigned` |
 | `bigInteger` | Big integer | `unsigned` |
 | `float` | Floating point | `precision`, `scale` |

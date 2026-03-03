@@ -143,9 +143,22 @@ class Auth {
       let triggerRotation = false
       let isRecoveryRotation = false
 
+      // WebSocket connections (res === null) cannot deliver Set-Cookie headers.
+      // Rotating a token during a WS upgrade would invalidate the browser's cookies
+      // with no way to deliver replacements, causing silent logout on the next HTTP request.
+      const canDeliverCookies = !!this.#request.res
+
       if (!isRotated) {
         if (shouldRotate && tokenAge > rotationAge) {
-          triggerRotation = true
+          if (canDeliverCookies) {
+            triggerRotation = true
+          } else {
+            // WebSocket: Can't deliver rotated cookies, refresh active timestamp instead
+            Odac.DB[tokenTable]
+              .where('id', sql_token[0].id)
+              .update({active: new Date()})
+              .catch(() => {})
+          }
         } else if (inactiveAge > updateAge) {
           // Fallback simple active update if rotation is not triggered
           Odac.DB[tokenTable]
@@ -158,7 +171,7 @@ class Auth {
         // This means the previous rotation response was lost (network hiccup, page navigation, etc.)
         // Give the client one more chance by re-issuing new credentials.
         const timeSinceRotation = inactiveAge - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS
-        if (timeSinceRotation > 5000) {
+        if (timeSinceRotation > 5000 && canDeliverCookies) {
           triggerRotation = true
           isRecoveryRotation = true
         }

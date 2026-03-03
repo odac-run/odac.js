@@ -118,19 +118,59 @@ await Odac.DB.users.where('id', 1).delete();
 
 ODAC includes a built-in helper for generating robust, unique string IDs (NanoID) without needing external packages. Secure, URL-friendly, and collision-resistant.
 
+### Automatic Generation (Recommended)
+
+When you define a column as `type: 'nanoid'` in your schema file, ODAC **automatically generates** the ID on every `insert()` — no manual code needed.
+
+**Schema definition:**
 ```javascript
-// Generate a standard 21-character ID (e.g., "V1StGXR8_Z5jdHi6B-myT")
+// schema/posts.js
+module.exports = {
+  columns: {
+    id: { type: 'nanoid', primary: true },
+    title: { type: 'string', length: 255 }
+  }
+}
+```
+
+**Usage — just insert, the ID is auto-generated:**
+```javascript
+await Odac.DB.posts.insert({ title: 'My First Post' });
+// → { id: 'V1StGXR8Z5jdHi6BmyTa', title: 'My First Post' }
+```
+
+This works for single inserts and bulk inserts. If you provide an `id` explicitly, the auto-generation is skipped.
+
+```javascript
+// Bulk insert — each row gets its own unique nanoid
+await Odac.DB.posts.insert([
+    { title: 'Post A' },
+    { title: 'Post B' }
+]);
+
+// Explicit ID — auto-generation is skipped
+await Odac.DB.posts.insert({ id: 'my-custom-id', title: 'Custom' });
+```
+
+You can also customize the ID length:
+```javascript
+// schema/codes.js
+module.exports = {
+  columns: {
+    code: { type: 'nanoid', length: 8, primary: true },
+    label: { type: 'string' }
+  }
+}
+```
+
+### Manual Generation
+
+You can also generate NanoIDs manually when needed:
+
+```javascript
+// Generate a standard 21-character ID
 const id = Odac.DB.nanoid();
 
 // Generate a custom length ID
 const shortId = Odac.DB.nanoid(10);
-```
-
-This is particularly useful when inserting records into tables that use string-based Primary Keys instead of auto-increment integers.
-
-```javascript
-await Odac.DB.posts.insert({
-    id: Odac.DB.nanoid(),
-    title: 'My First Post'
-});
 ```

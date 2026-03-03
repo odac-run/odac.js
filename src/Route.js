@@ -806,6 +806,14 @@ class Route {
     return Cron.job(controller)
   }
 
+  /**
+   * Stops the cron scheduler during graceful shutdown.
+   * Prevents new cron jobs from spawning while the process is terminating.
+   */
+  stopCron() {
+    Cron.stop()
+  }
+
   ws(path, handler, options = {}) {
     this.setWs('ws', path, handler, options)
     return this
