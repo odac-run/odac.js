@@ -1,5 +1,40 @@
 ### doc
 
+- **forms:** update backend and frontend forms documentation with practical usage patterns and improved descriptions
+- **validation:** enhance backend validation documentation with detailed usage patterns and examples
+
+### ⚙️ Engine Tuning
+
+- **test:** restructure test suite into class-scoped directories and method-level atomic files
+
+### ✨ What's New
+
+- **database:** add debug logging for schema parsing failures in nanoid metadata loader
+- **database:** introduce NanoID support for automatic ID generation in schema
+- **release:** enhance commit analyzer with release rules and custom labels
+- **shutdown:** implement graceful shutdown for IPC, Database, and Cron services
+
+### 📚 Documentation
+
+- **database:** remove underscore from nanoid example to reflect true alphanumeric output
+
+### 🛠️ Fixes & Improvements
+
+- **Auth:** handle token rotation for WebSocket connections and update active timestamp
+- **core:** explicitly stop session GC interval during graceful shutdown
+- **database:** namespace nanoid schema cache by connection to prevent table to prevent collisions
+- **forms:** initialize ODAC form handlers on DOMContentLoaded and after AJAX navigation
+- **manageSkills:** correct targetPath assignment for skill synchronization
+- **Validator:** pass Odac instance to Validator for improved access to global methods
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### doc
+
 - enhance AI skills documentation with structured YAML front matter and detailed descriptions
 
 ### ⚙️ Engine Tuning
