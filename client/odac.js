@@ -7,10 +7,12 @@ class OdacWebSocket {
   #reconnectAttempts = 0
   #handlers = {}
   #isClosed = false
+  #tokenProvider = null
 
   constructor(url, protocols = [], options = {}) {
     this.#url = url
     this.#protocols = protocols
+    this.#tokenProvider = options.tokenProvider || null
     this.#options = {
       autoReconnect: true,
       reconnectDelay: 3000,
@@ -22,6 +24,13 @@ class OdacWebSocket {
 
   connect() {
     if (this.#isClosed) return
+
+    if (this.#tokenProvider) {
+      const freshToken = this.#tokenProvider()
+      if (freshToken) {
+        this.#protocols = [`odac-token-${freshToken}`]
+      }
+    }
 
     this.#socket = this.#protocols.length > 0 ? new WebSocket(this.#url, this.#protocols) : new WebSocket(this.#url)
 
@@ -924,12 +933,13 @@ if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsUrl = `${protocol}//${window.location.host}${path}`
       const protocols = []
+      const tokenProvider = token ? () => this.token() : null
       if (token) {
         const csrfToken = this.token()
         if (csrfToken) protocols.push(`odac-token-${csrfToken}`)
       }
 
-      return new OdacWebSocket(wsUrl, protocols, options)
+      return new OdacWebSocket(wsUrl, protocols, {...options, tokenProvider})
     }
 
     #createSharedWebSocket(path, options) {
@@ -965,6 +975,9 @@ if (typeof window !== 'undefined') {
             break
           case 'error':
             emit('error', data)
+            break
+          case 'requestToken':
+            worker.port.postMessage({type: 'provideToken', token: this.token()})
             break
         }
       }
@@ -1031,6 +1044,33 @@ if (typeof window !== 'undefined') {
 
   const broadcast = (type, data) => ports.forEach(port => port.postMessage({type, data}))
 
+  let wsConfig = null
+
+  const requestTokenFromPort = () => {
+    return new Promise(resolve => {
+      const firstPort = ports.values().next().value
+      if (!firstPort) return resolve(null)
+
+      let timeoutTimer = null
+
+      const handler = event => {
+        if (event.data.type === 'provideToken') {
+          clearTimeout(timeoutTimer)
+          firstPort.removeEventListener('message', handler)
+          resolve(event.data.token)
+        }
+      }
+
+      timeoutTimer = setTimeout(() => {
+        firstPort.removeEventListener('message', handler)
+        resolve(null)
+      }, 5000)
+
+      firstPort.addEventListener('message', handler)
+      firstPort.postMessage({type: 'requestToken'})
+    })
+  }
+
   self.onconnect = e => {
     const port = e.ports[0]
     ports.add(port)
@@ -1041,15 +1081,37 @@ if (typeof window !== 'undefined') {
       switch (type) {
         case 'connect':
           if (!socket) {
+            wsConfig = {host, path, protocol, options}
             const wsUrl = protocol + '//' + host + path
             const protocols = token ? ['odac-token-' + token] : []
-            socket = new OdacWebSocket(wsUrl, protocols, options)
+            socket = new OdacWebSocket(wsUrl, protocols, {
+              ...options,
+              tokenProvider: null
+            })
             socket.on('open', () => broadcast('open'))
             socket.on('message', data => broadcast('message', data))
-            socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
+            socket.on('close', e => {
+              broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean})
+              if (wsConfig && options.autoReconnect !== false && ports.size > 0) {
+                socket.close()
+                socket = null
+                requestTokenFromPort().then(freshToken => {
+                  if (!freshToken || ports.size === 0) return
+                  const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
+                  const protocols = freshToken ? ['odac-token-' + freshToken] : []
+                  socket = new OdacWebSocket(wsUrl, protocols, {
+                    ...wsConfig.options,
+                    tokenProvider: null
+                  })
+                  socket.on('open', () => broadcast('open'))
+                  socket.on('message', data => broadcast('message', data))
+                  socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
+                  socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
+                })
+              }
+            })
             socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
           } else if (socket.connected) {
-            // If already connected, notify the new port immediately
             port.postMessage({type: 'open'})
           }
           break
