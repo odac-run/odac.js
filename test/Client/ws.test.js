@@ -89,7 +89,6 @@ describe('Odac.ws()', () => {
     mockXhr.response = JSON.stringify({token: 'initial-token'})
     mockXhr.responseText = JSON.stringify({token: 'initial-token'})
     mockXhr.onload = null
-    const origSend = mockXhr.send
     mockXhr.send = jest.fn(function () {
       tokenCounter++
       this.response = JSON.stringify({token: `token-${tokenCounter}`})
