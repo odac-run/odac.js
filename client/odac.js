@@ -1098,7 +1098,7 @@ if (typeof window !== 'undefined') {
                 requestTokenFromPort().then(freshToken => {
                   if (!freshToken || ports.size === 0) return
                   const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
-                  const protocols = freshToken ? ['odac-token-' + freshToken] : []
+                  const protocols = ['odac-token-' + freshToken]
                   socket = new OdacWebSocket(wsUrl, protocols, {
                     ...wsConfig.options,
                     tokenProvider: null
