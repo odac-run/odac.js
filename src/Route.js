@@ -1,5 +1,6 @@
 const fs = require('fs')
 const fsPromises = fs.promises
+const path = require('path')
 
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
@@ -219,42 +220,52 @@ class Route {
       if (typeof page === 'string') Odac.Request.page = page
       return await this.#executeController(Odac, pageController)
     }
-    if (url && !url.includes('/../')) {
-      const publicPath = `${__dir}/public${url}`
 
-      // PROD CACHE HIT (Metadata)
-      if (!Odac.Config.debug && this.#publicCache[publicPath]) {
-        const cached = this.#publicCache[publicPath]
-        Odac.Request.header('Content-Type', cached.type)
-        Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-        Odac.Request.header('Content-Length', cached.size)
-        return fs.createReadStream(publicPath)
-      }
+    let decodedUrl
+    try {
+      decodedUrl = decodeURIComponent(url)
+    } catch {
+      decodedUrl = null // Invalid URI encoding
+    }
 
-      try {
-        const stat = await fsPromises.stat(publicPath)
-        if (stat.isFile()) {
-          let type = 'text/html'
-          if (url.includes('.')) {
-            let arr = url.split('.')
-            type = mime[arr[arr.length - 1]]
-          }
+    if (decodedUrl && !decodedUrl.includes('\0')) {
+      const publicDir = path.normalize(`${__dir}/public`)
+      const safeUrl = decodedUrl.replace(/^[/\\]+/, '')
+      const publicPath = path.normalize(path.join(publicDir, safeUrl))
+      const relativePath = path.relative(publicDir, publicPath)
 
-          // PROD CACHE SET (Metadata Only)
-          if (!Odac.Config.debug) {
-            this.#publicCache[publicPath] = {
-              type,
-              size: stat.size
-            }
-          }
-
-          Odac.Request.header('Content-Type', type)
+      if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
+        // PROD CACHE HIT (Metadata)
+        if (!Odac.Config.debug && this.#publicCache[publicPath]) {
+          const cached = this.#publicCache[publicPath]
+          Odac.Request.header('Content-Type', cached.type)
           Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-          Odac.Request.header('Content-Length', stat.size)
+          Odac.Request.header('Content-Length', cached.size)
           return fs.createReadStream(publicPath)
         }
-      } catch {
-        // File not found in public
+
+        try {
+          const stat = await fsPromises.stat(publicPath)
+          if (stat.isFile()) {
+            const extension = path.extname(publicPath).slice(1)
+            const type = mime[extension] || 'text/html'
+
+            // PROD CACHE SET (Metadata Only)
+            if (!Odac.Config.debug) {
+              this.#publicCache[publicPath] = {
+                type,
+                size: stat.size
+              }
+            }
+
+            Odac.Request.header('Content-Type', type)
+            Odac.Request.header('Cache-Control', 'public, max-age=31536000')
+            Odac.Request.header('Content-Length', stat.size)
+            return fs.createReadStream(publicPath)
+          }
+        } catch {
+          // File not found in public
+        }
       }
     }
 
