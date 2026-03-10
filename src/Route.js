@@ -247,11 +247,8 @@ class Route {
         try {
           const stat = await fsPromises.stat(publicPath)
           if (stat.isFile()) {
-            let type = 'text/html'
-            if (url.includes('.')) {
-              let arr = url.split('.')
-              type = mime[arr[arr.length - 1]]
-            }
+            const extension = path.extname(publicPath).slice(1)
+            const type = mime[extension] || 'text/html'
 
             // PROD CACHE SET (Metadata Only)
             if (!Odac.Config.debug) {
