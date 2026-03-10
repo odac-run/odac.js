@@ -940,10 +940,6 @@ if (typeof window !== 'undefined') {
       const wsUrl = `${protocol}//${window.location.host}${path}`
       const protocols = []
       const tokenProvider = token ? () => this.token() : null
-      if (token) {
-        const csrfToken = this.token()
-        if (csrfToken) protocols.push(`odac-token-${csrfToken}`)
-      }
 
       return new OdacWebSocket(wsUrl, protocols, {...options, tokenProvider})
     }
