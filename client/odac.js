@@ -1051,6 +1051,8 @@ if (typeof window !== 'undefined') {
   const broadcast = (type, data) => ports.forEach(port => port.postMessage({type, data}))
 
   let wsConfig = null
+  let reconnectAttempts = 0
+  let reconnectTimer = null
 
   const requestTokenFromPort = () => {
     return new Promise(resolve => {
@@ -1094,26 +1096,36 @@ if (typeof window !== 'undefined') {
               ...options,
               tokenProvider: null
             })
-            socket.on('open', () => broadcast('open'))
+            socket.on('open', () => {
+              reconnectAttempts = 0
+              broadcast('open')
+            })
             socket.on('message', data => broadcast('message', data))
             socket.on('close', e => {
               broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean})
-              if (wsConfig && options.autoReconnect !== false && ports.size > 0) {
+              const maxAttempts = options.maxReconnectAttempts || 10
+              if (wsConfig && options.autoReconnect !== false && ports.size > 0 && reconnectAttempts < maxAttempts) {
                 socket.close()
                 socket = null
-                requestTokenFromPort().then(freshToken => {
-                  if (!freshToken || ports.size === 0) return
-                  const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
-                  const protocols = ['odac-token-' + freshToken]
-                  socket = new OdacWebSocket(wsUrl, protocols, {
-                    ...wsConfig.options,
-                    tokenProvider: null
+                reconnectAttempts++
+                reconnectTimer = setTimeout(() => {
+                  requestTokenFromPort().then(freshToken => {
+                    if (!freshToken || ports.size === 0) return
+                    const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
+                    const protocols = ['odac-token-' + freshToken]
+                    socket = new OdacWebSocket(wsUrl, protocols, {
+                      ...wsConfig.options,
+                      tokenProvider: null
+                    })
+                    socket.on('open', () => {
+                      reconnectAttempts = 0
+                      broadcast('open')
+                    })
+                    socket.on('message', data => broadcast('message', data))
+                    socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
+                    socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
                   })
-                  socket.on('open', () => broadcast('open'))
-                  socket.on('message', data => broadcast('message', data))
-                  socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
-                  socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
-                })
+                }, options.reconnectDelay || 1000)
               }
             })
             socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
@@ -1126,9 +1138,15 @@ if (typeof window !== 'undefined') {
           break
         case 'close':
           ports.delete(port)
-          if (ports.size === 0 && socket) {
-            socket.close()
-            socket = null
+          if (ports.size === 0) {
+            if (reconnectTimer) {
+              clearTimeout(reconnectTimer)
+              reconnectTimer = null
+            }
+            if (socket) {
+              socket.close()
+              socket = null
+            }
           }
           break
       }
