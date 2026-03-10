@@ -1,3 +1,32 @@
+### ⚙️ Engine Tuning
+
+- **client:** extract ws connection logic and fix recursive sharedworker reconnects reconnect bug
+- **client:** remove redundant truthy check for websocket token
+- **route:** remove useless variable assignment for decodedUrl
+
+### ⚡️ Performance Upgrades
+
+- **client:** remove redundant token consumption during websocket initialization
+
+### 📚 Documentation
+
+- **README:** enhance security section with detailed CSRF protection features
+
+### 🛠️ Fixes & Improvements
+
+- **client:** enhance websocket reconnection logic with attempt tracking and timer management
+- **client:** preserve existing websocket subprotocols & add try/catch layer to token provider
+- **route:** improve URL decoding and public path handling for file requests
+- **route:** sanitize decoded URL and improve public path validation
+- **route:** use robust path.extname instead of string splitting for mime type resolution
+- **websocket:** implement token provider for dynamic token handling on reconnect
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### doc
 
 - **forms:** update backend and frontend forms documentation with practical usage patterns and improved descriptions
