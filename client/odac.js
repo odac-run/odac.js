@@ -26,9 +26,15 @@ class OdacWebSocket {
     if (this.#isClosed) return
 
     if (this.#tokenProvider) {
-      const freshToken = this.#tokenProvider()
-      if (freshToken) {
-        this.#protocols = [`odac-token-${freshToken}`]
+      try {
+        const freshToken = this.#tokenProvider()
+        if (freshToken) {
+          let current = Array.isArray(this.#protocols) ? this.#protocols : this.#protocols ? [this.#protocols] : []
+          this.#protocols = current.filter(p => !p.startsWith('odac-token-'))
+          this.#protocols.push(`odac-token-${freshToken}`)
+        }
+      } catch (e) {
+        console.error('Odac WebSocket tokenProvider error:', e)
       }
     }
 
