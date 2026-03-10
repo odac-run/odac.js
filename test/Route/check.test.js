@@ -308,4 +308,105 @@ describe('Route.check()', () => {
       expect(paramHandler).not.toHaveBeenCalled()
     })
   })
+
+  describe('public static file serving', () => {
+    const fs = require('fs')
+    const path = require('path')
+
+    const createMockOdac = url => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {debug: true},
+      Request: {
+        url,
+        method: 'get',
+        route: 'test_route',
+        header: jest.fn(),
+        cookie: jest.fn(() => null),
+        abort: jest.fn(),
+        setSession: jest.fn(),
+        data: {url: {}}
+      },
+      request: jest.fn().mockResolvedValue(null)
+    })
+
+    beforeEach(() => {
+      global.__dir = '/app'
+    })
+
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
+    it('should serve a public static file successfully', async () => {
+      const mockStat = jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 1024})
+      const mockStream = {pipe: jest.fn()}
+      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue(mockStream)
+      const expectedPath = path.normalize('/app/public/style.css')
+
+      const mockOdac = createMockOdac('/style.css')
+      const result = await route.check(mockOdac)
+
+      expect(mockStat).toHaveBeenCalledWith(expectedPath)
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/css')
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 1024)
+      expect(mockCreateReadStream).toHaveBeenCalledWith(expectedPath)
+      expect(result).toBe(mockStream)
+    })
+
+    it('should prevent path traversal attacks', async () => {
+      const mockStat = jest.spyOn(fs.promises, 'stat')
+
+      const mockOdac = createMockOdac('/../secrets.txt')
+      const result = await route.check(mockOdac)
+
+      expect(mockStat).not.toHaveBeenCalled()
+      expect(result).toBeUndefined() // Falls through if blocked
+    })
+
+    it('should prevent null byte injection attacks', async () => {
+      const mockStat = jest.spyOn(fs.promises, 'stat')
+
+      const mockOdac = createMockOdac('/style%00.css')
+      const result = await route.check(mockOdac)
+
+      expect(mockStat).not.toHaveBeenCalled()
+      expect(result).toBeUndefined()
+    })
+
+    it('should handle invalid URI encoding gracefully', async () => {
+      const mockStat = jest.spyOn(fs.promises, 'stat')
+
+      const mockOdac = createMockOdac('/%E0%A4%A') // Invalid URL encoded string
+      const result = await route.check(mockOdac)
+
+      expect(mockStat).not.toHaveBeenCalled()
+      expect(result).toBeUndefined()
+    })
+
+    it('should cache metadata in production mode', async () => {
+      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 2048})
+      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream')
+
+      const mockOdac = createMockOdac('/script.js')
+      mockOdac.Config.debug = false // prod mode
+
+      // first call (cache miss -> set cache)
+      await route.check(mockOdac)
+      expect(fs.promises.stat).toHaveBeenCalledTimes(1)
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
+
+      // reset mock tracking (cache hit -> no stat)
+      jest.clearAllMocks()
+      jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream_2')
+
+      // second call
+      const result2 = await route.check(mockOdac)
+
+      expect(fs.promises.stat).not.toHaveBeenCalled() // Not called because metadata is cached
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 2048)
+      expect(mockCreateReadStream).toHaveBeenCalledWith(path.normalize('/app/public/script.js'))
+      expect(result2).toBe('mock_stream_2')
+    })
+  })
 })
