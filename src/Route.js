@@ -230,9 +230,11 @@ class Route {
 
     if (decodedUrl && !decodedUrl.includes('\0')) {
       const publicDir = path.normalize(`${__dir}/public`)
-      const publicPath = path.normalize(path.join(publicDir, decodedUrl))
+      const safeUrl = decodedUrl.replace(/^[/\\]+/, '')
+      const publicPath = path.normalize(path.join(publicDir, safeUrl))
+      const relativePath = path.relative(publicDir, publicPath)
 
-      if (publicPath.startsWith(publicDir)) {
+      if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
         // PROD CACHE HIT (Metadata)
         if (!Odac.Config.debug && this.#publicCache[publicPath]) {
           const cached = this.#publicCache[publicPath]
