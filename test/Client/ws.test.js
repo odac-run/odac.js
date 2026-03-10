@@ -97,7 +97,7 @@ describe('Odac.ws()', () => {
     })
     mockDocument.cookie = 'odac_client=test-client'
 
-    const ws = window.Odac.ws('/test-ws', {token: true, autoReconnect: true, reconnectDelay: 100})
+    window.Odac.ws('/test-ws', {token: true, autoReconnect: true, reconnectDelay: 100})
     const firstCall = WebSocket.mock.calls[0]
     expect(firstCall[1]).toEqual(expect.arrayContaining([expect.stringMatching(/^odac-token-/)]))
     const firstToken = firstCall[1][0]
