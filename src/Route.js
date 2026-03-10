@@ -221,7 +221,7 @@ class Route {
       return await this.#executeController(Odac, pageController)
     }
 
-    let decodedUrl = url
+    let decodedUrl
     try {
       decodedUrl = decodeURIComponent(url)
     } catch {
