@@ -1075,6 +1075,38 @@ if (typeof window !== 'undefined') {
     })
   }
 
+  const connectSocket = protocols => {
+    if (!wsConfig || ports.size === 0) return
+    const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
+    socket = new OdacWebSocket(wsUrl, protocols, {
+      ...wsConfig.options,
+      tokenProvider: null
+    })
+    socket.on('open', () => {
+      reconnectAttempts = 0
+      broadcast('open')
+    })
+    socket.on('message', data => broadcast('message', data))
+    socket.on('close', e => {
+      broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean})
+      const maxAttempts = wsConfig.options.maxReconnectAttempts || 10
+      if (wsConfig && wsConfig.options.autoReconnect !== false && ports.size > 0 && reconnectAttempts < maxAttempts) {
+        if (socket) {
+          socket.close()
+          socket = null
+        }
+        reconnectAttempts++
+        reconnectTimer = setTimeout(() => {
+          requestTokenFromPort().then(freshToken => {
+            if (!freshToken || ports.size === 0) return
+            connectSocket(['odac-token-' + freshToken])
+          })
+        }, wsConfig.options.reconnectDelay || 1000)
+      }
+    })
+    socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
+  }
+
   self.onconnect = e => {
     const port = e.ports[0]
     ports.add(port)
@@ -1086,45 +1118,8 @@ if (typeof window !== 'undefined') {
         case 'connect':
           if (!socket) {
             wsConfig = {host, path, protocol, options}
-            const wsUrl = protocol + '//' + host + path
             const protocols = token ? ['odac-token-' + token] : []
-            socket = new OdacWebSocket(wsUrl, protocols, {
-              ...options,
-              tokenProvider: null
-            })
-            socket.on('open', () => {
-              reconnectAttempts = 0
-              broadcast('open')
-            })
-            socket.on('message', data => broadcast('message', data))
-            socket.on('close', e => {
-              broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean})
-              const maxAttempts = options.maxReconnectAttempts || 10
-              if (wsConfig && options.autoReconnect !== false && ports.size > 0 && reconnectAttempts < maxAttempts) {
-                socket.close()
-                socket = null
-                reconnectAttempts++
-                reconnectTimer = setTimeout(() => {
-                  requestTokenFromPort().then(freshToken => {
-                    if (!freshToken || ports.size === 0) return
-                    const wsUrl = wsConfig.protocol + '//' + wsConfig.host + wsConfig.path
-                    const protocols = ['odac-token-' + freshToken]
-                    socket = new OdacWebSocket(wsUrl, protocols, {
-                      ...wsConfig.options,
-                      tokenProvider: null
-                    })
-                    socket.on('open', () => {
-                      reconnectAttempts = 0
-                      broadcast('open')
-                    })
-                    socket.on('message', data => broadcast('message', data))
-                    socket.on('close', e => broadcast('close', {code: e?.code, reason: e?.reason, wasClean: e?.wasClean}))
-                    socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
-                  })
-                }, options.reconnectDelay || 1000)
-              }
-            })
-            socket.on('error', e => broadcast('error', {message: e?.message || 'WebSocket error'}))
+            connectSocket(protocols)
           } else if (socket.connected) {
             port.postMessage({type: 'open'})
           }
