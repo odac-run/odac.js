@@ -50,5 +50,21 @@ source.onmessage = (event) => {
 
 ## Best Practices
 -   **Resource Management**: Shared WebSocket automatically closes when the last tab using it is closed.
--   **Fallback**: If `SharedWorker` is not supported (e.g., Safari), `Odac.ws` automatically falls back to a standard WebSocket.
--   **Server-Side Hubs**: Ensure the backend uses `Odac.Hub` to send messages to the correct rooms or users.
+-   **Security**: Always use `Odac.ws(url, { token: true })` for authenticated paths; the client will automatically attach the latest CSRF/Session token.
+-   **Distributed State**: Use `Odac.Ipc` in backend WS handlers to broadcast messages across multiple server workers.
+
+### 4. Rooms & Broadcasting (Backend Example)
+```javascript
+// controller/ws/Game.js
+module.exports = async function(Odac) {
+  const ws = Odac.ws;
+  const roomId = await Odac.request('roomId');
+
+  ws.join(roomId);
+
+  ws.on('message', (data) => {
+    // Broadcast only to this room
+    ws.to(roomId).send({ user: ws.id, move: data.move });
+  });
+};
+```

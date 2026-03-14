@@ -50,7 +50,7 @@ module.exports = User;
 class User {
   async show(Odac) {
     // Service is automatically available as Odac.User
-    const profile = await Odac.User.getProfile(Odac.Request.input('id'));
+    const profile = await Odac.User.getProfile(await Odac.request('id'));
     
     return Odac.View.make('user.profile', { profile });
   }

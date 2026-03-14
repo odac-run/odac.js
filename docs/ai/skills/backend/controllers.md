@@ -32,7 +32,7 @@ class User {
 
   // GET /users/{id}
   async show(Odac) {
-    const id = Odac.Request.input('id');
+    const id = await Odac.request('id');
     const user = await Odac.Service.get('User').find(id);
     return Odac.return(user);
   }
@@ -48,7 +48,28 @@ class User {
 module.exports = User;
 ```
 
-### 2. Simple Function-Based Controller
+### 2. WebSocket Controller
+```javascript
+// controller/ws/Chat.js
+module.exports = function(Odac) {
+  const ws = Odac.ws; // The WebSocket client instance
+
+  ws.on('message', (data) => {
+    console.log('Received:', data);
+    // Broadcast to everyone else
+    ws.broadcast({ sender: ws.id, text: data.text });
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected:', ws.id);
+  });
+
+  // Optional: send welcome message
+  ws.send({ type: 'info', message: 'Connected to Chat!' });
+};
+```
+
+### 3. Simple Function-Based Controller
 ```javascript
 // controller/Home.js
 module.exports = function(Odac) {
@@ -56,7 +77,7 @@ module.exports = function(Odac) {
 };
 ```
 
-### 3. Usage in Routes
+### 4. Usage in Routes
 ```javascript
 // route/web.js
 Odac.Route.get('/users', 'User@index');

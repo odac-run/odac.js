@@ -1,4 +1,5 @@
 const fs = require('fs')
+const fsPromises = fs.promises
 
 class Lang {
   #odac
@@ -10,7 +11,7 @@ class Lang {
     this.set()
   }
 
-  get(...args) {
+  async get(...args) {
     if (typeof args[0] !== 'string') return args[0]
     if (!this.#data[args[0]]) {
       this.#data[args[0]] = args[0]
@@ -34,11 +35,11 @@ class Lang {
     return str
   }
 
-  #save() {
+  async #save() {
     if (!this.#lang) return
-    if (!fs.existsSync(__dir + '/storage/')) fs.mkdirSync(__dir + '/storage/')
-    if (!fs.existsSync(__dir + '/storage/language/')) fs.mkdirSync(__dir + '/storage/language/')
-    fs.writeFileSync(__dir + '/storage/language/' + this.#lang + '.json', JSON.stringify(this.#data, null, 4))
+    const langDir = __dir + '/storage/language/'
+    if (!fs.existsSync(langDir)) await fsPromises.mkdir(langDir, {recursive: true})
+    await fsPromises.writeFile(langDir + this.#lang + '.json', JSON.stringify(this.#data, null, 4))
   }
 
   set(lang) {
@@ -55,9 +56,15 @@ class Lang {
       }
     }
     this.#lang = lang
-    if (fs.existsSync(__dir + '/storage/language/' + lang + '.json'))
-      this.#data = JSON.parse(fs.readFileSync(__dir + '/storage/language/' + lang + '.json'))
-    else this.#data = {}
+    const langFile = __dir + '/storage/language/' + lang + '.json'
+    if (fs.existsSync(langFile)) {
+      // Use Sync read here only because it's during initialization/request entry
+      // and we need to block briefly to ensure data is ready before logic proceeds.
+      // In a high-load system, this should Ideally be pre-cached.
+      this.#data = JSON.parse(fs.readFileSync(langFile, 'utf8'))
+    } else {
+      this.#data = {}
+    }
   }
 }
 
