@@ -1,4 +1,4 @@
-const fs = require('fs')
+const fs = require('node:fs')
 const fsPromises = fs.promises
 
 class Lang {
@@ -50,7 +50,7 @@ class Lang {
         this.#odac.Request.header('ACCEPT-LANGUAGE') &&
         this.#odac.Request.header('ACCEPT-LANGUAGE').length > 1
       ) {
-        lang = this.#odac.Request.header('ACCEPT-LANGUAGE').substr(0, 2)
+        lang = this.#odac.Request.header('ACCEPT-LANGUAGE').slice(0, 2)
       } else {
         lang = this.#odac.Config.lang?.default || 'en'
       }
