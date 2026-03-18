@@ -122,8 +122,9 @@ class Ipc extends EventEmitter {
       this.redis = Redis.createClient(Odac.Config.database?.redis?.[this.config.redis || 'default'] || {})
       await this.redis.connect()
     } catch (e) {
-      console.error('IPC Redis Driver Error:', e)
-      // Re-throw to ensure application doesn't start in a broken state.
+      if (e.code === 'MODULE_NOT_FOUND') {
+        throw new Error('IPC Redis driver requires the "redis" package. Run: npm install redis')
+      }
       throw e
     }
   }
