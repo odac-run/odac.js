@@ -1,11 +1,6 @@
 const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
-
-// Guard against coverage-instrumented Request.js requiring global.Odac
-// when this test runs in parallel with other suites that set/unset global.Odac.
-if (!global.Odac) global.Odac = {Route: {routes: {}}}
-
 const Image = require('../../../src/View/Image')
 
 const IMG_CACHE_DIR = './storage/.cache/img'

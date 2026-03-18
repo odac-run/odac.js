@@ -32,17 +32,17 @@ class OdacRequest {
     delete this.req.headers['x-odac-connection-ssl']
     delete this.req.headers['x-odac-connection-remoteaddress']
     let route = req.headers.host.split('.')[0]
-    if (!Odac.Route.routes[route]) route = 'www'
+    if (!global.Odac.Route.routes[route]) route = 'www'
     this.route = route
     if (this.res) {
       if (typeof this.#odac.setTimeout === 'function') {
-        this.#timeout = this.#odac.setTimeout(() => !this.res.finished && this.abort(408), Odac.Config.request.timeout)
+        this.#timeout = this.#odac.setTimeout(() => !this.res.finished && this.abort(408), global.Odac.Config.request.timeout)
       } else {
-        this.#timeout = setTimeout(() => !this.res.finished && this.abort(408), Odac.Config.request.timeout)
+        this.#timeout = setTimeout(() => !this.res.finished && this.abort(408), global.Odac.Config.request.timeout)
       }
     }
     this.#data()
-    if (!Odac.Request) Odac.Request = {}
+    if (!global.Odac.Request) global.Odac.Request = {}
   }
 
   // - ABORT REQUEST
@@ -50,11 +50,11 @@ class OdacRequest {
     this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
     if (
-      Odac.Route.routes[this.route].error &&
-      Odac.Route.routes[this.route].error[code] &&
-      typeof Odac.Route.routes[this.route].error[code].cache === 'function'
+      global.Odac.Route.routes[this.route].error &&
+      global.Odac.Route.routes[this.route].error[code] &&
+      typeof global.Odac.Route.routes[this.route].error[code].cache === 'function'
     )
-      result = await Odac.Route.routes[this.route].error[code].cache(this.#odac)
+      result = await global.Odac.Route.routes[this.route].error[code].cache(this.#odac)
     this.end(result)
   }
 
@@ -250,30 +250,30 @@ class OdacRequest {
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex')
     let pub = this.cookie('odac_session')
-    if (!pub || !Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
+    if (!pub || !global.Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
       const lockKey = `lock:${this.ip}:${pri}`
       const now = Date.now()
 
-      const existingLock = Odac.Storage.get(lockKey)
+      const existingLock = global.Odac.Storage.get(lockKey)
       if (existingLock) {
-        if (now - existingLock.timestamp < 2000 && Odac.Storage.get(`sess:${existingLock.sessionId}:${pri}:_created`)) {
+        if (now - existingLock.timestamp < 2000 && global.Odac.Storage.get(`sess:${existingLock.sessionId}:${pri}:_created`)) {
           pub = existingLock.sessionId
         } else {
-          Odac.Storage.remove(lockKey)
+          global.Odac.Storage.remove(lockKey)
         }
       }
 
       if (!pub) {
         do {
           pub = nodeCrypto.randomBytes(16).toString('hex')
-        } while (Odac.Storage.get(`sess:${pub}:${pri}:_created`))
-        Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
-        Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
+        } while (global.Odac.Storage.get(`sess:${pub}:${pri}:_created`))
+        global.Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
+        global.Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
         this.cookie('odac_session', `${pub}`)
         setTimeout(() => {
-          const lock = Odac.Storage.get(lockKey)
+          const lock = global.Odac.Storage.get(lockKey)
           if (lock?.timestamp === now) {
-            Odac.Storage.remove(lockKey)
+            global.Odac.Storage.remove(lockKey)
           }
         }, 2000)
       }
@@ -282,15 +282,15 @@ class OdacRequest {
     const dbKey = `sess:${pub}:${pri}:${key}`
     if (value === undefined) {
       if (Object.prototype.hasOwnProperty.call(this.#sessions, dbKey)) return this.#sessions[dbKey]
-      const dbValue = Odac.Storage.get(dbKey) ?? null
+      const dbValue = global.Odac.Storage.get(dbKey) ?? null
       return dbValue
     } else if (value === null) {
       delete this.#sessions[dbKey]
       delete this.#sessions[dbKey]
-      Odac.Storage.remove(dbKey)
+      global.Odac.Storage.remove(dbKey)
     } else {
       this.#sessions[dbKey] = value
-      Odac.Storage.put(dbKey, value)
+      global.Odac.Storage.put(dbKey, value)
     }
   }
 
