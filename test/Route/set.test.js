@@ -85,4 +85,70 @@ describe('Route.set()', () => {
 
     fs.rmSync(tmpDir, {recursive: true, force: true})
   })
+
+  describe('hot reload', () => {
+    it('should update inline function reference on hot reload', async () => {
+      global.Odac.Route.buff = 'app'
+
+      const originalHandler = jest.fn(() => 'original')
+      route.set('get', '/api/test', originalHandler)
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+
+      expect(route.routes.app.get['/api/test'].cache).toBe(originalHandler)
+      expect(route.routes.app.get['/api/test'].type).toBe('function')
+
+      const updatedHandler = jest.fn(() => 'updated')
+      route.set('get', '/api/test', updatedHandler)
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+
+      expect(route.routes.app.get['/api/test'].cache).toBe(updatedHandler)
+      expect(route.routes.app.get['/api/test'].file).toBe(updatedHandler)
+    })
+
+    it('should update middlewares on inline function hot reload', async () => {
+      global.Odac.Route.buff = 'app'
+
+      const mw1 = jest.fn()
+      const handler = jest.fn()
+
+      route._pendingMiddlewares = [mw1]
+      route.set('get', '/mw-test', handler)
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+      route._pendingMiddlewares = []
+
+      expect(route.routes.app.get['/mw-test'].middlewares).toEqual([mw1])
+
+      const mw2 = jest.fn()
+      route._pendingMiddlewares = [mw2]
+      const newHandler = jest.fn()
+      route.set('get', '/mw-test', newHandler)
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+      route._pendingMiddlewares = []
+
+      expect(route.routes.app.get['/mw-test'].middlewares).toEqual([mw2])
+      expect(route.routes.app.get['/mw-test'].cache).toBe(newHandler)
+    })
+
+    it('should update token option on inline function hot reload', async () => {
+      global.Odac.Route.buff = 'app'
+
+      const handler = jest.fn()
+      route.set('get', '/token-test', handler, {token: false})
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+
+      expect(route.routes.app.get['/token-test'].token).toBe(false)
+
+      const newHandler = jest.fn()
+      route.set('get', '/token-test', newHandler, {token: true})
+      await Promise.all(route._pendingRouteLoads)
+      route._pendingRouteLoads = []
+
+      expect(route.routes.app.get['/token-test'].token).toBe(true)
+    })
+  })
 })

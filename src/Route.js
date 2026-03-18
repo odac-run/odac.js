@@ -7,7 +7,7 @@ const Internal = require('./Route/Internal.js')
 const MiddlewareChain = require('./Route/Middleware.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
-var routes2 = {}
+let routes2 = {}
 const mime = require('./Route/MimeTypes.js')
 
 class Route {
@@ -679,6 +679,13 @@ class Route {
             // File error, proceed to reload or re-set
           }
         } else {
+          // Update inline function reference on hot reload
+          this.routes[Odac.Route.buff][type][url].cache = file
+          this.routes[Odac.Route.buff][type][url].file = file
+          this.routes[Odac.Route.buff][type][url].mtime = Date.now()
+          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+          this.routes[Odac.Route.buff][type][url].action = action
           return
         }
       }
