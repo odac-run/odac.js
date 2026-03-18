@@ -267,6 +267,40 @@ class Image {
   }
 
   /**
+   * Compile-time parser that converts `<odac:img>` template tags into
+   * `<script:odac>` blocks containing runtime Image.render() calls.
+   *
+   * Runs in the View#render pipeline BEFORE jsBlocks extraction, so the
+   * generated `<script:odac>` blocks are properly protected from template
+   * literal escaping — identical to how Form.parse operates.
+   *
+   * @param {string} content - Raw template HTML
+   * @returns {string} Template with `<odac:img>` tags replaced by `<script:odac>` blocks
+   */
+  static parse(content) {
+    return content.replace(/<odac:img\s+([^>]*?)\/?>/g, (fullMatch, attributes) => {
+      const attrs = {}
+      const attrRegex = /(\w[\w-]*)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
+      let match
+      while ((match = attrRegex.exec(attributes))) {
+        const key = match[1]
+        const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
+        attrs[key] = value
+      }
+
+      if (!attrs.src) return fullMatch
+
+      let attrsStr = JSON.stringify(attrs)
+
+      // Unquote dynamic template expressions so they become live JS at runtime
+      attrsStr = attrsStr.replace(/"\{\{([\s\S]*?)\}\}"/g, '(await Odac.Var(await $1).html())')
+      attrsStr = attrsStr.replace(/"\{!!([\s\S]*?)!!\}"/g, '(await $1)')
+
+      return `<script:odac>html += await Odac.View.Image.render(${attrsStr});</script:odac>`
+    })
+  }
+
+  /**
    * Renders a standard HTML `<img>` tag from the given attributes,
    * excluding processing-specific attributes (format, quality).
    * @param {string} src - The resolved src URL

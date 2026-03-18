@@ -122,6 +122,7 @@ class View {
     global.Odac.View.Form = Form
     global.Odac.View.Image = Image
     this.Form = Form
+    this.Image = Image
   }
 
   all(name) {
@@ -280,31 +281,6 @@ class View {
     content = content.replace(/<odac:else\s*\/>/g, '<odac:else>')
     content = content.replace(/<odac:elseif\s+([^>]*?)\/>/g, '<odac:elseif $1>')
 
-    // Parse <odac:img> tags — on-demand image processing with optional resize and format conversion
-    content = content.replace(/<odac:img\s+([^>]*?)\/?>/g, (fullMatch, attributes) => {
-      const attrs = {}
-      const attrRegex = /(\w[\w-]*)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-      let match
-      while ((match = attrRegex.exec(attributes))) {
-        const key = match[1]
-        const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-        attrs[key] = value
-      }
-
-      if (!attrs.src) return fullMatch
-
-      // Convert to runtime call via <script:odac> — Image.render() handles
-      // both processing and HTML generation at request time, ensuring the
-      // processed file exists in cache before the browser requests it.
-      let attrsStr = JSON.stringify(attrs)
-
-      // Unquote dynamic template expressions so they become live JS at runtime
-      attrsStr = attrsStr.replace(/"\{\{([\s\S]*?)\}\}"/g, '(await Odac.Var(await $1).html())')
-      attrsStr = attrsStr.replace(/"\{!!([\s\S]*?)!!\}"/g, '(await $1)')
-
-      return `<script:odac>html += await Odac.View.Image.render(${attrsStr});</script:odac>`
-    })
-
     content = content.replace(/<odac([^>]*?)\/>/g, (fullMatch, attributes) => {
       attributes = attributes.trim()
 
@@ -431,6 +407,7 @@ class View {
 
     if (content !== null) {
       content = Form.parse(content, this.#odac)
+      content = Image.parse(content)
 
       const jsBlocks = []
       content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
