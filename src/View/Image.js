@@ -46,6 +46,7 @@ class Image {
       this.#sharpAvailable = true
     } catch {
       this.#sharpAvailable = false
+      console.warn('[ODAC] <odac:img> image processing is disabled. Run: npm install sharp')
     }
 
     return this.#sharpAvailable
