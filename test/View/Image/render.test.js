@@ -94,4 +94,24 @@ describe('Image.render()', () => {
       Image.isAvailable = originalIsAvailable
     }
   })
+
+  test('should escape HTML special characters in attribute values to prevent XSS', async () => {
+    const originalIsAvailable = Image.isAvailable
+    Image.isAvailable = () => false
+
+    try {
+      const html = await Image.render({
+        src: '/img.jpg" onload="alert(1)',
+        alt: '<script>xss</script>'
+      })
+
+      // Quotes are escaped so the injected onload never becomes a real attribute
+      expect(html).toContain('&quot; onload=&quot;')
+      expect(html).not.toContain('<script>')
+      expect(html).toContain('&quot;')
+      expect(html).toContain('&lt;script&gt;')
+    } finally {
+      Image.isAvailable = originalIsAvailable
+    }
+  })
 })

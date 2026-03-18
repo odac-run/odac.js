@@ -1,9 +1,9 @@
 const Image = require('../../../src/View/Image')
 
 describe('Image.hash()', () => {
-  test('should produce a 16-character hex string', () => {
+  test('should produce an 8-character hex string', () => {
     const result = Image.hash('/images/hero.jpg', {width: 400, height: 300})
-    expect(result).toMatch(/^[a-f0-9]{16}$/)
+    expect(result).toMatch(/^[a-f0-9]{8}$/)
   })
 
   test('should be deterministic for identical inputs', () => {
@@ -40,6 +40,20 @@ describe('Image.hash()', () => {
 
   test('should handle empty options gracefully', () => {
     const result = Image.hash('/images/hero.jpg')
-    expect(result).toMatch(/^[a-f0-9]{16}$/)
+    expect(result).toMatch(/^[a-f0-9]{8}$/)
+  })
+
+  test('should produce different hashes when mtime changes', () => {
+    const opts = {width: 400, format: 'webp'}
+    const a = Image.hash('/images/hero.jpg', opts, 1000000)
+    const b = Image.hash('/images/hero.jpg', opts, 2000000)
+    expect(a).not.toBe(b)
+  })
+
+  test('should produce same hash for same mtime', () => {
+    const opts = {width: 400, format: 'webp'}
+    const a = Image.hash('/images/hero.jpg', opts, 1000000)
+    const b = Image.hash('/images/hero.jpg', opts, 1000000)
+    expect(a).toBe(b)
   })
 })

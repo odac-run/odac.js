@@ -17,7 +17,7 @@ Processing happens at render time via `src/View/Image.js`. The first request tri
 
 1. **Optional Dependency**: Sharp must be installed separately (`npm install sharp`). The framework functions without it.
 2. **Security**: Path traversal is blocked. Only files under `public/` are processable.
-3. **Cache**: Processed images are stored in `storage/.cache/img/` with content-hash filenames for deduplication.
+3. **Cache**: Processed images are stored in `storage/.cache/img/` with human-readable filenames (`{name}-{dimension}-{hash}.{ext}`) for easy debugging and CDN log analysis.
 4. **Max Dimension**: 4096px cap prevents resource exhaustion from oversized requests.
 
 ## Reference Patterns

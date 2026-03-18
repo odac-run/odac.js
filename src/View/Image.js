@@ -15,8 +15,17 @@ const IMG_CACHE_DIR = './storage/.cache/img'
  * the transformation cost; subsequent requests are served at near-zero latency.
  */
 class Image {
-  /** @type {Map<string, {path: string, type: string}>} In-memory index of processed images */
+  /** @type {Map<string, {path: string, type: string, cacheKey: string}>} In-memory index of processed images */
   static #cache = new Map()
+
+  /** @type {Map<string, Promise>} In-flight processing promises to prevent duplicate work */
+  static #inflight = new Map()
+
+  /** @type {Map<string, number>} Source file mtime cache — eliminates per-render stat() in production */
+  static #mtimeCache = new Map()
+
+  /** @type {number} Maximum entries in the in-memory cache to prevent unbounded growth */
+  static #MAX_CACHE_SIZE = 1000
 
   /** @type {boolean|null} Lazy-evaluated sharp availability flag */
   static #sharpAvailable = null
@@ -54,21 +63,46 @@ class Image {
 
   /**
    * Generates a deterministic hash from the image transformation parameters.
-   * Identical source + options always produce the same hash, enabling
-   * cache deduplication across templates and requests.
+   * Identical source + options + mtime always produce the same hash, enabling
+   * cache deduplication across templates and requests while ensuring cache
+   * invalidation when the source file changes.
    * @param {string} src - Source image path (relative to public/)
    * @param {object} options - Transformation options (width, height, format, quality)
-   * @returns {string} 16-character hex hash
+   * @param {number} [mtime=0] - Source file modification time (ms) for cache busting
+   * @returns {string} 8-character hex hash
    */
-  static hash(src, options = {}) {
+  static hash(src, options = {}, mtime = 0) {
     const payload = JSON.stringify({
       src,
       w: options.width || null,
       h: options.height || null,
       f: options.format || null,
-      q: options.quality || null
+      q: options.quality || null,
+      m: mtime
     })
-    return nodeCrypto.createHash('md5').update(payload).digest('hex').substring(0, 16)
+    return nodeCrypto.createHash('md5').update(payload).digest('hex').substring(0, 8)
+  }
+
+  /**
+   * Builds a human-readable cache filename from the source path and options.
+   * Pattern: {name}-{dimension}-{hash8}.{ext}
+   * Examples: logo-250-a1b2c3d4.webp, hero-o-f9e8d7c6.avif
+   *
+   * The dimension segment uses width if specified, otherwise 'o' (original).
+   * The hash suffix guarantees uniqueness across different paths, quality
+   * settings, height values, and source file versions (via mtime).
+   *
+   * @param {string} src - Source image path (e.g. '/images/logo.jpg')
+   * @param {object} options - {width, height, format, quality}
+   * @param {number} [mtime=0] - Source file modification time for cache busting
+   * @returns {string} Cache filename (e.g. 'logo-250-a1b2c3d4.webp')
+   */
+  static buildFilename(src, options = {}, mtime = 0) {
+    const imgHash = this.hash(src, options, mtime)
+    const format = this.#resolveFormat(src, options.format)
+    const basename = path.basename(src, path.extname(src)).replace(/[^a-zA-Z0-9_-]/g, '_')
+    const dimension = options.width ? String(parseInt(options.width, 10)) : 'o'
+    return `${basename}-${dimension}-${imgHash}.${format}`
   }
 
   /**
@@ -110,37 +144,64 @@ class Image {
    * Uses sharp's pipeline API for single-pass processing (no intermediate
    * buffers), keeping memory pressure minimal even for large images.
    *
+   * Concurrent requests for the same variant are coalesced via an in-flight
+   * promise map, preventing duplicate sharp pipelines and file write races.
+   *
    * @param {string} src - Source path relative to public/ (e.g. '/images/hero.jpg')
    * @param {object} options - {width, height, format, quality}
    * @returns {Promise<{path: string, type: string}|null>} Cached file info or null on failure
    */
-  static async process(src, options = {}) {
+  static async process(src, options = {}, mtime = 0) {
     if (!this.isAvailable()) return null
 
-    const imgHash = this.hash(src, options)
-    const format = this.#resolveFormat(src, options.format)
-    const cacheKey = `${imgHash}.${format}`
+    const cacheKey = this.buildFilename(src, options, mtime)
 
     // O(1) in-memory cache hit
     if (this.#cache.has(cacheKey)) return this.#cache.get(cacheKey)
 
+    // Coalesce concurrent requests for the same variant
+    if (this.#inflight.has(cacheKey)) return this.#inflight.get(cacheKey)
+
+    const format = this.#resolveFormat(src, options.format)
+    const promise = this.#processInternal(src, cacheKey, format, options, mtime > 0)
+    this.#inflight.set(cacheKey, promise)
+
+    try {
+      return await promise
+    } finally {
+      this.#inflight.delete(cacheKey)
+    }
+  }
+
+  /**
+   * Internal processing pipeline — separated from process() to keep the
+   * in-flight coalescing logic clean and the actual I/O isolated.
+   * @param {string} src - Source path relative to public/
+   * @param {string} cacheKey - Pre-computed cache key (hash.format)
+   * @param {string} format - Resolved output format
+   * @param {object} options - Processing options
+   * @param {boolean} sourceVerified - When true, skips the redundant access check (caller already stat'd the file)
+   * @returns {Promise<{path: string, type: string}|null>}
+   */
+  static async #processInternal(src, cacheKey, format, options, sourceVerified = false) {
     const cachePath = path.join(IMG_CACHE_DIR, cacheKey)
 
     // Disk cache hit — populate in-memory index without reprocessing
     try {
       await fsPromises.access(cachePath)
-      const result = {path: cachePath, type: `image/${format}`}
-      this.#cache.set(cacheKey, result)
+      const result = {path: cachePath, type: `image/${format}`, cacheKey}
+      this.#setCacheEntry(cacheKey, result)
       return result
     } catch {
       // Cache miss — proceed to process
     }
 
     // Resolve source file from public directory
-    const sourcePath = path.join(global.__dir || process.cwd(), 'public', src)
+    const baseDir = global.__dir || process.cwd()
+    const sourcePath = path.join(baseDir, 'public', src)
 
     // Path traversal guard
-    const publicDir = path.resolve(global.__dir || process.cwd(), 'public')
+    const publicDir = path.resolve(baseDir, 'public')
     const resolvedSource = path.resolve(sourcePath)
     if (!resolvedSource.startsWith(publicDir + path.sep) && resolvedSource !== publicDir) {
       console.error(`[ODAC Image] Path traversal blocked: ${src}`)
@@ -151,10 +212,13 @@ class Image {
     const sourceExt = path.extname(src).slice(1).toLowerCase()
     if (!this.SUPPORTED_INPUTS.has(sourceExt)) return null
 
-    try {
-      await fsPromises.access(resolvedSource)
-    } catch {
-      return null
+    // Skip access check when render() already confirmed the file exists via stat
+    if (!sourceVerified) {
+      try {
+        await fsPromises.access(resolvedSource)
+      } catch {
+        return null
+      }
     }
 
     const width = this.#parseDimension(options.width)
@@ -179,13 +243,28 @@ class Image {
       await fsPromises.mkdir(IMG_CACHE_DIR, {recursive: true})
       await pipeline.toFile(cachePath)
 
-      const result = {path: cachePath, type: `image/${format}`}
-      this.#cache.set(cacheKey, result)
+      const result = {path: cachePath, type: `image/${format}`, cacheKey}
+      this.#setCacheEntry(cacheKey, result)
       return result
     } catch (e) {
       console.error(`[ODAC Image] Processing failed for "${src}":`, e.message)
       return null
     }
+  }
+
+  /**
+   * Adds an entry to the in-memory cache with LRU-style eviction.
+   * When the cache exceeds MAX_CACHE_SIZE, the oldest entry (first inserted)
+   * is evicted to bound memory usage in high-variant deployments.
+   * @param {string} key - Cache key
+   * @param {{path: string, type: string}} value - Cached result
+   */
+  static #setCacheEntry(key, value) {
+    if (this.#cache.size >= this.#MAX_CACHE_SIZE) {
+      const oldest = this.#cache.keys().next().value
+      this.#cache.delete(oldest)
+    }
+    this.#cache.set(key, value)
   }
 
   /**
@@ -252,16 +331,33 @@ class Image {
       quality
     }
 
+    // Production mtime cache: eliminates a stat() syscall per render when the
+    // source file hasn't changed. Development always stats for hot-reload.
+    const isDebug = global.Odac?.Config?.debug !== false
+    const baseDir = global.__dir || process.cwd()
+    const sourcePath = path.join(baseDir, 'public', src)
+    let mtime = 0
+
+    if (!isDebug && this.#mtimeCache.has(src)) {
+      mtime = this.#mtimeCache.get(src)
+    } else {
+      try {
+        const stat = await fsPromises.stat(sourcePath)
+        mtime = stat.mtimeMs
+        if (!isDebug) this.#mtimeCache.set(src, mtime)
+      } catch {
+        // Source not found — process() will handle the error
+      }
+    }
+
     // Trigger processing — returns immediately on cache hit
-    const result = await this.process(src, options)
+    const result = await this.process(src, options, mtime)
     if (!result) {
-      // Processing failed — fall back to original src
       return this.#renderImgTag(src, attrs, processingAttrs)
     }
 
-    const imgHash = this.hash(src, options)
-    const outputFormat = this.#resolveFormat(src, format)
-    const processedSrc = `/_odac/img/${imgHash}.${outputFormat}`
+    // Use cacheKey from process() result — avoids recomputing hash + buildFilename
+    const processedSrc = `/_odac/img/${result.cacheKey}`
 
     return this.#renderImgTag(processedSrc, attrs, processingAttrs)
   }
@@ -301,15 +397,27 @@ class Image {
   }
 
   /**
+   * Escapes HTML special characters in attribute values to prevent XSS
+   * injection through dynamic template expressions or user-controlled input.
+   * @param {string} value - Raw attribute value
+   * @returns {string} Escaped value safe for HTML attribute context
+   */
+  static #escapeAttr(value) {
+    if (typeof value !== 'string') return value
+    return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  }
+
+  /**
    * Renders a standard HTML `<img>` tag from the given attributes,
    * excluding processing-specific attributes (format, quality).
+   * All attribute values are HTML-escaped to prevent XSS injection.
    * @param {string} src - The resolved src URL
    * @param {object} attrs - All parsed attributes
    * @param {Set<string>} exclude - Attribute names to exclude from HTML output
    * @returns {string} HTML img tag
    */
   static #renderImgTag(src, attrs, exclude) {
-    let tag = `<img src="${src}"`
+    let tag = `<img src="${this.#escapeAttr(src)}"`
 
     // Alphabetical order for deterministic output
     const keys = Object.keys(attrs)
@@ -320,7 +428,7 @@ class Image {
       if (value === true) {
         tag += ` ${key}`
       } else {
-        tag += ` ${key}="${value}"`
+        tag += ` ${key}="${this.#escapeAttr(value)}"`
       }
     }
 
@@ -329,11 +437,13 @@ class Image {
   }
 
   /**
-   * Clears the in-memory cache index. Useful during hot-reload in
-   * development mode to pick up re-processed images.
+   * Clears all in-memory caches (processed image index + source mtime).
+   * Useful during hot-reload in development mode to pick up re-processed
+   * images and detect source file changes immediately.
    */
   static clearCache() {
     this.#cache.clear()
+    this.#mtimeCache.clear()
   }
 }
 

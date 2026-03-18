@@ -594,8 +594,8 @@ class Route {
         const filename = Odac.Request.data.url.file
         if (!filename) return Odac.Request.abort(404)
 
-        // Validate filename format: 16-char hex hash + supported extension
-        if (!/^[a-f0-9]{16}\.(webp|avif|png|jpeg|jpg|tiff)$/.test(filename)) {
+        // Validate filename format: {name}-{dimension}-{hash8}.{ext}
+        if (!/^[\w-]+-(?:\d+|o)-[a-f0-9]{8}\.(webp|avif|png|jpeg|jpg|tiff)$/.test(filename)) {
           return Odac.Request.abort(404)
         }
 

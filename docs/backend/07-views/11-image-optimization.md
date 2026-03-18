@@ -15,7 +15,7 @@ The simplest usage — just provide a `src`. ODAC automatically converts the ima
 This is equivalent to writing:
 
 ```html
-<img src="/_odac/img/a1b2c3d4e5f6a7b8.webp">
+<img src="/_odac/img/hero-o-a1b2c3d4.webp">
 ```
 
 The processed image is cached after the first request. All subsequent requests are served instantly.
@@ -180,9 +180,12 @@ You can override the defaults in `odac.json`:
 ### How It Works
 
 1. The `<odac:img>` tag is compiled at template render time.
-2. On the first request, ODAC processes the source image using `sharp` and saves the result to `storage/.cache/img/`.
-3. The `<img>` tag in the HTML points to `/_odac/img/{hash}.{ext}` — an internal route that serves the cached file.
-4. All subsequent requests hit the cache directly, with `Cache-Control: immutable` headers for maximum browser caching.
+2. ODAC checks the source file's modification time (`mtime`) and includes it in the hash. This means when you update a source image, the URL automatically changes — no manual cache busting needed.
+3. On the first request, ODAC processes the source image using `sharp` and saves the result to `storage/.cache/img/`.
+4. The `<img>` tag in the HTML points to `/_odac/img/{name}-{dimension}-{hash}.{ext}` — an internal route that serves the cached file. The filename includes the original image name and dimension for easy debugging.
+5. All subsequent requests hit the cache directly, with `Cache-Control: immutable` headers for maximum browser caching.
+
+> **Cache Busting:** You don't need to rename files or add query strings. Simply replace the source image in `public/` and the next page render will produce a new URL with a different hash, forcing browsers and CDNs to fetch the updated version.
 
 ### Best Practices
 
