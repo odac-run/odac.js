@@ -709,9 +709,14 @@ class Route {
           this.routes[Odac.Route.buff][type][url].action = action
 
           this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
-        } catch {
+        } catch (err) {
           if (file && typeof file === 'string') {
-            console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
+            if (err.code === 'ENOENT') {
+              console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
+            } else {
+              console.error(`\x1b[31m[Odac]\x1b[0m Failed to load controller: \x1b[33m${path}\x1b[0m`)
+              console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
+            }
           }
         }
       }
