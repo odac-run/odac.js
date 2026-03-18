@@ -194,3 +194,4 @@ You can override the defaults in `odac.json`:
 - Set explicit `width` and `height` to prevent layout shift (CLS).
 - Keep original high-resolution images in `public/` — let ODAC handle the downsizing.
 - Use `avif` for the best compression ratio on modern browsers; use `webp` for broader compatibility.
+- For programmatic URL access in controllers (JSON APIs, CSS backgrounds, emails), see [`Odac.image()`](../05-controllers/02-your-trusty-odac-assistant.md#image-processing).

@@ -78,3 +78,16 @@ Default settings in `odac.json`:
 - Set explicit `width` and `height` to prevent layout shift (CLS).
 - Use `loading="lazy"` for below-the-fold images.
 - Keep source images at high resolution in `public/`; let ODAC handle the downsizing.
+
+## Programmatic API (`Odac.image()`)
+
+For cases where a raw URL is needed instead of an `<img>` tag (div backgrounds, JSON APIs, mail templates, cron jobs):
+
+```js
+const url = await Odac.image('/images/hero.jpg', { width: 800, format: 'webp' })
+// → "/_odac/img/hero-800-a1b2c3d4.webp"
+```
+
+- Available on every `Odac` instance (controller, cron, middleware).
+- Same processing pipeline and cache as `<odac:img>`.
+- Returns original `src` as fallback when sharp is unavailable.

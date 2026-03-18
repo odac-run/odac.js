@@ -363,6 +363,49 @@ class Image {
   }
 
   /**
+   * Returns the processed image URL without generating an HTML tag.
+   * Designed for use in controllers, cron jobs, mail templates, or anywhere
+   * a raw URL is needed (e.g. CSS background-image, JSON API responses).
+   *
+   * When sharp is unavailable or processing fails, returns the original
+   * source path so the caller always gets a usable URL.
+   *
+   * @param {string} src - Source path relative to public/ (e.g. '/images/hero.jpg')
+   * @param {object} [options] - {width, height, format, quality}
+   * @returns {Promise<string>} Processed image URL or original src as fallback
+   */
+  static async url(src, options = {}) {
+    if (!src) return ''
+    if (!this.isAvailable()) return src
+
+    const format = options.format || global.Odac?.Config?.image?.format || null
+    const quality = options.quality || global.Odac?.Config?.image?.quality || null
+    const opts = {width: options.width || null, height: options.height || null, format, quality}
+
+    const isDebug = global.Odac?.Config?.debug !== false
+    const baseDir = global.__dir || process.cwd()
+    const sourcePath = path.join(baseDir, 'public', src)
+    let mtime = 0
+
+    if (!isDebug && this.#mtimeCache.has(src)) {
+      mtime = this.#mtimeCache.get(src)
+    } else {
+      try {
+        const stat = await fsPromises.stat(sourcePath)
+        mtime = stat.mtimeMs
+        if (!isDebug) this.#mtimeCache.set(src, mtime)
+      } catch {
+        return src
+      }
+    }
+
+    const result = await this.process(src, opts, mtime)
+    if (!result) return src
+
+    return `/_odac/img/${result.cacheKey}`
+  }
+
+  /**
    * Compile-time parser that converts `<odac:img>` template tags into
    * `<script:odac>` blocks containing runtime Image.render() calls.
    *
