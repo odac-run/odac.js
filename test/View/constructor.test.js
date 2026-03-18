@@ -19,4 +19,9 @@ describe('View.constructor()', () => {
     new View(mockOdac)
     expect(global.Odac.View.Form).toBeDefined()
   })
+
+  it('should set global.Odac.View.Image', () => {
+    new View(mockOdac)
+    expect(global.Odac.View.Image).toBeDefined()
+  })
 })

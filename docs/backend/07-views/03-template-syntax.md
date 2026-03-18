@@ -130,6 +130,23 @@ Execute JavaScript on the server during template rendering:
 
 **[→ Learn more about Backend JavaScript](./08-backend-javascript.md)**
 
+### Image Optimization
+
+Automatically resize and convert images to modern formats:
+
+```html
+<!-- Auto-convert to WebP (default) -->
+<odac:img src="/images/hero.jpg" />
+
+<!-- Resize + convert -->
+<odac:img src="/images/photo.jpg" width="800" height="600" format="webp" />
+
+<!-- With standard HTML attributes -->
+<odac:img src="/images/avatar.jpg" width="64" height="64" alt="Avatar" loading="lazy" />
+```
+
+**[→ Learn more about Image Optimization](./11-image-optimization.md)**
+
 ### Accessing the Odac Object
 
 Full access to the Odac object in templates:
@@ -161,10 +178,9 @@ Full access to the Odac object in templates:
 | Continue | `<odac:continue />` | [Loops](./06-loops.md) |
 | JavaScript | `<script:odac>...</script:odac>` | [Backend JavaScript](./08-backend-javascript.md) |
 | Comment | `<!--odac ... odac-->` | [Comments](./09-comments.md) |
+| Image | `<odac:img src="..." />` | [Image Optimization](./11-image-optimization.md) |
 
 ### Legacy Syntax
-
-Odac also supports legacy syntax for backward compatibility:
 
 ```html
 <!-- Variable output -->

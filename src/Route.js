@@ -4,6 +4,7 @@ const path = require('path')
 
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
+const Image = require('./View/Image.js')
 const MiddlewareChain = require('./Route/Middleware.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
@@ -582,6 +583,29 @@ class Route {
       '/_odac/magic-verify',
       async Odac => {
         return await Internal.magicVerify(Odac)
+      },
+      {token: false}
+    )
+
+    this.set(
+      'GET',
+      '/_odac/img/{file}',
+      async Odac => {
+        const filename = Odac.Request.data.url.file
+        if (!filename) return Odac.Request.abort(404)
+
+        // Validate filename format: 16-char hex hash + supported extension
+        if (!/^[a-f0-9]{16}\.(webp|avif|png|jpeg|jpg|tiff)$/.test(filename)) {
+          return Odac.Request.abort(404)
+        }
+
+        const result = await Image.serve(filename)
+        if (!result) return Odac.Request.abort(404)
+
+        Odac.Request.header('Content-Type', result.type)
+        Odac.Request.header('Content-Length', result.size)
+        Odac.Request.header('Cache-Control', 'public, max-age=31536000, immutable')
+        return result.stream
       },
       {token: false}
     )
