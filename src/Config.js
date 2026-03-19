@@ -18,6 +18,11 @@ module.exports = {
     auto: true,
     maxResources: 5
   },
+  image: {
+    quality: 80,
+    maxDimension: 4096,
+    format: 'webp'
+  },
   ipc: {
     driver: 'memory',
     redis: 'default'

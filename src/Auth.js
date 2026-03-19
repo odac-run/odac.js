@@ -593,6 +593,7 @@ class Auth {
 
     // 4. Log in user (or Register if new)
     let user = await Odac.DB[this.#table].where('email', email).first()
+    let alreadyLoggedIn = false
 
     if (!user) {
       // Auto-Register the user
@@ -630,12 +631,15 @@ class Auth {
       }
 
       user = regResult.user
+      // register() already performs auto-login by default, skip duplicate login
+      alreadyLoggedIn = regResult.autoLogin !== false
     }
 
-    // Login logic similar to login()
-    const loginData = {}
-    loginData[primaryKey] = user[primaryKey]
-    await this.login(loginData)
+    if (!alreadyLoggedIn) {
+      const loginData = {}
+      loginData[primaryKey] = user[primaryKey]
+      await this.login(loginData)
+    }
 
     return {success: true, user: user}
   }

@@ -18,7 +18,7 @@ Handling incoming data and sending structured responses.
 3.  **Returning Data**: 
     -   `return { ... }`: Returns JSON.
     -   `return Odac.return({ ... })`: Explicit JSON return.
-    -   `Odac.Response.header('Key', 'Value')`: Set custom headers.
+    -   `Odac.Request.header('Key', 'Value')`: Set custom headers.
 
 ## Reference Patterns
 ### 1. Unified Request Handling
@@ -36,7 +36,7 @@ module.exports = async function(Odac) {
 ### 2. Header and Status Management
 ```javascript
 module.exports = function(Odac) {
-  Odac.Response.header('Content-Type', 'text/plain');
+  Odac.Request.header('Content-Type', 'text/plain');
   return "Raw text response";
 };
 ```

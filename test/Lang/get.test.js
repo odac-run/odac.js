@@ -1,7 +1,17 @@
-const fs = require('fs')
+const fs = require('node:fs')
 const Lang = require('../../src/Lang')
 
-jest.mock('fs')
+jest.mock('node:fs', () => ({
+  promises: {
+    mkdir: jest.fn(),
+    writeFile: jest.fn(),
+    access: jest.fn()
+  },
+  existsSync: jest.fn(),
+  mkdirSync: jest.fn(),
+  writeFileSync: jest.fn(),
+  readFileSync: jest.fn()
+}))
 
 describe('Lang.get()', () => {
   let mockOdac
@@ -22,8 +32,8 @@ describe('Lang.get()', () => {
     }
 
     fs.existsSync.mockReturnValue(false)
-    fs.mkdirSync.mockImplementation(() => {})
-    fs.writeFileSync.mockImplementation(() => {})
+    fs.promises.mkdir.mockResolvedValue()
+    fs.promises.writeFile.mockResolvedValue()
     fs.readFileSync.mockImplementation(() => {
       throw new Error('ENOENT')
     })
@@ -31,7 +41,7 @@ describe('Lang.get()', () => {
     lang = new Lang(mockOdac)
   })
 
-  it('should return matching string and support placeholders', () => {
+  it('should return matching string and support placeholders', async () => {
     fs.existsSync.mockImplementation(path => path.includes('/tr.json'))
     fs.readFileSync.mockReturnValue(
       JSON.stringify({
@@ -40,10 +50,10 @@ describe('Lang.get()', () => {
     )
 
     lang.set('tr')
-    expect(lang.get('welcome', 'Emre')).toBe('Merhaba Emre!')
+    expect(await lang.get('welcome', 'Emre')).toBe('Merhaba Emre!')
   })
 
-  it('should support numbered placeholders', () => {
+  it('should support numbered placeholders', async () => {
     fs.existsSync.mockImplementation(path => path.includes('/en.json'))
     fs.readFileSync.mockReturnValue(
       JSON.stringify({
@@ -52,14 +62,30 @@ describe('Lang.get()', () => {
     )
 
     lang.set('en')
-    expect(lang.get('order', 'A', 'B')).toBe('First: A, Second: B')
+    expect(await lang.get('order', 'A', 'B')).toBe('First: A, Second: B')
   })
 
-  it('should auto-save new keys', () => {
+  it('should auto-save new keys', async () => {
     lang.set('en')
-    const result = lang.get('new_key')
+    const result = await lang.get('new_key')
 
     expect(result).toBe('new_key')
-    expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('/en.json'), expect.stringContaining('"new_key": "new_key"'))
+    expect(fs.promises.writeFile).toHaveBeenCalledWith(expect.stringContaining('/en.json'), expect.stringContaining('"new_key": "new_key"'))
+  })
+
+  it('should set language from ACCEPT-LANGUAGE header', () => {
+    mockOdac.Request.header.mockImplementation(name => {
+      if (name === 'ACCEPT-LANGUAGE') return 'tr-TR,tr;q=0.9'
+      return null
+    })
+
+    lang.set()
+    // We check internal #lang via side effect or just trust the logic if we can't access private field easily.
+    // But we can check if it tries to read tr.json
+    fs.existsSync.mockImplementation(path => path.includes('/tr.json'))
+    fs.readFileSync.mockReturnValue('{}')
+
+    lang.set()
+    expect(fs.readFileSync).toHaveBeenCalledWith(expect.stringContaining('/tr.json'), 'utf8')
   })
 })

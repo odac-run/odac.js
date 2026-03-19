@@ -1,5 +1,5 @@
 ---
-trigger: always_on
+inclusion: always
 ---
 
 # Coding Standards & Best Practices

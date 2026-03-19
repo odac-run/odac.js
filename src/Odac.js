@@ -62,6 +62,7 @@ module.exports = {
     _odac.Server = require('./Server.js')
     _odac.Storage = require('./Storage.js')
     _odac.Var = (...args) => new (require('./Var.js'))(...args)
+    _odac.image = (src, options) => require('./View/Image.js').url(src, options)
 
     if (req) {
       _odac.setInterval = function (callback, delay, ...args) {

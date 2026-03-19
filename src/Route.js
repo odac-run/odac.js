@@ -4,10 +4,11 @@ const path = require('path')
 
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
+const Image = require('./View/Image.js')
 const MiddlewareChain = require('./Route/Middleware.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
-var routes2 = {}
+let routes2 = {}
 const mime = require('./Route/MimeTypes.js')
 
 class Route {
@@ -586,6 +587,29 @@ class Route {
       {token: false}
     )
 
+    this.set(
+      'GET',
+      '/_odac/img/{file}',
+      async Odac => {
+        const filename = Odac.Request.data.url.file
+        if (!filename) return Odac.Request.abort(404)
+
+        // Validate filename format: {name}-{dimension}-{hash8}.{ext}
+        if (!/^[\w-]+-(?:\d+|o)-[a-f0-9]{8}\.(webp|avif|png|jpeg|jpg|tiff)$/.test(filename)) {
+          return Odac.Request.abort(404)
+        }
+
+        const result = await Image.serve(filename)
+        if (!result) return Odac.Request.abort(404)
+
+        Odac.Request.header('Content-Type', result.type)
+        Odac.Request.header('Content-Length', result.size)
+        Odac.Request.header('Cache-Control', 'public, max-age=31536000, immutable')
+        return result.stream
+      },
+      {token: false}
+    )
+
     delete Odac.Route.buff
   }
 
@@ -679,6 +703,13 @@ class Route {
             // File error, proceed to reload or re-set
           }
         } else {
+          // Update inline function reference on hot reload
+          this.routes[Odac.Route.buff][type][url].cache = file
+          this.routes[Odac.Route.buff][type][url].file = file
+          this.routes[Odac.Route.buff][type][url].mtime = Date.now()
+          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
+          this.routes[Odac.Route.buff][type][url].action = action
           return
         }
       }
@@ -709,9 +740,14 @@ class Route {
           this.routes[Odac.Route.buff][type][url].action = action
 
           this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
-        } catch {
+        } catch (err) {
           if (file && typeof file === 'string') {
-            console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
+            if (err.code === 'ENOENT') {
+              console.error(`\x1b[31m[Odac]\x1b[0m Controller not found: \x1b[33m${path}\x1b[0m`)
+            } else {
+              console.error(`\x1b[31m[Odac]\x1b[0m Failed to load controller: \x1b[33m${path}\x1b[0m`)
+              console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
+            }
           }
         }
       }

@@ -109,12 +109,14 @@ module.exports = class Contact {
 
 ## Patterns
 ```javascript
-// Access validated data in action-driven custom form
-Odac.Route.class.post('/contact', class Contact {
+// Custom form action in class/Contact.js
+module.exports = class Contact {
   async submit(form) {
-    const {email, message} = form.data
-    if (!email || !message) return form.error('_odac_form', 'Missing input')
-    return form.success('Saved successfully')
+    const { email, message } = form.data;
+    if (!email || !message) return form.error('email', 'Required fields missing');
+    
+    // Process data...
+    return form.success('Message received!');
   }
-})
+}
 ```

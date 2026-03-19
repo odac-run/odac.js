@@ -17,6 +17,8 @@ Routes are defined in the `route/` directory. ODAC uses a two-phase routing stra
     -   `Odac.Route.page(url, controller)`: For HTML views (GET).
     -   `Odac.Route.get(url, controller)`: Targeted GET requests.
     -   `Odac.Route.post(url, controller)`: Sensitive POST requests (CSRF enabled by default).
+    -   `Odac.Route.ws(url, controller)`: Bidirectional and persistent WebSocket connections.
+    -   `Odac.Route.authWs(url, controller)`: Authenticated WebSocket connections.
 2.  **Parameters**: Use `{id}` syntax for dynamic segments. Accessed via `Odac.request('id')`.
 3.  **Middlewares**: Chain logic using `.use('name')`. Global middlewares reside in `middleware/`.
 4.  **Error Handling**: Use `Odac.Route.error(code, controller)` for custom 404/500 pages.
@@ -49,6 +51,15 @@ Odac.Route.error(500, 'errors/ServerError');
 ```javascript
 // Disable CSRF token check for external APIs
 Odac.Route.post('/api/webhook', 'Api@webhook', { token: false });
+```
+
+### 5. Realtime & WebSocket Routes
+```javascript
+// Public WebSocket
+Odac.Route.ws('/chat', 'Chat');
+
+// Authenticated WebSocket with path params
+Odac.Route.authWs('/game/{roomId}', 'Game@join');
 ```
 
 ## Best Practices

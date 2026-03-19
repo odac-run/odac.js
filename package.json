@@ -24,10 +24,13 @@
     "@tailwindcss/cli": "^4.1.18",
     "knex": "^3.1.0",
     "lmdb": "^3.4.4",
+    "tailwindcss": "^4.1.18"
+  },
+  "optionalDependencies": {
     "mysql2": "^3.16.0",
     "pg": "^8.16.3",
     "redis": "^5.10.0",
-    "tailwindcss": "^4.1.18"
+    "sharp": "^0.33.0"
   },
   "overrides": {
     "tar": "7.5.9",

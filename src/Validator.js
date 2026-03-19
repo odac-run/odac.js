@@ -343,10 +343,10 @@ class Validator {
   }
 
   async brute(maxAttempts = 5) {
-    const ip = this.#request.ip()
+    const ip = this.#request.ip
     const now = new Date().toISOString().slice(0, 13).replace(/[-:T]/g, '')
-    const page = this.#request.path()
-    const storage = this.#odac.storage('sys')
+    const page = this.#request.url.split('?')[0]
+    const storage = this.#odac.Storage
     const validation = storage.get('validation') || {}
 
     this.#name = '_odac_form'
@@ -361,12 +361,12 @@ class Validator {
 
       if (validation.brute[now][page][ip] >= maxAttempts) {
         this.#message['_odac_form'] = this.#odac.Lang
-          ? this.#odac.Lang.get('Too many failed attempts. Please try again later.')
+          ? await this.#odac.Lang.get('Too many failed attempts. Please try again later.')
           : 'Too many failed attempts. Please try again later.'
       }
     }
 
-    storage.set('validation', validation)
+    storage.put('validation', validation)
     return this
   }
 }

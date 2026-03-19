@@ -35,6 +35,13 @@ function buildConnectionConfig(db, client) {
   }
 }
 
+/** @type {Record<string, string>} Maps ODAC db type to the npm package that must be installed */
+const DRIVER_PACKAGES = {
+  pg: 'pg',
+  mysql2: 'mysql2',
+  sqlite3: 'sqlite3'
+}
+
 /**
  * Creates knex connections map from ODAC database config.
  * Why: Centralizes zero-config connection bootstrap used by runtime and migration CLI.
@@ -50,6 +57,15 @@ function buildConnections(databaseConfig) {
     const db = dbs[key]
     const client = resolveClient(db.type)
     const connection = buildConnectionConfig(db, client)
+
+    const pkg = DRIVER_PACKAGES[client]
+    if (pkg) {
+      try {
+        require(pkg)
+      } catch {
+        throw new Error(`Database driver "${pkg}" is not installed. Run: npm install ${pkg}`)
+      }
+    }
 
     connections[key] = knex({
       client,

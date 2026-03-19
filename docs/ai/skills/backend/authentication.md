@@ -59,13 +59,15 @@ const val = Odac.session('key');
 Odac.session('key', null);
 ```
 
-### 4. Realtime Hubs (WebSockets)
+### 4. Realtime Broadcasting (Ipc)
 ```javascript
-// Broadcast to everyone in a room
-Odac.Hub.to('lobby').send('chat_message', { text: 'Hello!' });
+// Broadcast to everyone subscibed in this worker cluster
+await Odac.Ipc.publish('lobby', { type: 'chat', text: 'Hello!' });
 
-// Targeted user broadcast
-Odac.Hub.user(userId).send('notification', { text: 'New follower' });
+// In your WS handler, listen for Ipc messages
+Odac.Ipc.subscribe('lobby', (msg) => {
+  Odac.ws.send(msg);
+});
 ```
 
 ## Security Best Practices

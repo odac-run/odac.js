@@ -3,6 +3,7 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
+const Image = require('./View/Image')
 
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 
@@ -119,7 +120,9 @@ class View {
       this.#earlyHints = global.Odac.View.EarlyHints
     }
     global.Odac.View.Form = Form
+    global.Odac.View.Image = Image
     this.Form = Form
+    this.Image = Image
   }
 
   all(name) {
@@ -404,6 +407,7 @@ class View {
 
     if (content !== null) {
       content = Form.parse(content, this.#odac)
+      content = Image.parse(content)
 
       const jsBlocks = []
       content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
