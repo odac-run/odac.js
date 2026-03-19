@@ -1,3 +1,38 @@
+### doc
+
+- Introduce WebSocket routing and controllers, update request handling, and refactor language and validator modules to use async operations.
+
+### ⚙️ Engine Tuning
+
+- **view:** extract <odac:img> parsing to Image.parse() method
+
+### ✨ What's New
+
+- **image:** add Odac.image() API for programmatic image URL generation
+- **view:** add <odac:img> tag with on-demand image processing
+- **view:** add warning message when sharp dependency is unavailable
+- **view:** implement human-readable cache filenames and mtime-based cache busting
+
+### 📚 Documentation
+
+- **steering:** correct module system standard to explicitly dictate CommonJS preserving architectural consistency
+- **View/Image:** correct cache eviction jsdoc from LRU to FIFO reflecting O(1) performance trait
+
+### 🛠️ Fixes & Improvements
+
+- **auth:** prevent duplicate login tokens during magic link verification
+- Refactor `fs` module usage to `node:fs` and `fs.promises`, and update string manipulation from `substr` to `slice`.
+- **request:** use global.Odac namespace for consistent access
+- **route:** improve controller loading error handling with specific error messages
+- **route:** update inline function reference on hot reload
+- **View/Image:** clamp unrequested output formats to supported whitelist to prevent processing crashes
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ⚙️ Engine Tuning
 
 - **client:** extract ws connection logic and fix recursive sharedworker reconnects reconnect bug
