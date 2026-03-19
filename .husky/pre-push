@@ -1,5 +1,4 @@
 #!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
 
 # Prevent pushing code with High/Critical vulnerabilities in production dependencies
 echo "🛡️  Running Production Security Gate (npm audit)..."

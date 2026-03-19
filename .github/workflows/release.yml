@@ -30,6 +30,7 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+          always-auth: false
 
       - name: Update npm
         run: npm install -g npm@latest
@@ -40,6 +41,7 @@ jobs:
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUSKY: 0
         run: npx semantic-release
       - name: Get version
         id: version
