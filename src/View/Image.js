@@ -255,7 +255,7 @@ class Image {
   }
 
   /**
-   * Adds an entry to the in-memory cache with LRU-style eviction.
+   * Adds an entry to the in-memory cache with FIFO eviction.
    * When the cache exceeds MAX_CACHE_SIZE, the oldest entry (first inserted)
    * is evicted to bound memory usage in high-variant deployments.
    * @param {string} key - Cache key
