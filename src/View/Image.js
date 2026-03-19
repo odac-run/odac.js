@@ -121,7 +121,9 @@ class Image {
 
     const ext = path.extname(src).slice(1).toLowerCase()
     if (ext === 'jpg') return 'jpeg'
-    return ext || 'jpeg'
+    if (this.SUPPORTED_FORMATS.has(ext)) return ext
+
+    return 'jpeg'
   }
 
   /**
