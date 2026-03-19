@@ -1,7 +1,7 @@
-const fs = require('fs')
+const fs = require('node:fs')
 const Lang = require('../../src/Lang')
 
-jest.mock('fs', () => ({
+jest.mock('node:fs', () => ({
   promises: {
     mkdir: jest.fn(),
     writeFile: jest.fn(),
