@@ -26,6 +26,7 @@ describe('Image.serve()', () => {
     expect(result.size).toBe(Buffer.from('fake-image-data').length)
     expect(typeof result.stream.pipe).toBe('function')
 
+    result.stream.on('error', () => {})
     result.stream.destroy()
   })
 
@@ -47,6 +48,7 @@ describe('Image.serve()', () => {
     const result = await Image.serve(jpgFilename)
     expect(result).not.toBeNull()
     expect(result.type).toBe('image/jpeg')
+    result.stream.on('error', () => {})
     result.stream.destroy()
 
     await fsPromises.unlink(jpgPath).catch(() => {})
