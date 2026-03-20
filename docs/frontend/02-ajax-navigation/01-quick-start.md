@@ -6,6 +6,7 @@ Odac framework includes a built-in AJAX navigation system that enables smooth, s
 
 - **Zero Configuration**: Works automatically with all internal links (`/`)
 - **Smooth Transitions**: Load only specific page sections without full page reload
+- **Native View Transitions**: Automatic browser View Transition API support via `odac-transition` attribute
 - **History API Integration**: Browser back/forward buttons work seamlessly
 - **Automatic Token Management**: CSRF tokens are handled automatically
 - **Progressive Enhancement**: Falls back to normal navigation if JavaScript fails
@@ -177,6 +178,27 @@ module.exports = function (Odac) {
 4. JavaScript updates specified DOM elements with fade animation
 5. Browser URL updates via History API
 6. Page-specific callbacks execute
+
+### View Transition Load (with `odac-transition` elements)
+
+When elements with `odac-transition` attribute exist on the page and the browser supports the View Transition API, ODAC uses native transitions instead of fade:
+
+1. User clicks `<a href="/about">`
+2. ODAC assigns `view-transition-name` to all `odac-transition` elements (old state snapshot)
+3. AJAX request is sent (same as above)
+4. `document.startViewTransition()` is called — browser captures old state
+5. DOM is updated with new content inside the transition callback
+6. New `odac-transition` elements receive their names
+7. Browser animates between old and new snapshots
+8. Transition names are cleaned up after completion
+
+No configuration needed — just add the attribute to your HTML:
+
+```html
+<header odac-transition="header">{{ HEADER }}</header>
+<main>{{ CONTENT }}</main>
+<img odac-transition="hero" src="/hero.jpg" alt="Hero" />
+```
 
 **Key Points:**
 - The `output` keys in the JSON response match the lowercase keys from `Odac.View.set()` in your controller

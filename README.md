@@ -8,7 +8,7 @@
 *   🚀 **Developer Friendly:** Simple setup and intuitive API design let you start building immediately.
 *   🎨 **Built-in Tailwind CSS:** Zero-config integration with Tailwind CSS v4. Automatic compilation and optimization out of the box.
 *   🔗 **Powerful Routing:** Create clean, custom URLs and manage infinite pages with a flexible routing system.
-*   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions eliminates the need for complex client-side code.
+*   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions with native **View Transition API** support. Add a single HTML attribute for smooth, browser-native animations — no client-side code required.
 *   🛡️ **Built-in Security:** Enterprise-grade security out of the box. Includes secure default headers and a **Multi-tab Safe, Single-Use CSRF Protection (Nonce)**. Tokens self-replenish in the background, ensuring maximum defense without ever interrupting the user experience.
 *   🔐 **Authentication:** Ready-to-use session management with enterprise-grade **Refresh Token Rotation**, secure password hashing, and authentication helpers.
 *   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
