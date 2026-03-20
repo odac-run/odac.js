@@ -38,6 +38,7 @@ trigger: always_on
 
 ## Documentation Standards
 - **AI Skill Front Matter:** Every file under `docs/ai/skills/**/*.md` must start with YAML front matter containing `name`, `description`, and `metadata.tags`; values must be specific to that document's topic (never copied from generic examples).
+- **Template Syntax Documentation:** `{{ }}` and `<odac var>` are equal-status syntaxes, NOT legacy vs modern. `{{ }}` is preferred inside HTML attributes and inline text; `<odac var>` is preferred for standalone block output. Never label `{{ }}` as "legacy" or "backward compatibility" in docs.
 
 ## Testing & Validation
 - **Mandatory Test Coverage:** Every new feature, method, or significant logic change MUST be accompanied by a corresponding unit or integration test.

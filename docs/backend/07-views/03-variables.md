@@ -311,18 +311,33 @@ module.exports = async function(Odac) {
 </odac:if>
 ```
 
-### Legacy Syntax (Backward Compatibility)
+### Inline Syntax (`{{ }}` and `{!! !!}`)
 
-Odac also supports legacy syntax:
+ODAC provides an inline interpolation syntax that is equivalent to the `<odac var>` tag. Both compile to the same engine output and are equally supported.
+
+**Use `{{ }}` when the variable appears inside HTML attributes or inline within text:**
 
 ```html
-<!-- HTML-safe output -->
-{{ username }}
-{{ user.email }}
+<!-- Inside attributes — {{ }} keeps markup clean -->
+<img src="{{ product.image }}" alt="{{ product.name }}">
+<a href="/user/{{ user.id }}" class="btn {{ isActive ? 'active' : '' }}">Profile</a>
+<input type="text" name="q" value="{{ searchQuery }}">
 
-<!-- Raw HTML output -->
+<!-- Inline text interpolation -->
+<p>Welcome, {{ user.name }}. You have {{ notifications }} new messages.</p>
+<span>${{ product.price }}</span>
+
+<!-- Raw inline output (trusted content only) -->
 {!! htmlContent !!}
 {!! user.bio !!}
 ```
 
-**Note:** The new `<odac>` tag syntax is recommended for all new projects as it provides better IDE support and readability.
+**Use `<odac var>` when the variable is the standalone content of an element:**
+
+```html
+<h1><odac var="pageTitle" /></h1>
+<td><odac var="user.email" /></td>
+<p><odac var="product.description" /></p>
+```
+
+Both syntaxes are XSS-safe by default (HTML-escaped). The choice is purely about readability. See [Template Syntax Overview](./03-template-syntax.md) for the full selection guide.
