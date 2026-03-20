@@ -1,5 +1,6 @@
+/* global Odac */
 /**
- * Odac Template - Client-Side Application
+ * ODAC Template - Client-Side Application
  *
  * This file demonstrates odac.js features including:
  * - AJAX page loading with odac.loader() for smooth navigation
@@ -7,18 +8,43 @@
  * - Event delegation
  */
 
-odac.action({
+Odac.action({
   /**
-   * AJAX Navigation
-   * Enables smooth page transitions without full page reloads
-   *
-   * Minimal usage: navigate: 'main'
-   * Medium usage: navigate: {update: 'main', on: callback}
-   * Full usage: navigate: {links: 'a[href^="/"]', update: {...}, on: callback}
+   * Initialize application on page load
+   * This runs once when the page first loads
    */
-  navigate: {
-    update: 'main' // Update <main> element
+  load: function () {
+    // Set initial active navigation state
+    Odac.fn.updateActiveNav(window.location.pathname)
   },
+
+  /**
+   * Page-specific initialization
+   * These functions run when specific pages are loaded
+   */
+  page: {
+    /**
+     * Home page initialization
+     */
+    index: function () {
+      console.log('Home page loaded')
+    },
+
+    /**
+     * About page initialization
+     */
+    about: function () {
+      console.log('About page loaded')
+    }
+  },
+
+  // Add your custom event handlers here
+  // Example:
+  // click: {
+  //   '#my-button': function() {
+  //     console.log('Button clicked')
+  //   }
+  // }
 
   /**
    * Custom functions
@@ -48,49 +74,5 @@ odac.action({
         }
       }
     }
-  },
-
-  /**
-   * Initialize application on page load
-   * This runs once when the page first loads
-   */
-  load: function () {
-    // Set initial active navigation state
-    odac.fn.updateActiveNav(window.location.pathname)
-  },
-
-  /**
-   * Page-specific initialization
-   * These functions run when specific pages are loaded
-   */
-  page: {
-    /**
-     * Home page initialization
-     */
-    index: function () {
-      console.log('Home page loaded')
-    },
-
-    /**
-     * About page initialization
-     */
-    about: function () {
-      console.log('About page loaded')
-    },
-
-    /**
-     * Docs page initialization
-     */
-    docs: function () {
-      console.log('Docs page loaded')
-    }
   }
-
-  // Add your custom event handlers here
-  // Example:
-  // click: {
-  //   '#my-button': function() {
-  //     console.log('Button clicked')
-  //   }
-  // }
 })

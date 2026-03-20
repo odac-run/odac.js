@@ -72,6 +72,7 @@ project/
 ├── middleware/     # Route middlewares
 ├── public/         # Static assets
 ├── route/          # Route definitions
+├── schema/         # Database schemas (auto-migrate)
 ├── view/           # HTML templates
 ├── .env            # Environment variables
 └── odac.json       # App configuration
