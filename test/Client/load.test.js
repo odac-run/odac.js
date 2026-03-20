@@ -41,12 +41,35 @@ describe('Odac.load()', () => {
             }
           })
         : undefined,
-      createElement: jest.fn(() => ({
-        setAttribute: jest.fn(),
-        style: {},
-        appendChild: jest.fn(),
-        parentNode: {insertBefore: jest.fn()}
-      }))
+      createElement: jest.fn(tag => {
+        const el = {
+          setAttribute: jest.fn(),
+          style: {},
+          appendChild: jest.fn(),
+          parentNode: {insertBefore: jest.fn()},
+          _innerHTML: '',
+          get value() {
+            if (tag === 'textarea') {
+              return this._innerHTML
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&#039;/g, "'")
+            }
+            return ''
+          }
+        }
+        Object.defineProperty(el, 'innerHTML', {
+          get() {
+            return el._innerHTML
+          },
+          set(v) {
+            el._innerHTML = v
+          }
+        })
+        return el
+      })
     }
 
     mockWindow = {
@@ -231,6 +254,52 @@ describe('Odac.load()', () => {
 
       expect(mockDocument.startViewTransition).not.toHaveBeenCalled()
       expect(mockXhr.send).toHaveBeenCalled()
+    })
+  })
+
+  describe('title HTML entity decoding', () => {
+    beforeEach(() => setupMocks({hasViewTransition: false}))
+
+    test('should decode HTML entities in title during fade navigation', () => {
+      jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
+      mockXhr.responseURL = 'http://localhost/products'
+      mockXhr.getResponseHeader.mockImplementation(h => (h === 'Content-Type' ? 'application/json' : null))
+
+      window.Odac.load('/products', jest.fn())
+
+      mockXhr.responseText = JSON.stringify({title: 'Tom &amp; Jerry', output: {}})
+      mockXhr.status = 200
+      mockXhr.onload()
+
+      expect(mockDocument.title).toBe('Tom & Jerry')
+    })
+
+    test('should decode multiple HTML entities in title', () => {
+      jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
+      mockXhr.responseURL = 'http://localhost/page'
+      mockXhr.getResponseHeader.mockImplementation(h => (h === 'Content-Type' ? 'application/json' : null))
+
+      window.Odac.load('/page', jest.fn())
+
+      mockXhr.responseText = JSON.stringify({title: '&lt;ODAC&gt; &amp; &quot;Framework&quot;', output: {}})
+      mockXhr.status = 200
+      mockXhr.onload()
+
+      expect(mockDocument.title).toBe('<ODAC> & "Framework"')
+    })
+
+    test('should handle title without entities unchanged', () => {
+      jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
+      mockXhr.responseURL = 'http://localhost/simple'
+      mockXhr.getResponseHeader.mockImplementation(h => (h === 'Content-Type' ? 'application/json' : null))
+
+      window.Odac.load('/simple', jest.fn())
+
+      mockXhr.responseText = JSON.stringify({title: 'Simple Page Title', output: {}})
+      mockXhr.status = 200
+      mockXhr.onload()
+
+      expect(mockDocument.title).toBe('Simple Page Title')
     })
   })
 })

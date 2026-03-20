@@ -747,6 +747,20 @@ if (typeof window !== 'undefined') {
         .replace(/\n/g, '<br>')
     }
 
+    /**
+     * Decodes HTML entities back to their plain-text representation.
+     * Uses a textarea element as a safe decoder — no script execution risk.
+     *
+     * @param {string} str - HTML-encoded string (e.g. "&amp;" → "&").
+     * @returns {string} Decoded plain-text string.
+     */
+    #decodeHtmlEntities(str) {
+      if (typeof str !== 'string') return str
+      const textarea = document.createElement('textarea')
+      textarea.innerHTML = str
+      return textarea.value
+    }
+
     load(url, callback, push = true) {
       if (this.#isNavigating) return false
 
@@ -811,7 +825,7 @@ if (typeof window !== 'undefined') {
             }
 
             if (data.data) this.#data = data.data
-            if (data.title) document.title = data.title
+            if (data.title) document.title = this.#decodeHtmlEntities(data.title)
 
             elementsToUpdate.forEach(({key, element}) => {
               if (data.output && data.output[key] !== undefined) element.innerHTML = data.output[key]
@@ -865,7 +879,7 @@ if (typeof window !== 'undefined') {
         }
 
         if (ajaxData.data) this.#data = ajaxData.data
-        if (ajaxData.title) document.title = ajaxData.title
+        if (ajaxData.title) document.title = this.#decodeHtmlEntities(ajaxData.title)
 
         if (elementsToUpdate.length === 0) {
           this.#handleLoadComplete(ajaxData, callback)
