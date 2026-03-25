@@ -135,7 +135,7 @@ Powered by [⚡ ODAC](https://odac.run)
     [
       '@semantic-release/git',
       {
-        assets: ['package.json', 'CHANGELOG.md'],
+        assets: ['package.json', 'package-lock.json', 'CHANGELOG.md'],
         message: '⚡ ODAC.JS v${nextRelease.version} Released'
       }
     ],
