@@ -232,6 +232,7 @@ describe('Odac.load()', () => {
       if (mockXhr.onload) mockXhr.onload()
 
       expect(mockDocument.startViewTransition).not.toHaveBeenCalled()
+      expect(mockWindow.location.href).toBe('http://localhost/new-skeleton')
     })
 
     test('should clean transition names on AJAX error', () => {
