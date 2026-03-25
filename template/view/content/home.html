@@ -1,205 +1,178 @@
 <!-- Hero Section -->
-<section class="hero">
-  <div class="container">
-    <div class="hero-content">
-      <h1 class="hero-title">🍭 Your Odac Site is Ready!</h1>
-      <p class="hero-subtitle">You've successfully created a new website with Odac</p>
-      <p class="hero-description">
-        This is your starting template. Edit the files in your project directory to customize your site. Everything you need to build a
-        modern web application is already set up and ready to go.
-      </p>
-      <div class="hero-actions">
-        <a href="https://odac.run" target="_blank" class="btn btn-primary" data-navigate="false">Visit odac.run</a>
-        <a href="https://docs.odac.run" target="_blank" class="btn btn-secondary" data-navigate="false">Read Documentation</a>
-      </div>
+<section class="mb-24 py-12">
+    <div class="flex flex-col items-center text-center space-y-8">
+        <h1 class="text-5xl md:text-7xl font-bold tracking-tight text-brand-900 leading-tight">
+            Your ODAC Site is <br/><span class="text-brand-900/40">Ready to Build.</span>
+        </h1>
+        <p class="text-xl md:text-2xl text-brand-900/50 max-w-2xl font-medium leading-relaxed">
+            A next-generation framework for modern web applications. Fast, secure, and zero-config by design.
+        </p>
+        <div class="flex items-center gap-4 pt-4">
+            <a href="https://docs.odac.run" target="_blank" rel="noopener" class="btn-apple btn-primary px-8 py-3 text-lg" data-navigate="false">
+                Quick Start
+            </a>
+            <a href="/about" class="btn-apple btn-secondary px-8 py-3 text-lg">
+                Learn More
+            </a>
+        </div>
     </div>
-  </div>
 </section>
 
 <!-- Project Structure Section -->
-<section class="features">
-  <div class="container">
-    <h2 class="section-title">📁 Your Project Structure</h2>
-    <p class="section-description">Here's what you'll find in your project directory:</p>
-
-    <div class="structure-grid">
-      <div class="structure-item">
-        <div class="structure-icon">📄</div>
-        <h3 class="structure-title">controller/</h3>
-        <p class="structure-description">Your application logic lives here. Each file handles requests and prepares data for views.</p>
-        <code class="structure-path">controller/page/index.js</code>
-      </div>
-
-      <div class="structure-item">
-        <div class="structure-icon">🎨</div>
-        <h3 class="structure-title">view/</h3>
-        <p class="structure-description">HTML templates for your pages. Organized by type (content, header, footer).</p>
-        <code class="structure-path">view/content/home.html</code>
-      </div>
-
-      <div class="structure-item">
-        <div class="structure-icon">🎯</div>
-        <h3 class="structure-title">route/</h3>
-        <p class="structure-description">Define your URL routes here. Map URLs to controllers and views.</p>
-        <code class="structure-path">route/www.js</code>
-      </div>
-
-      <div class="structure-item">
-        <div class="structure-icon">💎</div>
-        <h3 class="structure-title">public/</h3>
-        <p class="structure-description">Static assets like CSS, JavaScript, and images. Served directly to browsers.</p>
-        <code class="structure-path">public/assets/css/style.css</code>
-      </div>
-
-      <div class="structure-item">
-        <div class="structure-icon">🏗️</div>
-        <h3 class="structure-title">skeleton/</h3>
-        <p class="structure-description">Page layouts that wrap your content. Define your HTML structure once.</p>
-        <code class="structure-path">skeleton/main.html</code>
-      </div>
-
-      <div class="structure-item">
-        <div class="structure-icon">⚙️</div>
-        <h3 class="structure-title">odac.json</h3>
-        <p class="structure-description">Configuration file for database, routes, and other settings.</p>
-        <code class="structure-path">odac.json</code>
-      </div>
+<section class="mb-24">
+    <div class="space-y-4 mb-12">
+        <h2 class="text-3xl font-semibold tracking-tight text-brand-900">Project Structure</h2>
+        <p class="text-brand-900/50 text-lg">Everything has a place. Convention over configuration.</p>
     </div>
-  </div>
+
+    <div class="bg-white rounded-[2rem] shadow-sm border border-brand-100 overflow-hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-2">
+            <!-- Tree -->
+            <div class="p-8 lg:p-10 bg-brand-900 text-brand-200">
+                <pre class="text-sm leading-relaxed font-mono"><code>my-project/
+├── controller/     <span class="text-brand-500"># Request handlers</span>
+├── middleware/     <span class="text-brand-500"># Route middlewares</span>
+├── public/         <span class="text-brand-500"># Static assets</span>
+├── route/          <span class="text-brand-500"># Route definitions</span>
+├── schema/         <span class="text-brand-500"># Database schemas</span>
+├── skeleton/       <span class="text-brand-500"># Page layouts</span>
+├── view/
+│   ├── content/    <span class="text-brand-500"># Page templates</span>
+│   ├── css/        <span class="text-brand-500"># Tailwind source</span>
+│   ├── head/       <span class="text-brand-500"># &lt;head&gt; partials</span>
+│   ├── header/     <span class="text-brand-500"># Header partials</span>
+│   └── footer/     <span class="text-brand-500"># Footer partials</span>
+└── odac.json       <span class="text-brand-500"># Configuration</span></code></pre>
+            </div>
+
+            <!-- Description -->
+            <div class="p-8 lg:p-10 space-y-6">
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">controller/</h3>
+                    <p class="text-sm text-brand-900/50">Your application logic. Each file handles requests and prepares data for views.</p>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">route/</h3>
+                    <p class="text-sm text-brand-900/50">Map URLs to controllers. Simple, declarative routing.</p>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">view/</h3>
+                    <p class="text-sm text-brand-900/50">HTML templates organized by type. Tailwind CSS source lives in <code class="text-xs bg-brand-50 px-1 py-0.5 rounded text-brand-900/60">view/css/</code>.</p>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">schema/</h3>
+                    <p class="text-sm text-brand-900/50">Database table definitions. Auto-migrated on every startup.</p>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">skeleton/</h3>
+                    <p class="text-sm text-brand-900/50">Page layouts that wrap your content. Define once, reuse everywhere.</p>
+                </div>
+                <div class="space-y-1">
+                    <h3 class="text-sm font-bold text-brand-900">odac.json</h3>
+                    <p class="text-sm text-brand-900/50">Centralized config for database, routes, and framework behavior.</p>
+                </div>
+            </div>
+        </div>
+    </div>
 </section>
 
-<!-- Quick Start Section -->
-<section class="demo">
-  <div class="container">
-    <h2 class="section-title">🚀 Quick Start Guide</h2>
+<!-- Quick Start Guide -->
+<section class="mb-24">
+    <div class="space-y-4 mb-12">
+        <h2 class="text-3xl font-semibold tracking-tight text-brand-900">Quick Start</h2>
+        <p class="text-brand-900/50 text-lg">Four steps to your first custom page.</p>
+    </div>
 
-    <div class="quickstart-grid">
-      <div class="quickstart-step">
-        <div class="step-number">1</div>
-        <h3 class="step-title">Edit Your Content</h3>
-        <p class="step-description">
-          Open <code>view/content/home.html</code> to customize this page. All your HTML templates are in the <code>view/</code> directory.
-        </p>
-      </div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+        <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-brand-100 space-y-4 flex flex-col">
+            <div class="flex items-center gap-3">
+                <span class="w-8 h-8 bg-brand-900 text-white rounded-full flex items-center justify-center text-sm font-bold">1</span>
+                <h3 class="text-lg font-bold">Define a Route</h3>
+            </div>
+            <p class="text-brand-900/50 text-sm">Map a URL to a controller in <code class="text-xs bg-brand-50 px-1.5 py-0.5 rounded text-brand-900/60">route/www.js</code></p>
+            <pre class="bg-brand-900 text-brand-200 text-sm p-4 rounded-xl overflow-x-auto mt-auto h-full"><code>Odac.Route.page('/my-page', 'page.mypage')</code></pre>
+        </div>
 
-      <div class="quickstart-step">
-        <div class="step-number">2</div>
-        <h3 class="step-title">Add Routes</h3>
-        <p class="step-description">Define new pages in <code>route/www.js</code>. Map URLs to controllers:</p>
-        <pre class="code-snippet"><code>Odac.Route.page('/my-page', 'page.mypage')</code></pre>
-      </div>
-
-      <div class="quickstart-step">
-        <div class="step-number">3</div>
-        <h3 class="step-title">Create Controllers</h3>
-        <p class="step-description">Add logic in <code>controller/page/mypage.js</code>:</p>
-        <pre class="code-snippet"><code>module.exports = function(Odac) {
-  Odac.View.skeleton('main')
+        <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-brand-100 space-y-4 flex flex-col">
+            <div class="flex items-center gap-3">
+                <span class="w-8 h-8 bg-brand-900 text-white rounded-full flex items-center justify-center text-sm font-bold">2</span>
+                <h3 class="text-lg font-bold">Create a Controller</h3>
+            </div>
+            <p class="text-brand-900/50 text-sm">Add logic in <code class="text-xs bg-brand-50 px-1.5 py-0.5 rounded text-brand-900/60">controller/page/mypage.js</code></p>
+            <pre class="bg-brand-900 text-brand-200 text-sm p-4 rounded-xl overflow-x-auto mt-auto h-full"><code>module.exports = function(Odac) {
   Odac.View.set({
+    skeleton: 'main',
+    head: 'main',
     header: 'main',
     content: 'mypage',
     footer: 'main'
   })
 }</code></pre>
-      </div>
+        </div>
 
-      <div class="quickstart-step">
-        <div class="step-number">4</div>
-        <h3 class="step-title">Style Your Site</h3>
-        <p class="step-description">
-          Customize the look in <code>public/assets/css/style.css</code>. Add your own CSS or use your favorite framework.
-        </p>
-      </div>
+        <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-brand-100 space-y-4 flex flex-col">
+            <div class="flex items-center gap-3">
+                <span class="w-8 h-8 bg-brand-900 text-white rounded-full flex items-center justify-center text-sm font-bold">3</span>
+                <h3 class="text-lg font-bold">Build the View</h3>
+            </div>
+            <p class="text-brand-900/50 text-sm">Create your template in <code class="text-xs bg-brand-50 px-1.5 py-0.5 rounded text-brand-900/60">view/content/mypage.html</code></p>
+            <pre class="bg-brand-900 text-brand-200 text-sm p-4 rounded-xl overflow-x-auto mt-auto h-full"><code>&lt;section class="py-12"&gt;
+  &lt;h1 class="text-4xl font-bold"&gt;My Page&lt;/h1&gt;
+  &lt;p class="text-brand-900/50"&gt;Welcome!&lt;/p&gt;
+&lt;/section&gt;</code></pre>
+        </div>
+
+        <div class="bg-white p-8 rounded-[2rem] shadow-sm border border-brand-100 space-y-4 flex flex-col">
+            <div class="flex items-center gap-3">
+                <span class="w-8 h-8 bg-brand-900 text-white rounded-full flex items-center justify-center text-sm font-bold">4</span>
+                <h3 class="text-lg font-bold">Style with Tailwind</h3>
+            </div>
+            <p class="text-brand-900/50 text-sm">Customize the theme in <code class="text-xs bg-brand-50 px-1.5 py-0.5 rounded text-brand-900/60">view/css/app.css</code></p>
+            <pre class="bg-brand-900 text-brand-200 text-sm p-4 rounded-xl overflow-x-auto mt-auto h-full"><code>@theme {
+  --color-brand: #0071e3;
+  --font-display: "Inter", sans-serif;
+}</code></pre>
+        </div>
     </div>
-  </div>
 </section>
 
-<!-- Features Section -->
-<section class="code-examples">
-  <div class="container">
-    <h2 class="section-title">✨ What's Included</h2>
-
-    <div class="features-list">
-      <div class="feature-item">
-        <div class="feature-icon">🎯</div>
-        <div class="feature-content">
-          <h3>AJAX Navigation</h3>
-          <p>Smooth page transitions without full reloads. Already configured in <code>public/assets/js/app.js</code></p>
+<!-- Features Spotlight -->
+<section class="mb-24">
+    <div class="bg-brand-900 rounded-[3rem] p-12 md:p-20 text-white space-y-12">
+        <div class="text-center space-y-4">
+            <h2 class="text-3xl md:text-5xl font-bold tracking-tight">Built for modern scale.</h2>
+            <p class="text-white/50 text-xl font-medium">Enterprise grade performance out of the box.</p>
         </div>
-      </div>
-
-      <div class="feature-item">
-        <div class="feature-icon">🔒</div>
-        <div class="feature-content">
-          <h3>CSRF Protection</h3>
-          <p>Automatic security tokens for all forms and AJAX requests. No configuration needed.</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-12 pt-8">
+            <div class="space-y-4 border-l-2 border-white/10 pl-8">
+                <h3 class="text-xl font-bold">AJAX Navigation</h3>
+                <p class="text-white/40 leading-relaxed">Smooth page transitions without full reloads, giving your users a native app feel.</p>
+            </div>
+            <div class="space-y-4 border-l-2 border-white/10 pl-8">
+                <h3 class="text-xl font-bold">Security First</h3>
+                <p class="text-white/40 leading-relaxed">Automatic CSRF protection and secure session management built into the core.</p>
+            </div>
+            <div class="space-y-4 border-l-2 border-white/10 pl-8">
+                <h3 class="text-xl font-bold">Sub-ms Latency</h3>
+                <p class="text-white/40 leading-relaxed">Optimized routing and view engine designed for the highest possible throughput.</p>
+            </div>
+            <div class="space-y-4 border-l-2 border-white/10 pl-8">
+                <h3 class="text-xl font-bold">Tailwind Included</h3>
+                <p class="text-white/40 leading-relaxed">The default template now leverages Tailwind CSS for professional, scalable designs.</p>
+            </div>
         </div>
-      </div>
-
-      <div class="feature-item">
-        <div class="feature-icon">📱</div>
-        <div class="feature-content">
-          <h3>Responsive Design</h3>
-          <p>Mobile-first CSS framework included. Customize in <code>public/assets/css/style.css</code></p>
-        </div>
-      </div>
-
-      <div class="feature-item">
-        <div class="feature-icon">⚡</div>
-        <div class="feature-content">
-          <h3>Fast Development</h3>
-          <p>Hot reload enabled. Changes to views and controllers are reflected immediately.</p>
-        </div>
-      </div>
-
-      <div class="feature-item">
-        <div class="feature-icon">🗄️</div>
-        <div class="feature-content">
-          <h3>Database Ready</h3>
-          <p>MySQL and SQLite support built-in. Configure in <code>odac.json</code></p>
-        </div>
-      </div>
-
-      <div class="feature-item">
-        <div class="feature-icon">📧</div>
-        <div class="feature-content">
-          <h3>Email Support</h3>
-          <p>Send emails with the built-in mail service. SMTP and IMAP included.</p>
-        </div>
-      </div>
     </div>
-  </div>
 </section>
 
-<!-- Resources Section -->
-<section class="resources">
-  <div class="container">
-    <h2 class="section-title">📚 Learn More</h2>
-
-    <div class="resources-grid">
-      <a href="https://odac.run" target="_blank" class="resource-card" data-navigate="false">
-        <div class="resource-icon">🌐</div>
-        <h3>odac.run</h3>
-        <p>Official website with guides, tutorials, and community resources</p>
-      </a>
-
-      <a href="https://docs.odac.run" target="_blank" class="resource-card" data-navigate="false">
-        <div class="resource-icon">📖</div>
-        <h3>Documentation</h3>
-        <p>Complete API reference, examples, and best practices</p>
-      </a>
-
-      <a href="https://github.com/odac-run/odac" target="_blank" class="resource-card" data-navigate="false">
-        <div class="resource-icon">💻</div>
-        <h3>GitHub</h3>
-        <p>Source code, issues, and contribution guidelines</p>
-      </a>
+<!-- Call to Action -->
+<section class="mb-12 py-12">
+    <div class="flex flex-col items-center text-center space-y-6">
+        <h2 class="text-3xl font-bold text-brand-900 tracking-tight">Ready to build the future?</h2>
+        <p class="text-brand-900/50 max-w-xl">Start by editing <code class="text-xs bg-brand-50 px-1.5 py-0.5 rounded text-brand-900/60">view/content/home.html</code> to replace this page with your own vision.</p>
+        <div class="pt-4 flex items-center gap-4">
+            <a href="https://github.com/odac-run/odac" target="_blank" rel="noopener" class="px-6 py-2 border border-brand-100 rounded-full font-medium hover:bg-brand-50 transition-colors" data-navigate="false">Star on GitHub</a>
+            <a href="/about" class="px-6 py-2 text-brand-900 font-medium hover:opacity-60 transition-opacity">Meet the Framework →</a>
+        </div>
     </div>
-
-    <div class="next-steps">
-      <h3>🎨 Ready to Build?</h3>
-      <p>Start by editing <code>view/content/home.html</code> to replace this page with your own content.</p>
-      <p>Check out the <a href="/about">About</a> page for more examples.</p>
-    </div>
-  </div>
 </section>

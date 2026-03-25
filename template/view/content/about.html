@@ -1,65 +1,69 @@
-<div class="container">
-  <section class="page-hero">
-    <h1>🍭 About This Template</h1>
-    <p class="lead">This is a starter template for your Odac website. Customize it to build your own application.</p>
-  </section>
+<div class="space-y-24">
+    <!-- About Hero -->
+    <section class="text-center space-y-6">
+        <h1 class="text-4xl md:text-6xl font-bold tracking-tight text-brand-900 leading-tight">
+            About This <br/><span class="text-brand-900/40">Template</span>
+        </h1>
+        <p class="text-xl text-brand-900/50 max-w-2xl mx-auto font-medium leading-relaxed">
+            This is your starting point for building something incredible with ODAC. A modern, high-performance foundation.
+        </p>
+    </section>
 
-  <section class="content-section">
-    <h2>What You Can Build</h2>
-    <p>
-      With Odac, you can build any type of web application - from simple websites to complex web apps. 
-      This template provides a solid foundation with modern features and best practices already configured.
-    </p>
-  </section>
+    <!-- Template Features -->
+    <section class="space-y-12">
+        <div class="text-center space-y-2">
+            <h2 class="text-3xl font-bold tracking-tight text-brand-900">Template Features</h2>
+            <p class="text-brand-900/40">Everything you need, already configured.</p>
+        </div>
 
-  <section class="content-section">
-    <h2>Template Features</h2>
-    <div class="component-grid">
-      <div class="component-card">
-        <h3>🎨 Modern UI</h3>
-        <p>Dark theme with indigo colors, responsive design, and smooth animations.</p>
-      </div>
-      
-      <div class="component-card">
-        <h3>⚡ AJAX Navigation</h3>
-        <p>Smooth page transitions without full reloads, already configured and working.</p>
-      </div>
-      
-      <div class="component-card">
-        <h3>🔒 Security</h3>
-        <p>CSRF protection, secure sessions, and authentication ready to use.</p>
-      </div>
-      
-      <div class="component-card">
-        <h3>📱 Responsive</h3>
-        <p>Mobile-first design that works perfectly on all devices.</p>
-      </div>
-    </div>
-  </section>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="p-8 bg-white rounded-[2rem] border border-brand-100 shadow-sm space-y-4">
+                <h3 class="text-xl font-bold text-brand-900">Modern UI</h3>
+                <p class="text-brand-900/60 leading-relaxed">Design with Apple-style aesthetics using Tailwind CSS. Responsive, minimal, and premium.</p>
+            </div>
+            
+            <div class="p-8 bg-white rounded-[2rem] border border-brand-100 shadow-sm space-y-4">
+                <h3 class="text-xl font-bold text-brand-900">AJAX Navigation</h3>
+                <p class="text-brand-900/60 leading-relaxed">Smooth page transitions without full reloads, already configured and working out of the box.</p>
+            </div>
+            
+            <div class="p-8 bg-white rounded-[2rem] border border-brand-100 shadow-sm space-y-4">
+                <h3 class="text-xl font-bold text-brand-900">Security</h3>
+                <p class="text-brand-900/60 leading-relaxed">CSRF protection, secure sessions, and authentication ready to use for your application.</p>
+            </div>
+            
+            <div class="p-8 bg-white rounded-[2rem] border border-brand-100 shadow-sm space-y-4">
+                <h3 class="text-xl font-bold text-brand-900">Responsive</h3>
+                <p class="text-brand-900/60 leading-relaxed">Mobile-first design that works perfectly on all devices, from small phones to large desktop displays.</p>
+            </div>
+        </div>
+    </section>
 
-  <section class="content-section">
-    <h2>Next Steps</h2>
-    <ul class="philosophy-list">
-      <li><strong>Routes:</strong> Define URL patterns in <code>route/www.js</code> to map URLs to controllers</li>
-      <li><strong>Controllers:</strong> Create page logic in <code>controller/</code> to handle requests and set data</li>
-      <li><strong>Skeleton:</strong> Design your layout structure in <code>skeleton/</code> with placeholders</li>
-      <li><strong>Views:</strong> Build page content in <code>view/</code> directory to fill skeleton sections</li>
-      <li><strong>Assets:</strong> Customize styles and scripts in <code>public/</code> for your brand</li>
-    </ul>
-  </section>
+    <!-- Next Steps -->
+    <section class="bg-brand-900 rounded-[3rem] p-12 md:p-20 text-white space-y-12">
+        <h2 class="text-3xl font-bold tracking-tight text-center">Next Steps</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div class="space-y-2 border-l-2 border-white/10 pl-6">
+                <h4 class="font-bold">Routes</h4>
+                <p class="text-white/40 text-sm">Define URL patterns in <code>route/www.js</code></p>
+            </div>
+            <div class="space-y-2 border-l-2 border-white/10 pl-6">
+                <h4 class="font-bold">Controllers</h4>
+                <p class="text-white/40 text-sm">Create page logic in <code>controller/</code></p>
+            </div>
+            <div class="space-y-2 border-l-2 border-white/10 pl-6">
+                <h4 class="font-bold">Skeleton</h4>
+                <p class="text-white/40 text-sm">Design your layout structure in <code>skeleton/</code></p>
+            </div>
+        </div>
+    </section>
 
-  <section class="content-section">
-    <h2>Learn More</h2>
-    <div class="links-grid">
-      <a href="https://docs.odac.run" class="link-card" target="_blank" data-navigate="false">
-        <h3>📚 Documentation</h3>
-        <p>Complete guides, API reference, and tutorials</p>
-      </a>
-      
-      <a href="https://odac.run" class="link-card" target="_blank" data-navigate="false">
-        <h3>🌐 odac.run</h3>
-        <p>Official website with examples and community</p>
-      </a>
-    </div>
-  </section>
+    <!-- Learn More -->
+    <section class="text-center pb-24 space-y-8">
+        <h2 class="text-3xl font-bold text-brand-900 tracking-tight">Need help?</h2>
+        <div class="flex justify-center gap-4">
+            <a href="https://docs.odac.run" target="_blank" rel="noopener" class="px-8 py-3 bg-white border border-brand-100 rounded-full font-bold hover:bg-brand-50 transition-colors" data-navigate="false">Documentation</a>
+            <a href="https://odac.run" target="_blank" rel="noopener" class="px-8 py-3 bg-brand-900 text-white rounded-full font-bold hover:opacity-90 transition-opacity" data-navigate="false">Official Site</a>
+        </div>
+    </section>
 </div>

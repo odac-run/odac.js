@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  --color-brand-50: #f8f8f8;
+  --color-brand-100: #e8e8e8;
+  --color-brand-200: #d1d1d1;
+  --color-brand-300: #b0b0b0;
+  --color-brand-400: #888888;
+  --color-brand-500: #6d6d6d;
+  --color-brand-600: #5d5d5d;
+  --color-brand-700: #4b4b4b;
+  --color-brand-800: #373737;
+  --color-brand-900: #1d1d1f;
+}
+
+/* Base Styles */
+body {
+  @apply bg-[#f5f5f7] text-brand-900 antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply font-semibold tracking-tight;
+}
+
+/* Components */
+.glass {
+  @apply bg-white/70 backdrop-blur-md border-b border-white/10;
+}
+
+.btn-apple {
+  @apply px-6 py-2 rounded-full font-medium transition-all duration-200 inline-flex items-center justify-center;
+}
+
+.btn-primary {
+  @apply bg-brand-900 text-white hover:bg-brand-800;
+}
+
+.btn-secondary {
+  @apply bg-brand-100 text-brand-900 hover:bg-brand-200;
+}
+
+.active {
+  @apply !text-brand-900 opacity-100 font-semibold;
+}

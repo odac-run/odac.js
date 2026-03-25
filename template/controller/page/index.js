@@ -1,7 +1,7 @@
 /**
  * Home Page Controller
  *
- * This controller renders the home page using Odac's skeleton-based view system.
+ * This controller renders the home page using ODAC's skeleton-based view system.
  * The skeleton provides the layout (header, nav, footer) and the view provides the content.
  *
  * For AJAX requests (odac-link navigation), only the content is returned.
@@ -18,7 +18,7 @@ module.exports = function (Odac) {
   // Set variables that will be available in AJAX responses
   Odac.set(
     {
-      welcomeMessage: 'Welcome to Odac!',
+      welcomeMessage: 'Welcome to ODAC!',
       timestamp: Date.now()
     },
     true

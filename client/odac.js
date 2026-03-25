@@ -195,6 +195,33 @@ if (typeof window !== 'undefined') {
       xhr.send(data)
     }
 
+    /**
+     * Assigns `view-transition-name` CSS properties to all elements carrying
+     * the `odac-transition` attribute, enabling the browser's native View
+     * Transition API to animate them individually during navigation.
+     *
+     * @returns {Element[]} The list of elements that received transition names.
+     */
+    #applyTransitionNames() {
+      const elements = document.querySelectorAll('[odac-transition]')
+      elements.forEach(el => {
+        el.style.viewTransitionName = el.getAttribute('odac-transition')
+      })
+      return Array.from(elements)
+    }
+
+    /**
+     * Removes `view-transition-name` from previously tagged elements to
+     * prevent stale names from conflicting with future transitions.
+     *
+     * @param {Element[]} elements - Elements to clean up.
+     */
+    #clearTransitionNames(elements) {
+      elements.forEach(el => {
+        el.style.viewTransitionName = ''
+      })
+    }
+
     #fade(element, type, duration = 400, callback) {
       const isIn = type === 'in'
       const startOpacity = isIn ? 0 : 1
@@ -720,6 +747,20 @@ if (typeof window !== 'undefined') {
         .replace(/\n/g, '<br>')
     }
 
+    /**
+     * Decodes HTML entities back to their plain-text representation.
+     * Uses a textarea element as a safe decoder — no script execution risk.
+     *
+     * @param {string} str - HTML-encoded string (e.g. "&amp;" → "&").
+     * @returns {string} Decoded plain-text string.
+     */
+    #decodeHtmlEntities(str) {
+      if (typeof str !== 'string') return str
+      const textarea = document.createElement('textarea')
+      textarea.innerHTML = str
+      return textarea.value
+    }
+
     load(url, callback, push = true) {
       if (this.#isNavigating) return false
 
@@ -739,6 +780,84 @@ if (typeof window !== 'undefined') {
         if (element) elementsToUpdate.push({key, element})
       })
 
+      const useViewTransition = document.startViewTransition && document.querySelectorAll('[odac-transition]').length > 0
+
+      if (useViewTransition) {
+        this.#loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate)
+      } else {
+        this.#loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate)
+      }
+    }
+
+    /**
+     * Performs page navigation using the browser's native View Transition API.
+     * Elements with `odac-transition` attributes receive individual transition
+     * names, enabling per-element morphing animations orchestrated by the browser.
+     * Non-transition elements still update their content within the transition frame.
+     */
+    #loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate) {
+      const oldTransitionElements = this.#applyTransitionNames()
+
+      this.#ajax({
+        url,
+        type: 'GET',
+        headers: {
+          'X-Odac': 'ajaxload',
+          'X-Odac-Load': Object.keys(this.#loader.elements).join(','),
+          'X-Odac-Skeleton': currentSkeleton || ''
+        },
+        dataType: 'json',
+        success: (data, status, xhr) => {
+          const finalUrl = xhr.responseURL || url
+          if (data.skeletonChanged) {
+            this.#clearTransitionNames(oldTransitionElements)
+            window.location.href = finalUrl
+            return
+          }
+
+          const transition = document.startViewTransition(() => {
+            if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
+
+            const newPage = xhr.getResponseHeader('X-Odac-Page')
+            if (newPage !== null) {
+              this.#page = newPage
+              document.documentElement.dataset.odacPage = newPage
+            }
+
+            if (data.data) this.#data = data.data
+            if (data.title) document.title = this.#decodeHtmlEntities(data.title)
+
+            elementsToUpdate.forEach(({key, element}) => {
+              if (data.output && data.output[key] !== undefined) element.innerHTML = data.output[key]
+            })
+
+            this.#applyTransitionNames()
+          })
+
+          transition.finished
+            .then(() => {
+              this.#clearTransitionNames(document.querySelectorAll('[odac-transition]'))
+              this.#handleLoadComplete(data, callback)
+            })
+            .catch(() => {
+              this.#clearTransitionNames(document.querySelectorAll('[odac-transition]'))
+              this.#isNavigating = false
+            })
+        },
+        error: () => {
+          this.#clearTransitionNames(oldTransitionElements)
+          this.#isNavigating = false
+          window.location.replace(url)
+        }
+      })
+    }
+
+    /**
+     * Performs page navigation using the legacy fade-in/fade-out animation.
+     * This is the fallback path when the View Transition API is unavailable
+     * or no `odac-transition` elements exist in the DOM.
+     */
+    #loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate) {
       let ajaxData = null,
         ajaxXhr = null,
         fadeOutComplete = false,
@@ -761,7 +880,7 @@ if (typeof window !== 'undefined') {
         }
 
         if (ajaxData.data) this.#data = ajaxData.data
-        if (ajaxData.title) document.title = ajaxData.title
+        if (ajaxData.title) document.title = this.#decodeHtmlEntities(ajaxData.title)
 
         if (elementsToUpdate.length === 0) {
           this.#handleLoadComplete(ajaxData, callback)
@@ -794,7 +913,7 @@ if (typeof window !== 'undefined') {
       }
 
       this.#ajax({
-        url: url,
+        url,
         type: 'GET',
         headers: {
           'X-Odac': 'ajaxload',

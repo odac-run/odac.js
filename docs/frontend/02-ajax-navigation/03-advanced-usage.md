@@ -143,6 +143,57 @@ Odac.action({
 
 ## Animation & Transitions
 
+### View Transitions (Recommended)
+
+ODAC natively supports the browser's [View Transition API](https://developer.mozilla.org/en-US/docs/Web/API/View_Transition_API). Add the `odac-transition` attribute to any element that should animate between page navigations. No JavaScript configuration is needed.
+
+```html
+<header odac-transition="header">Site Header</header>
+<nav odac-transition="sidebar">Navigation</nav>
+<main>Regular content (updated by AJAX loader)</main>
+<img odac-transition="hero" src="/hero.jpg" alt="Hero" />
+```
+
+**How it works:**
+- Before navigation, ODAC assigns `view-transition-name` to each `odac-transition` element
+- The browser captures a snapshot of the old state
+- DOM is updated with new content
+- New `odac-transition` elements receive their transition names
+- The browser animates between old and new snapshots
+
+**Rules:**
+1. Each `odac-transition` value must be unique within the page (browser requirement)
+2. Elements that persist across pages (e.g., shared header) will morph smoothly
+3. If the browser doesn't support View Transition API, the legacy fade animation runs automatically
+
+**CSS Customization:**
+
+```css
+/* Crossfade the hero image */
+::view-transition-old(hero) {
+  animation: fade-out 0.3s ease;
+}
+::view-transition-new(hero) {
+  animation: fade-in 0.3s ease;
+}
+
+/* Slide the sidebar */
+::view-transition-old(sidebar) {
+  animation: slide-out-left 0.25s ease;
+}
+::view-transition-new(sidebar) {
+  animation: slide-in-left 0.25s ease;
+}
+
+/* Default transition for all elements */
+::view-transition-old(*) {
+  animation-duration: 0.2s;
+}
+::view-transition-new(*) {
+  animation-duration: 0.2s;
+}
+```
+
 ### Custom Transitions
 
 Add custom animations:

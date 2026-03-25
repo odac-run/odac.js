@@ -1,8 +1,17 @@
 ## 🔧 Template Syntax Overview
 
-Odac uses a powerful template engine to create dynamic content in view files. The engine provides a clean, HTML-like syntax for displaying variables, conditionals, loops, translations, and more.
+Odac uses a powerful template engine to create dynamic content in view files. The engine provides two equivalent syntaxes for displaying variables, plus dedicated tags for conditionals, loops, translations, and more.
 
-> **Note:** Odac also supports legacy syntax (`{{ }}`, `{!! !!}`, `{{-- --}}`) for backward compatibility, but the new `<odac>` tag syntax is recommended for all new projects.
+### Two Syntaxes, One Engine
+
+ODAC offers two ways to output variables. Both are HTML-escaped (XSS-safe) and compile to the same engine code. The choice is about readability, not functionality.
+
+| Syntax | Best For | Example |
+|--------|----------|---------|
+| `<odac var="x" />` | Standalone block output where the variable is the main content | `<h1><odac var="title" /></h1>` |
+| `{{ x }}` | Attributes, inline text, and mixed HTML where tag syntax would be verbose | `<img src="{{ photo.url }}" alt="{{ photo.caption }}">` |
+
+> **Guideline:** Use `{{ }}` inside HTML attributes (`src`, `href`, `alt`, `class`, `value`, etc.) and for inline text interpolation. Use `<odac var>` for standalone element content. Both are equally supported and recommended.
 
 ### Quick Reference
 
@@ -13,10 +22,17 @@ This page provides a quick overview of all available template features. For deta
 Display data passed from controllers using `Odac.set()`:
 
 ```html
-<!-- HTML-safe output -->
-<odac var="username" />
+<!-- Standalone block output — prefer <odac var> -->
+<h1><odac var="username" /></h1>
 
-<!-- Raw HTML output -->
+<!-- Inside attributes — prefer {{ }} -->
+<img src="{{ product.image }}" alt="{{ product.name }}">
+<a href="/user/{{ user.id }}">Profile</a>
+
+<!-- Inline text — prefer {{ }} -->
+<p>Welcome, {{ user.name }}. You have {{ count }} items.</p>
+
+<!-- Raw HTML output (trusted content only) -->
 <odac var="htmlContent" raw />
 
 <!-- String literals -->
@@ -163,8 +179,10 @@ Full access to the Odac object in templates:
 
 | Feature | Syntax | Documentation |
 |---------|--------|---------------|
-| Variable (Controller) | `<odac var="x" />` | [Variables](./03-variables.md) |
-| Raw HTML | `<odac var="x" raw />` | [Variables](./03-variables.md) |
+| Variable (standalone) | `<odac var="x" />` | [Variables](./03-variables.md) |
+| Variable (inline/attribute) | `{{ x }}` | [Variables](./03-variables.md) |
+| Raw HTML (tag) | `<odac var="x" raw />` | [Variables](./03-variables.md) |
+| Raw HTML (inline) | `{!! x !!}` | [Variables](./03-variables.md) |
 | String | `<odac>text</odac>` | [Variables](./03-variables.md) |
 | Query Parameter | `<odac get="key" />` | [Request Data](./04-request-data.md) |
 | Translation | `<odac translate>key</odac>` | [Translations](./07-translations.md) |
@@ -180,18 +198,34 @@ Full access to the Odac object in templates:
 | Comment | `<!--odac ... odac-->` | [Comments](./09-comments.md) |
 | Image | `<odac:img src="..." />` | [Image Optimization](./11-image-optimization.md) |
 
-### Legacy Syntax
+### Syntax Selection Guide
+
+Choose the right syntax based on context for clean, readable templates:
 
 ```html
-<!-- Variable output -->
-{{ username }}
+<!-- ✅ Attributes — use {{ }} -->
+<img src="{{ product.image }}" alt="{{ product.name }}">
+<a href="/products/{{ product.id }}" class="card {{ isActive ? 'active' : '' }}">
+<input type="text" name="search" value="{{ query }}">
 
-<!-- Raw HTML -->
-{!! htmlContent !!}
+<!-- ✅ Inline text — use {{ }} -->
+<p>Hello, {{ user.name }}. You have {{ count }} notifications.</p>
+<span>${{ product.price }}</span>
 
-<!-- Comments -->
+<!-- ✅ Standalone block content — use <odac var> -->
+<h1><odac var="pageTitle" /></h1>
+<td><odac var="user.email" /></td>
+
+<!-- ✅ Raw output — either form works -->
+<div><odac var="richContent" raw /></div>
+<div>{!! richContent !!}</div>
+```
+
+### Legacy Comment Syntax
+
+```html
 {{-- This is a comment --}}
 ```
 
-**Note:** The new `<odac>` tag syntax is recommended for all new projects.
+**Note:** For new projects, prefer the `<!--odac ... odac-->` comment syntax for consistency.
 

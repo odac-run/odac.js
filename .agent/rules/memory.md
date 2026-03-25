@@ -38,6 +38,7 @@ trigger: always_on
 
 ## Documentation Standards
 - **AI Skill Front Matter:** Every file under `docs/ai/skills/**/*.md` must start with YAML front matter containing `name`, `description`, and `metadata.tags`; values must be specific to that document's topic (never copied from generic examples).
+- **Template Syntax Documentation:** `{{ }}` and `<odac var>` are equal-status syntaxes, NOT legacy vs modern. `{{ }}` is preferred inside HTML attributes and inline text; `<odac var>` is preferred for standalone block output. Never label `{{ }}` as "legacy" or "backward compatibility" in docs.
 
 ## Testing & Validation
 - **Mandatory Test Coverage:** Every new feature, method, or significant logic change MUST be accompanied by a corresponding unit or integration test.
@@ -54,3 +55,6 @@ trigger: always_on
 
 ## Security Logic & Authentication
 - **Enterprise Token Rotation:** The `Auth.js` system utilizes a non-blocking refresh token rotation mechanism for cookies (`odac_x`/`odac_y`). To prevent race conditions during concurrent requests in high-throughput SPAs, rotated tokens are **not** immediately deleted. Instead, their `active` timestamp is set to naturally expire in 60 seconds (Grace Period), and their `date` timestamp is set to the Unix Epoch (`new Date(0)`) as an identifier mark. Never delete rotated tokens immediately.
+
+## View Engine & SSR
+- **Auto-Navigation Injection:** The ODAC View engine (`src/View.js`) automatically parses skeleton HTML files and dynamically injects `data-odac-navigate="content"` into the element immediately wrapping `{{ CONTENT }}`. Do NOT manually add this attribute to HTML templates or assume it is missing based on static analysis, as it is handled seamlessly at runtime via SSR.

@@ -14,12 +14,18 @@ Views in ODAC are logic-light but powerful. They support automatic XSS protectio
 
 ## Core Rules
 1.  **Skeleton Architecture**: Use `Odac.View.skeleton('name')` to wrap content in a layout.
-2.  **Data Binding**:
-    -   `{{ key }}`: Escaped output (Standard).
-    -   `{!! key !!}`: Raw output (Use with extreme caution).
-3.  **Conditionals**: Use `<odac:if condition="VAR"> ... </odac:if>`.
-4.  **Looping**: Use `<odac:for in="ARRAY" value="ITEM"> ... </odac:for>` or the performance-optimized `[[odac_for ...]]`.
-5.  **Server-Side JS**: Use `<script:odac>` for complex calculations during rendering.
+2.  **Data Binding — Two Equivalent Syntaxes**:
+    -   `<odac var="key" />`: Tag-based output (HTML-escaped, XSS-safe).
+    -   `{{ key }}`: Inline/interpolation output (HTML-escaped, XSS-safe). Identical behavior to `<odac var>`.
+    -   `<odac var="key" raw />` or `{!! key !!}`: Raw output (Use with extreme caution).
+3.  **Choosing the Right Syntax**:
+    -   **Inside HTML attributes** (`src`, `alt`, `href`, `class`, `value`, etc.) → Always prefer `{{ }}`. It reads naturally and keeps markup clean.
+    -   **Inline within text or mixed HTML** → Prefer `{{ }}` for short interpolations.
+    -   **Standalone block output** (the variable is the only content of an element) → Prefer `<odac var="" />` for structural clarity and IDE support.
+    -   Both syntaxes compile to the same engine output. The choice is about readability, not functionality.
+4.  **Conditionals**: Use `<odac:if condition="VAR"> ... </odac:if>`.
+5.  **Looping**: Use `<odac:for in="ARRAY" value="ITEM"> ... </odac:for>` or the performance-optimized `[[odac_for ...]]`.
+6.  **Server-Side JS**: Use `<script:odac>` for complex calculations during rendering.
 
 ## Reference Patterns
 
@@ -35,8 +41,17 @@ Odac.View.set({
 
 ### 2. Template Syntax Reference
 ```html
-<!-- Display Variable -->
-<h1>{{ title }}</h1>
+<!-- Standalone block output — prefer <odac var> -->
+<h1><odac var="title" /></h1>
+
+<!-- Inside attributes — prefer {{ }} -->
+<img src="{{ product.image }}" alt="{{ product.name }}">
+<a href="/user/{{ user.id }}" class="btn {{ isActive ? 'active' : '' }}">Profile</a>
+<input type="text" value="{{ query }}">
+
+<!-- Inline text interpolation — prefer {{ }} -->
+<p>Welcome, {{ user.name }}. You have {{ notifications }} new messages.</p>
+<span>${{ product.price }}</span>
 
 <!-- Conditional -->
 <odac:if condition="stats.users > 100">
@@ -62,7 +77,17 @@ Perfect for calculations that shouldn't clutter the controller but are too compl
 <p>Tax: ${{ tax }}</p>
 ```
 
+## Syntax Selection Guide
+
+| Context | Preferred Syntax | Example |
+|---------|-----------------|---------|
+| HTML attributes (`src`, `href`, `alt`, `class`, `value`) | `{{ }}` | `<img src="{{ photo.url }}" alt="{{ photo.caption }}">` |
+| Inline text within elements | `{{ }}` | `<p>Hello, {{ user.name }}</p>` |
+| Standalone element content | `<odac var />` | `<h1><odac var="title" /></h1>` |
+| Raw HTML output (trusted only) | `<odac var raw />` or `{!! !!}` | `<div><odac var="content" raw /></div>` |
+
 ## Security Best Practices
--   **Always use `{{ }}`**: Standard tags prevent XSS.
+-   **Both `{{ }}` and `<odac var>` are XSS-safe**: Both apply HTML escaping by default. Use either with confidence.
+-   **Raw output requires trust**: Only use `raw` / `{!! !!}` with content you fully control. Never with user input.
 -   **Limit `<script:odac>`**: Do not perform database queries or API calls inside views; keep them in the controller.
 -   **Partial Awareness**: Use `<odac:include view="path.to.view" />` for reusable components.
