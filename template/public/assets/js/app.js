@@ -63,15 +63,17 @@ Odac.action({
       })
 
       // Add active class to current page link
-      const currentLink = document.querySelector(`nav a[href="${url}"]`)
-      if (currentLink) {
-        currentLink.classList.add('active')
+      const currentLinks = document.querySelectorAll(`nav a[href="${url}"]`)
+      if (currentLinks.length > 0) {
+        currentLinks.forEach(function (link) {
+          link.classList.add('active')
+        })
       } else if (url === '/' || url === '') {
         // Handle home page
-        const homeLink = document.querySelector('nav a[href="/"]')
-        if (homeLink) {
-          homeLink.classList.add('active')
-        }
+        const homeLinks = document.querySelectorAll('nav a[href="/"]')
+        homeLinks.forEach(function (link) {
+          link.classList.add('active')
+        })
       }
     }
   }
