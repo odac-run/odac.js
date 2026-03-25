@@ -3,7 +3,7 @@
  * ODAC Template - Client-Side Application
  *
  * This file demonstrates odac.js features including:
- * - AJAX page loading with odac.loader() for smooth navigation
+ * - AJAX page loading with Odac.loader() for smooth navigation
  * - History API integration
  * - Event delegation
  */
@@ -48,7 +48,7 @@ Odac.action({
 
   /**
    * Custom functions
-   * These become available as odac.fn.functionName()
+   * These become available as Odac.fn.functionName()
    */
   function: {
     /**
