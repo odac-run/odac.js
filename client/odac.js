@@ -840,6 +840,7 @@ if (typeof window !== 'undefined') {
               this.#handleLoadComplete(data, callback)
             })
             .catch(() => {
+              this.#clearTransitionNames(document.querySelectorAll('[odac-transition]'))
               this.#isNavigating = false
             })
         },
