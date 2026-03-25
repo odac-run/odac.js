@@ -1,3 +1,31 @@
+### security
+
+- **template:** add noopener to external footer links to mitigate reverse tabnabbing
+- **template:** add rel="noopener" to all external links to prevent tabnabbing without losing referer analytics
+
+### ✨ What's New
+
+- **client:** add native View Transition API support via odac-transition attribute
+- Implement a complete UI redesign using Tailwind CSS, introduce new components, and update branding to ODAC.
+
+### 📚 Documentation
+
+- Add documentation for auto-navigation injection in the View Engine and SSR.
+- **template:** correct casing for Odac object api references in comments
+- **views:** clarify template syntax as equal-status with usage guidelines
+
+### 🛠️ Fixes & Improvements
+
+- **client:** clear stale view transition names on aborted navigation promises
+- **client:** decode HTML entities in document title to prevent XSS vulnerabilities
+- **template:** sync active nav state properly across desktop and mobile menus
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### doc
 
 - Introduce WebSocket routing and controllers, update request handling, and refactor language and validator modules to use async operations.
