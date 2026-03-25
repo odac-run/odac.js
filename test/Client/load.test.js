@@ -172,7 +172,7 @@ describe('Odac.load()', () => {
       jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
       window.Odac.load('/error-page', jest.fn())
       mockXhr.onerror()
-      expect(mockWindow.location).toEqual(expect.objectContaining({href: expect.any(String)}))
+      expect(mockWindow.location.replace).toHaveBeenCalledWith('http://localhost/error-page')
     })
   })
 
