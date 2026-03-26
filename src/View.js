@@ -294,7 +294,7 @@ class View {
       }
 
       if (attrs.get) {
-        return `{{ get('${attrs.get}') || '' }}`
+        return `{{ get('${attrs.get.replace(/'/g, "\\'")}') || '' }}`
       } else if (attrs.var) {
         if (attrs.raw) {
           return `{!! ${attrs.var} !!}`
@@ -323,7 +323,7 @@ class View {
         }
 
         if (attrs.get) {
-          return `{{ get('${attrs.get}') || '' }}`
+          return `{{ get('${attrs.get.replace(/'/g, "\\'")}') || '' }}`
         } else if (attrs.var) {
           if (attrs.raw) {
             return `{!! ${attrs.var} !!}`
@@ -350,8 +350,9 @@ class View {
             return `%s${placeholderIndex++}`
           })
 
+          const escapedContent = processedContent.replace(/'/g, "\\'")
           const translationCall =
-            placeholders.length > 0 ? `__('${processedContent}', ${placeholders.join(', ')})` : `__('${processedContent}')`
+            placeholders.length > 0 ? `__('${escapedContent}', ${placeholders.join(', ')})` : `__('${escapedContent}')`
 
           if (attrs.raw) {
             return `{!! ${translationCall} !!}`
@@ -359,7 +360,7 @@ class View {
             return `{{ ${translationCall} }}`
           }
         } else {
-          return `{{ '${innerContent}' }}`
+          return `{{ '${innerContent.replace(/'/g, "\\'")}' }}`
         }
       })
       if (before === content) break
