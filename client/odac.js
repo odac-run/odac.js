@@ -788,7 +788,7 @@ if (typeof window !== 'undefined') {
 
       // Build X-Odac-Parts header from current known parts
       const partsHeader = Object.entries(this.#loader.parts)
-        .map(([k, v]) => `${k}=${v}`)
+        .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
         .join(',')
 
       // Collect part keys to request from server

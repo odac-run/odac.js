@@ -157,7 +157,7 @@ class Route {
         const parts = {}
         for (const entry of partsHeader.split(',')) {
           const idx = entry.indexOf('=')
-          if (idx > 0) parts[entry.substring(0, idx)] = entry.substring(idx + 1)
+          if (idx > 0) parts[entry.substring(0, idx)] = decodeURIComponent(entry.substring(idx + 1))
         }
         Odac.Request.clientParts = parts
       }
