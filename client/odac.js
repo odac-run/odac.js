@@ -1196,7 +1196,8 @@ if (typeof window !== 'undefined') {
       if (partsAttr) {
         try {
           initialParts = JSON.parse(partsAttr)
-        } catch {
+        } catch (e) {
+          console.error('Odac: Failed to parse data-odac-parts attribute.', e)
           // Graceful fallback if attribute is malformed
         }
       }
