@@ -32,6 +32,7 @@ trigger: always_on
 
 ## Dependency Management
 - **Prefer Native Fetch:** Use the native `fetch` API for network requests in both Node.js (18+) and browser environments to reduce dependencies and bundle size.
+- **Hybrid Overrides:** When using `overrides` in `package.json` for security hardening, always verify tool compatibility (especially Jest/Coverage). If a global override (e.g., `minimatch: 10.x`) breaks a critical utility (e.g., `test-exclude`), use a nested override to provide a compatible version (e.g., `3.x`) for that specific tool while keeping the rest of the project secure.
 
 ## Naming & Text Conventions
 - **ODAC Casing:** Always write "ODAC" in uppercase letters when referring to the framework name in strings, comments, log messages, or user-facing text. **EXCEPTION:** The class name itself (`class Odac`) and variable references to it should remain `Odac` (PascalCase) as per code conventions.
@@ -55,6 +56,10 @@ trigger: always_on
 
 ## Security Logic & Authentication
 - **Enterprise Token Rotation:** The `Auth.js` system utilizes a non-blocking refresh token rotation mechanism for cookies (`odac_x`/`odac_y`). To prevent race conditions during concurrent requests in high-throughput SPAs, rotated tokens are **not** immediately deleted. Instead, their `active` timestamp is set to naturally expire in 60 seconds (Grace Period), and their `date` timestamp is set to the Unix Epoch (`new Date(0)`) as an identifier mark. Never delete rotated tokens immediately.
+- **Template String Escaping:** When escaping template strings for inline JavaScript execution or translation payloads, always escape backslashes first before escaping single quotes (e.g., `.replace(/\\/g, '\\\\').replace(/'/g, "\\'")`) to prevent an injected backslash from disabling the quote escape and causing a Template Injection / XSS vulnerability.
 
 ## View Engine & SSR
-- **Auto-Navigation Injection:** The ODAC View engine (`src/View.js`) automatically parses skeleton HTML files and dynamically injects `data-odac-navigate="content"` into the element immediately wrapping `{{ CONTENT }}`. Do NOT manually add this attribute to HTML templates or assume it is missing based on static analysis, as it is handled seamlessly at runtime via SSR.
+- **Auto-Navigation Injection:** The ODAC View engine (`src/View.js`) automatically parses skeleton HTML files and dynamically injects `data-odac-navigate` attributes into ALL elements wrapping `{{ PART_NAME }}` placeholders (e.g. `{{ CONTENT }}`, `{{ SIDEBAR }}`, `{{ FOOTER }}`). Do NOT manually add these attributes to HTML templates.
+- **Smart Part Diffing (AJAX Navigation):** The AJAX navigation system uses a server-driven part diffing mechanism. The client sends its current part values via `X-Odac-Parts` header (e.g. `content=docs/intro,sidebar=docs/nav`). The server compares these with the new page's parts and only renders/returns parts whose view path has changed. Parts that are identical between pages are skipped (no re-render, no DOM update). Parts that exist on the old page but not the new page are cleared. The `parts` manifest is included in every AJAX response for the client to track state. **Exception:** The `content` part is always re-rendered regardless of view path match, since its output is URL-dependent.
+- **Part Refresh Override:** `View.set('partName', 'viewPath', { refresh: true })` forces a part to re-render on every AJAX navigation even if its view path hasn't changed. Useful for parts with request-dependent dynamic content (e.g. active menu state). The `#refresh` Set tracks which parts bypass the diffing comparison.
+- **Initial Parts State:** On first page load, the `<html>` tag receives a `data-odac-parts` JSON attribute containing the current part-to-view mapping. The client reads this to initialize its parts tracking state for subsequent AJAX navigations.

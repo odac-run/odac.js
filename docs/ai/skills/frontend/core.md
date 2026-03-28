@@ -60,11 +60,25 @@ Odac.action({
 ### 3. Data Utilities
 ```javascript
 // Accessing data shared from backend (Odac.share)
-const user = odac.data('user');
+const user = odac.data('user')
 
 // Using Storage wrapper
-odac.storage('theme', 'dark');
-const theme = odac.storage('theme');
+odac.storage('theme', 'dark')
+const theme = odac.storage('theme')
+```
+
+### 4. Programmatic Navigation
+```javascript
+// Navigate to a URL (AJAX, pushes to history)
+Odac.load('/dashboard')
+
+// Navigate without history entry
+Odac.load('/dashboard', null, false)
+
+// Navigate with a post-load callback
+Odac.load('/dashboard', function(page, vars) {
+  console.log('Loaded page:', page)
+})
 ```
 
 ## Best Practices

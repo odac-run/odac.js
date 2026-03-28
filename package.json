@@ -1,6 +1,6 @@
 {
   "name": "odac",
-  "description": "⚡ Next-Gen Server & Framework: Web, DNS, Mail, SSL & Monitoring in one CLI.",
+  "description": "Lightweight, high-performance Node.js framework for building modern web applications with built-in routing, auth, database, templating, WebSocket, i18n and zero-config Tailwind CSS.",
   "homepage": "https://odac.run",
   "author": {
     "name": "emre.red",
@@ -27,14 +27,30 @@
     "tailwindcss": "^4.1.18"
   },
   "optionalDependencies": {
+    "sharp": "^0.33.0"
+  },
+  "peerDependencies": {
     "mysql2": "^3.16.0",
     "pg": "^8.16.3",
     "redis": "^5.10.0",
-    "sharp": "^0.33.0"
+    "sqlite3": "^6.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mysql2": { "optional": true },
+    "pg": { "optional": true },
+    "redis": { "optional": true },
+    "sqlite3": { "optional": true }
   },
   "overrides": {
-    "tar": "7.5.9",
-    "cross-spawn": "7.0.6"
+    "brace-expansion": "5.0.5",
+    "cross-spawn": "7.0.6",
+    "handlebars": "4.7.9",
+    "minimatch": "10.2.4",
+    "test-exclude": {
+      "minimatch": "3.1.5"
+    },
+    "picomatch": "4.0.4",
+    "tar": "7.5.13"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
@@ -54,7 +70,7 @@
     "lint-staged": "^16.2.7",
     "prettier": "^3.8.1",
     "semantic-release": "^25.0.3",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^6.0.1"
   },
   "scripts": {
     "lint": "eslint .",

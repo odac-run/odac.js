@@ -16,6 +16,7 @@ class OdacRequest {
   isAjaxLoad = false
   ajaxLoad = null
   clientSkeleton = null
+  clientParts = null
   page = null
 
   constructor(id, req, res, odac) {
@@ -50,11 +51,11 @@ class OdacRequest {
     this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
     if (
-      global.Odac.Route.routes[this.route].error &&
-      global.Odac.Route.routes[this.route].error[code] &&
-      typeof global.Odac.Route.routes[this.route].error[code].cache === 'function'
+      this.#odac.Route?.routes?.[this.route]?.error &&
+      this.#odac.Route.routes[this.route].error[code] &&
+      typeof this.#odac.Route.routes[this.route].error[code].cache === 'function'
     )
-      result = await global.Odac.Route.routes[this.route].error[code].cache(this.#odac)
+      result = await this.#odac.Route.routes[this.route].error[code].cache(this.#odac)
     this.end(result)
   }
 

@@ -70,6 +70,17 @@ Odac.View
 
 In this case, placeholders like `{{ HEADER }}`, `{{ CONTENT }}`, `{{ FOOTER }}` in the skeleton are automatically matched with `view/home/header.html`, `view/home/content.html`, `view/home/footer.html` files.
 
+### 6. Force-Refreshing a Part
+
+By default, ODAC's smart diffing skips re-rendering a part if its view path hasn't changed between navigations. If a part's output is request-dependent (e.g. a sidebar that highlights the active menu item), use `{ refresh: true }` to always re-render it:
+
+```javascript
+// Sidebar re-renders on every AJAX navigation regardless of view path
+Odac.View.set('sidebar', 'docs.nav', { refresh: true })
+```
+
+This option is only relevant for AJAX navigations. Full page loads always render all parts.
+
 ### Setting Dynamic Page Titles and Meta Tags
 
 Since skeleton files only support view part placeholders, you have two approaches for dynamic titles:
@@ -101,8 +112,6 @@ Create a separate view part for the `<head>` section:
 </html>
 ```
 
-**Note:** Each placeholder is wrapped in an HTML tag so AJAX can identify and update specific sections.
-
 **Head View (view/head/main.html):**
 ```html
 <head>
@@ -122,15 +131,13 @@ module.exports = async function (Odac) {
     .where('id', productId)
     .first()
   
-  // Set dynamic title and description
   Odac.pageTitle = product ? `${product.name} - My Store` : 'Product Not Found'
   Odac.pageDescription = product ? product.short_description : ''
-  
   Odac.product = product
   
   Odac.View.set({
     skeleton: 'main',
-    head: 'main',        // Include dynamic head
+    head: 'main',
     header: 'main',
     content: 'product.detail',
     footer: 'main'
@@ -142,21 +149,6 @@ module.exports = async function (Odac) {
 
 Include the title tag in your content view:
 
-**Skeleton (skeleton/simple.html):**
-```html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="/assets/css/style.css">
-</head>
-<body>
-    {{ CONTENT }}
-</body>
-</html>
-```
-
 **Content View (view/content/product.html):**
 ```html
 <title>{{ Odac.product.name }} - My Store</title>
@@ -167,7 +159,7 @@ Include the title tag in your content view:
 </div>
 ```
 
-**Note:** This approach is less clean but works for simple cases.
+The AJAX navigation system automatically extracts the `<title>` tag from the rendered content and updates `document.title`.
 
 ### Important Notes
 
@@ -175,5 +167,6 @@ Include the title tag in your content view:
 - Skeleton files should be in the `skeleton/` directory, view files in the `view/` directory
 - Placeholders for view parts are written in uppercase: `{{ HEADER }}`, `{{ CONTENT }}`, etc.
 - View part names are specified in lowercase: `header`, `content`, etc.
-- Variables in skeleton/views are accessed via `Odac` object: `{{ Odac.variableName }}`
-- You don't need to use `return` from the controller, `Odac.View.set()` automatically initiates the rendering process
+- Variables in views are accessed via the `Odac` object: `{{ Odac.variableName }}`
+- Unset placeholders are silently removed from the final HTML output
+- You don't need to call `return` from the controller — `Odac.View.set()` automatically initiates rendering
