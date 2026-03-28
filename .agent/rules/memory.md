@@ -32,6 +32,7 @@ trigger: always_on
 
 ## Dependency Management
 - **Prefer Native Fetch:** Use the native `fetch` API for network requests in both Node.js (18+) and browser environments to reduce dependencies and bundle size.
+- **Hybrid Overrides:** When using `overrides` in `package.json` for security hardening, always verify tool compatibility (especially Jest/Coverage). If a global override (e.g., `minimatch: 10.x`) breaks a critical utility (e.g., `test-exclude`), use a nested override to provide a compatible version (e.g., `3.x`) for that specific tool while keeping the rest of the project secure.
 
 ## Naming & Text Conventions
 - **ODAC Casing:** Always write "ODAC" in uppercase letters when referring to the framework name in strings, comments, log messages, or user-facing text. **EXCEPTION:** The class name itself (`class Odac`) and variable references to it should remain `Odac` (PascalCase) as per code conventions.
