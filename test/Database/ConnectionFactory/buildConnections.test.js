@@ -6,6 +6,10 @@ jest.mock(
       mockKnex(...args)
 )
 
+jest.mock('mysql2', () => ({}), {virtual: true})
+jest.mock('pg', () => ({}), {virtual: true})
+jest.mock('sqlite3', () => ({}), {virtual: true})
+
 const {buildConnections} = require('../../../src/Database/ConnectionFactory')
 
 describe('ConnectionFactory.buildConnections()', () => {
