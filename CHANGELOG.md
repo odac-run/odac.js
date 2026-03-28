@@ -1,3 +1,25 @@
+### ⚙️ Engine Tuning
+
+- replace global Odac reference with private instance and update dependency overrides for security hardening
+- **test/view:** remove unused CACHE_DIR variable in parseOdacTag tests
+
+### ✨ What's New
+
+- **client:** log malformed data-odac-parts JSON to ease debugging
+- **view:** smart AJAX part diffing with selective re-render
+
+### 🛠️ Fixes & Improvements
+
+- **route:** encode X-Odac-Parts header values to prevent splitting errors
+- **View:** escape single quotes in template expressions to prevent syntax errors
+- **view:** prevent template injection by escaping backslashes in dynamic parser
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### security
 
 - **template:** add noopener to external footer links to mitigate reverse tabnabbing

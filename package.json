@@ -7,7 +7,7 @@
     "email": "mail@emre.red",
     "url": "https://emre.red"
   },
-  "version": "1.4.5",
+  "version": "1.4.6",
   "license": "MIT",
   "engines": {
     "node": ">=18.0.0"
@@ -36,10 +36,18 @@
     "sqlite3": "^6.0.0"
   },
   "peerDependenciesMeta": {
-    "mysql2": { "optional": true },
-    "pg": { "optional": true },
-    "redis": { "optional": true },
-    "sqlite3": { "optional": true }
+    "mysql2": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "redis": {
+      "optional": true
+    },
+    "sqlite3": {
+      "optional": true
+    }
   },
   "overrides": {
     "brace-expansion": "5.0.5",
