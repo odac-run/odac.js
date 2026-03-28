@@ -4,7 +4,6 @@ const path = require('path')
 const View = require('../../src/View')
 
 const FIXTURE_DIR = path.resolve(__dirname, '_fixtures')
-const CACHE_DIR = path.join(FIXTURE_DIR, 'storage', '.cache')
 
 /**
  * Integration tests for the #parseOdacTag private method.
