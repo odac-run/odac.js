@@ -16,6 +16,7 @@ class OdacRequest {
   isAjaxLoad = false
   ajaxLoad = null
   clientSkeleton = null
+  clientParts = null
   page = null
 
   constructor(id, req, res, odac) {

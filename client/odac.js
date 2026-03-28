@@ -119,7 +119,7 @@ if (typeof window !== 'undefined') {
     #page = null
     #token = {hash: [], data: false}
     #formSubmitHandlers = new Map()
-    #loader = {elements: {}, callback: null}
+    #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
 
     constructor() {
@@ -772,20 +772,34 @@ if (typeof window !== 'undefined') {
       this.#isNavigating = true
 
       const currentSkeleton = document.documentElement.dataset.odacSkeleton
-      const elements = Object.entries(this.#loader.elements)
+
+      // Merge loader-registered elements with auto-discovered navigate elements
+      const elements = {...this.#loader.elements}
+      document.querySelectorAll('[data-odac-navigate]').forEach(el => {
+        const partName = el.getAttribute('data-odac-navigate')
+        if (!elements[partName]) elements[partName] = `[data-odac-navigate="${partName}"]`
+      })
 
       const elementsToUpdate = []
-      elements.forEach(([key, selector]) => {
+      for (const [key, selector] of Object.entries(elements)) {
         const element = document.querySelector(selector)
-        if (element) elementsToUpdate.push({key, element})
-      })
+        if (element) elementsToUpdate.push({key, element, selector})
+      }
+
+      // Build X-Odac-Parts header from current known parts
+      const partsHeader = Object.entries(this.#loader.parts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(',')
+
+      // Collect part keys to request from server
+      const loadKeys = Object.keys(elements)
 
       const useViewTransition = document.startViewTransition && document.querySelectorAll('[odac-transition]').length > 0
 
       if (useViewTransition) {
-        this.#loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate)
+        this.#loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate, partsHeader, loadKeys)
       } else {
-        this.#loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate)
+        this.#loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate, partsHeader, loadKeys)
       }
     }
 
@@ -795,17 +809,20 @@ if (typeof window !== 'undefined') {
      * names, enabling per-element morphing animations orchestrated by the browser.
      * Non-transition elements still update their content within the transition frame.
      */
-    #loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate) {
+    #loadWithViewTransition(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate, partsHeader, loadKeys) {
       const oldTransitionElements = this.#applyTransitionNames()
+
+      const headers = {
+        'X-Odac': 'ajaxload',
+        'X-Odac-Load': loadKeys.join(','),
+        'X-Odac-Skeleton': currentSkeleton || ''
+      }
+      if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
       this.#ajax({
         url,
         type: 'GET',
-        headers: {
-          'X-Odac': 'ajaxload',
-          'X-Odac-Load': Object.keys(this.#loader.elements).join(','),
-          'X-Odac-Skeleton': currentSkeleton || ''
-        },
+        headers,
         dataType: 'json',
         success: (data, status, xhr) => {
           const finalUrl = xhr.responseURL || url
@@ -813,6 +830,15 @@ if (typeof window !== 'undefined') {
             this.#clearTransitionNames(oldTransitionElements)
             window.location.href = finalUrl
             return
+          }
+
+          // Update tracked parts from server manifest
+          if (data.parts) this.#loader.parts = data.parts
+
+          // Determine which parts were removed by the new page
+          const removedParts = []
+          for (const {key, element} of elementsToUpdate) {
+            if (data.parts && !(key in data.parts)) removedParts.push({key, element})
           }
 
           const transition = document.startViewTransition(() => {
@@ -827,9 +853,15 @@ if (typeof window !== 'undefined') {
             if (data.data) this.#data = data.data
             if (data.title) document.title = this.#decodeHtmlEntities(data.title)
 
+            // Update only parts that have new content from server
             elementsToUpdate.forEach(({key, element}) => {
               if (data.output && data.output[key] !== undefined) element.innerHTML = data.output[key]
             })
+
+            // Clear removed parts
+            for (const {element} of removedParts) {
+              element.innerHTML = ''
+            }
 
             this.#applyTransitionNames()
           })
@@ -854,78 +886,74 @@ if (typeof window !== 'undefined') {
 
     /**
      * Performs page navigation using the legacy fade-in/fade-out animation.
-     * This is the fallback path when the View Transition API is unavailable
-     * or no `odac-transition` elements exist in the DOM.
+     * Only fades elements whose content actually changed, leaving unchanged
+     * parts (like a shared sidebar) completely untouched and visible.
      */
-    #loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate) {
-      let ajaxData = null,
-        ajaxXhr = null,
-        fadeOutComplete = false,
-        ajaxComplete = false
-
-      const applyUpdate = () => {
-        if (!fadeOutComplete || !ajaxComplete || !ajaxData) return
-
-        const finalUrl = ajaxXhr.responseURL || url
-        if (ajaxData.skeletonChanged) {
-          window.location.href = finalUrl
-          return
-        }
-        if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
-
-        const newPage = ajaxXhr.getResponseHeader('X-Odac-Page')
-        if (newPage !== null) {
-          this.#page = newPage
-          document.documentElement.dataset.odacPage = newPage
-        }
-
-        if (ajaxData.data) this.#data = ajaxData.data
-        if (ajaxData.title) document.title = this.#decodeHtmlEntities(ajaxData.title)
-
-        if (elementsToUpdate.length === 0) {
-          this.#handleLoadComplete(ajaxData, callback)
-          return
-        }
-
-        let completed = 0
-        elementsToUpdate.forEach(({key, element}) => {
-          if (ajaxData.output && ajaxData.output[key] !== undefined) element.innerHTML = ajaxData.output[key]
-          this.#fadeIn(element, 200, () => {
-            completed++
-            if (completed === elementsToUpdate.length) this.#handleLoadComplete(ajaxData, callback)
-          })
-        })
+    #loadWithFade(url, callback, push, currentUrl, currentSkeleton, elementsToUpdate, partsHeader, loadKeys) {
+      const headers = {
+        'X-Odac': 'ajaxload',
+        'X-Odac-Load': loadKeys.join(','),
+        'X-Odac-Skeleton': currentSkeleton || ''
       }
-
-      if (elementsToUpdate.length > 0) {
-        let fadeOutCount = 0
-        elementsToUpdate.forEach(({element}) => {
-          this.#fadeOut(element, 200, () => {
-            fadeOutCount++
-            if (fadeOutCount === elementsToUpdate.length) {
-              fadeOutComplete = true
-              applyUpdate()
-            }
-          })
-        })
-      } else {
-        fadeOutComplete = true
-      }
+      if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
       this.#ajax({
         url,
         type: 'GET',
-        headers: {
-          'X-Odac': 'ajaxload',
-          'X-Odac-Load': Object.keys(this.#loader.elements).join(','),
-          'X-Odac-Skeleton': currentSkeleton || ''
-        },
+        headers,
         dataType: 'json',
         success: (data, status, xhr) => {
-          ajaxData = data
-          ajaxXhr = xhr
-          ajaxComplete = true
-          applyUpdate()
+          const finalUrl = xhr.responseURL || url
+          if (data.skeletonChanged) {
+            window.location.href = finalUrl
+            return
+          }
+          if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
+
+          const newPage = xhr.getResponseHeader('X-Odac-Page')
+          if (newPage !== null) {
+            this.#page = newPage
+            document.documentElement.dataset.odacPage = newPage
+          }
+
+          if (data.data) this.#data = data.data
+          if (data.title) document.title = this.#decodeHtmlEntities(data.title)
+          if (data.parts) this.#loader.parts = data.parts
+
+          // Classify elements: changed, removed, or unchanged
+          const changedParts = []
+          const removedParts = []
+
+          for (const {key, element} of elementsToUpdate) {
+            if (data.output && data.output[key] !== undefined) {
+              changedParts.push({key, element})
+            } else if (data.parts && !(key in data.parts)) {
+              removedParts.push({key, element})
+            }
+          }
+
+          // Clear removed parts immediately
+          for (const {element} of removedParts) {
+            element.innerHTML = ''
+          }
+
+          // No changed parts — complete immediately
+          if (changedParts.length === 0) {
+            this.#handleLoadComplete(data, callback)
+            return
+          }
+
+          // Fade out only changed parts, then swap content and fade in
+          let fadeOutCount = 0
+          changedParts.forEach(({key, element}) => {
+            this.#fadeOut(element, 200, () => {
+              element.innerHTML = data.output[key]
+              this.#fadeIn(element, 200, () => {
+                fadeOutCount++
+                if (fadeOutCount === changedParts.length) this.#handleLoadComplete(data, callback)
+              })
+            })
+          })
         },
         error: () => {
           this.#isNavigating = false
@@ -974,9 +1002,10 @@ if (typeof window !== 'undefined') {
       }
     }
 
-    loader(selector, elements, callback) {
+    loader(selector, elements, callback, initialParts) {
       this.#loader.elements = elements
       this.#loader.callback = callback
+      if (initialParts) this.#loader.parts = initialParts
       const odacInstance = this
 
       this.#on(document, 'click', selector, function (e) {
@@ -1152,10 +1181,27 @@ if (typeof window !== 'undefined') {
   window.Odac = new _odac()
   ;(function initAutoNavigate() {
     const init = () => {
-      const contentEl = document.querySelector('[data-odac-navigate="content"]')
-      if (contentEl) {
-        window.Odac.loader('a[href^="/"]:not([data-navigate="false"]):not(.no-navigate)', {content: '[data-odac-navigate="content"]'}, null)
+      const navigateElements = document.querySelectorAll('[data-odac-navigate]')
+      if (navigateElements.length === 0) return
+
+      const elements = {}
+      navigateElements.forEach(el => {
+        const partName = el.getAttribute('data-odac-navigate')
+        elements[partName] = `[data-odac-navigate="${partName}"]`
+      })
+
+      // Initialize parts state from server-rendered data attribute
+      const partsAttr = document.documentElement.dataset.odacParts
+      let initialParts = {}
+      if (partsAttr) {
+        try {
+          initialParts = JSON.parse(partsAttr)
+        } catch {
+          // Graceful fallback if attribute is malformed
+        }
       }
+
+      window.Odac.loader('a[href^="/"]:not([data-navigate="false"]):not(.no-navigate)', elements, null, initialParts)
     }
     document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', init) : init()
   })()

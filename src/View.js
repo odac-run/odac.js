@@ -103,6 +103,7 @@ class View {
     }
   }
   #part = {}
+  #refresh = new Set()
   #odac = null
 
   constructor(odac) {
@@ -148,10 +149,25 @@ class View {
         }
       }
 
-      // Render requested elements
+      // Build current parts manifest (part name → view path)
+      const currentParts = {}
+      for (let key in this.#part) {
+        if (['all', 'skeleton'].includes(key)) continue
+        if (this.#part[key]) currentParts[key] = this.#part[key]
+      }
+
+      // Parse client's previous parts to detect unchanged regions
+      const clientParts = this.#odac.Request.clientParts || {}
+
+      // Render requested elements (skip unchanged parts)
       let title = null
       for (let element of this.#odac.Request.ajaxLoad) {
         if (this.#part[element]) {
+          // Skip rendering if the part view path has not changed and refresh is not forced
+          // Content is always re-rendered since its output depends on the current URL
+          if (element !== 'content' && !this.#refresh.has(element) && clientParts[element] && clientParts[element] === this.#part[element])
+            continue
+
           let viewPath = this.#part[element]
           if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
           if (await this.#exists(`./view/${element}/${viewPath}.html`)) {
@@ -202,6 +218,7 @@ class View {
 
       this.#odac.Request.end({
         output: output,
+        parts: currentParts,
         variables: variables,
         data: this.#odac.Request.sharedData,
         title: title,
@@ -239,6 +256,9 @@ class View {
             }
           }
       }
+
+      // Clean up unresolved skeleton placeholders
+      result = result.replace(/\{\{\s*[A-Z_]+\s*\}\}/g, '')
     }
 
     if (result) {
@@ -524,8 +544,12 @@ class View {
 
   // - SET PARTS
   set(...args) {
-    if (args.length === 1 && typeof args[0] === 'object') for (let key in args[0]) this.#part[key] = args[0][key]
-    else if (args.length === 2) this.#part[args[0]] = args[1]
+    if (args.length === 1 && typeof args[0] === 'object') {
+      for (let key in args[0]) this.#part[key] = args[0][key]
+    } else if (args.length >= 2) {
+      this.#part[args[0]] = args[1]
+      if (args[2]?.refresh) this.#refresh.add(args[0])
+    }
 
     if (!this.#odac.Request.page) {
       this.#odac.Request.page = this.#part.content || this.#part.all || ''
@@ -542,10 +566,19 @@ class View {
   }
 
   #addNavigateAttribute(skeleton) {
-    skeleton = skeleton.replace(/(<[^>]+>)(\s*\{\{\s*CONTENT\s*\}\})/, (match, openTag, content) => {
+    // Inject data-odac-navigate for placeholders already wrapped in an HTML tag
+    skeleton = skeleton.replace(/(<[^>]+>)(\s*\{\{\s*([A-Z_]+)\s*\}\})/g, (match, openTag, content, partName) => {
+      const attrName = partName.toLowerCase()
       if (openTag.includes('data-odac-navigate')) return match
-      const tagWithAttr = openTag.slice(0, -1) + ' data-odac-navigate="content">'
+      const tagWithAttr = openTag.slice(0, -1) + ` data-odac-navigate="${attrName}">`
       return tagWithAttr + content
+    })
+
+    // Auto-wrap unwrapped placeholders so AJAX navigation can target them
+    // Uses display:contents to avoid breaking flex/grid layouts
+    skeleton = skeleton.replace(/(?<!>)\s*(\{\{\s*([A-Z_]+)\s*\}\})/g, (match, placeholder, partName) => {
+      const attrName = partName.toLowerCase()
+      return `<div style="display:contents" data-odac-navigate="${attrName}">${placeholder}</div>`
     })
 
     const skeletonName = this.#part.skeleton || 'main'
@@ -559,6 +592,17 @@ class View {
       if (!attrs.includes('data-odac-page')) {
         updates.push(`data-odac-page="${pageName}"`)
       }
+
+      // Embed current parts manifest for client-side diffing on first load
+      const partsMap = {}
+      for (let key in this.#part) {
+        if (['all', 'skeleton'].includes(key)) continue
+        if (this.#part[key]) partsMap[key] = this.#part[key]
+      }
+      if (!attrs.includes('data-odac-parts') && Object.keys(partsMap).length > 0) {
+        updates.push(`data-odac-parts='${JSON.stringify(partsMap)}'`)
+      }
+
       if (updates.length === 0) return match
       return `<html${attrs} ${updates.join(' ')}>`
     })

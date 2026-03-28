@@ -150,6 +150,17 @@ class Route {
       }
       Odac.Request.isAjaxLoad = true
       Odac.Request.clientSkeleton = Odac.Request.header('X-Odac-Skeleton')
+
+      // Parse client's current part values for smart diffing
+      const partsHeader = Odac.Request.header('X-Odac-Parts')
+      if (partsHeader) {
+        const parts = {}
+        for (const entry of partsHeader.split(',')) {
+          const idx = entry.indexOf('=')
+          if (idx > 0) parts[entry.substring(0, idx)] = entry.substring(idx + 1)
+        }
+        Odac.Request.clientParts = parts
+      }
     }
     if (Odac.Config?.route?.[url]) {
       // PROD CACHE HIT
