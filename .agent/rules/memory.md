@@ -56,6 +56,7 @@ trigger: always_on
 
 ## Security Logic & Authentication
 - **Enterprise Token Rotation:** The `Auth.js` system utilizes a non-blocking refresh token rotation mechanism for cookies (`odac_x`/`odac_y`). To prevent race conditions during concurrent requests in high-throughput SPAs, rotated tokens are **not** immediately deleted. Instead, their `active` timestamp is set to naturally expire in 60 seconds (Grace Period), and their `date` timestamp is set to the Unix Epoch (`new Date(0)`) as an identifier mark. Never delete rotated tokens immediately.
+- **Template String Escaping:** When escaping template strings for inline JavaScript execution or translation payloads, always escape backslashes first before escaping single quotes (e.g., `.replace(/\\/g, '\\\\').replace(/'/g, "\\'")`) to prevent an injected backslash from disabling the quote escape and causing a Template Injection / XSS vulnerability.
 
 ## View Engine & SSR
 - **Auto-Navigation Injection:** The ODAC View engine (`src/View.js`) automatically parses skeleton HTML files and dynamically injects `data-odac-navigate` attributes into ALL elements wrapping `{{ PART_NAME }}` placeholders (e.g. `{{ CONTENT }}`, `{{ SIDEBAR }}`, `{{ FOOTER }}`). Do NOT manually add these attributes to HTML templates.

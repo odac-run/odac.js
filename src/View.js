@@ -314,7 +314,7 @@ class View {
       }
 
       if (attrs.get) {
-        return `{{ get('${attrs.get.replace(/'/g, "\\'")}') || '' }}`
+        return `{{ get('${attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}') || '' }}`
       } else if (attrs.var) {
         if (attrs.raw) {
           return `{!! ${attrs.var} !!}`
@@ -343,7 +343,7 @@ class View {
         }
 
         if (attrs.get) {
-          return `{{ get('${attrs.get.replace(/'/g, "\\'")}') || '' }}`
+          return `{{ get('${attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}') || '' }}`
         } else if (attrs.var) {
           if (attrs.raw) {
             return `{!! ${attrs.var} !!}`
@@ -370,7 +370,7 @@ class View {
             return `%s${placeholderIndex++}`
           })
 
-          const escapedContent = processedContent.replace(/'/g, "\\'")
+          const escapedContent = processedContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
           const translationCall =
             placeholders.length > 0 ? `__('${escapedContent}', ${placeholders.join(', ')})` : `__('${escapedContent}')`
 
@@ -380,7 +380,7 @@ class View {
             return `{{ ${translationCall} }}`
           }
         } else {
-          return `{{ '${innerContent.replace(/'/g, "\\'")}' }}`
+          return `{{ '${innerContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' }}`
         }
       })
       if (before === content) break
