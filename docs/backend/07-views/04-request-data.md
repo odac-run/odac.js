@@ -33,6 +33,19 @@ If a parameter doesn't exist, it safely returns an empty string:
 
 This prevents errors when parameters are optional.
 
+### Raw HTML Output
+
+By default, `<odac get>` automatically escapes HTML special characters to prevent XSS attacks. If you need to output raw HTML from a query parameter (only from trusted sources), use the `raw` attribute:
+
+```html
+<!-- URL: /page?content=%3Cb%3EHello%3C/b%3E -->
+
+<odac get="content" raw />
+<!-- Output: <b>Hello</b> -->
+```
+
+**Security Warning:** Never use `raw` with query parameters if they can contain user-generated content. Query parameters are easily manipulated by users. Only use `raw` if you are certain the value is safe (e.g., predefined tokens).
+
 ### Difference: get vs var
 
 **`<odac get>` - Query Parameters (from URL):**

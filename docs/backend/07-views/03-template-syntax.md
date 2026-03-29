@@ -50,6 +50,10 @@ Access URL query parameters directly:
 <!-- URL: /search?q=laptop -->
 <odac get="q" />
 <!-- Output: laptop -->
+
+<!-- Get raw query parameter (unescaped) -->
+<odac get="htmlContent" raw />
+<!-- Output: <b>Trusted HTML</b> -->
 ```
 
 **Note:** `<odac get>` is for URL parameters. For controller data, use `<odac var>`.
@@ -185,6 +189,7 @@ Full access to the Odac object in templates:
 | Raw HTML (inline) | `{!! x !!}` | [Variables](./03-variables.md) |
 | String | `<odac>text</odac>` | [Variables](./03-variables.md) |
 | Query Parameter | `<odac get="key" />` | [Request Data](./04-request-data.md) |
+| Query Parameter Raw | `<odac get="key" raw />` | [Request Data](./04-request-data.md) |
 | Translation | `<odac translate>key</odac>` | [Translations](./07-translations.md) |
 | Translation Raw | `<odac translate raw>key</odac>` | [Translations](./07-translations.md) |
 | If | `<odac:if condition="x">` | [Conditionals](./05-conditionals.md) |

@@ -314,7 +314,8 @@ class View {
       }
 
       if (attrs.get) {
-        return `{{ get('${attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}') || '' }}`
+        const escaped = attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+        return attrs.raw ? `{!! get('${escaped}') || '' !!}` : `{{ get('${escaped}') || '' }}`
       } else if (attrs.var) {
         if (attrs.raw) {
           return `{!! ${attrs.var} !!}`
@@ -343,7 +344,8 @@ class View {
         }
 
         if (attrs.get) {
-          return `{{ get('${attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}') || '' }}`
+          const escaped = attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+          return attrs.raw ? `{!! get('${escaped}') || '' !!}` : `{{ get('${escaped}') || '' }}`
         } else if (attrs.var) {
           if (attrs.raw) {
             return `{!! ${attrs.var} !!}`
