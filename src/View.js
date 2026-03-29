@@ -567,7 +567,7 @@ class View {
 
   #addNavigateAttribute(skeleton) {
     // Inject data-odac-navigate for placeholders already wrapped in an HTML tag
-    skeleton = skeleton.replace(/(<[^>]+>)(\s*\{\{\s*([A-Z_]+)\s*\}\})/g, (match, openTag, content, partName) => {
+    skeleton = skeleton.replace(/(<(?!\/)[^>]+>)(\s*\{\{\s*([A-Z_]+)\s*\}\})/g, (match, openTag, content, partName) => {
       const attrName = partName.toLowerCase()
       if (openTag.includes('data-odac-navigate')) return match
       const tagWithAttr = openTag.slice(0, -1) + ` data-odac-navigate="${attrName}">`
