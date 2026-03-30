@@ -1,3 +1,5 @@
+const fs = require('fs').promises
+const path = require('path')
 const View = require('../../src/View')
 
 describe('View.#addNavigateAttribute()', () => {
@@ -5,7 +7,7 @@ describe('View.#addNavigateAttribute()', () => {
   let mockOdac
 
   beforeEach(() => {
-    global.__dir = require('path').resolve(__dirname, '../../')
+    global.__dir = path.resolve(__dirname, '../../')
     mockOdac = {
       Config: {view: {earlyHints: {enabled: false}}},
       View: {},
@@ -29,16 +31,13 @@ describe('View.#addNavigateAttribute()', () => {
   })
 
   it('should not wrap placeholder in display:contents if it is the first child of an element', async () => {
-    const fs = require('fs')
-    const path = require('path')
-
     const skeletonDir = path.join(global.__dir, 'skeleton')
     const contentDir = path.join(global.__dir, 'view/content/pages')
-    fs.mkdirSync(skeletonDir, {recursive: true})
-    fs.mkdirSync(contentDir, {recursive: true})
+    await fs.mkdir(skeletonDir, {recursive: true})
+    await fs.mkdir(contentDir, {recursive: true})
 
-    fs.writeFileSync(path.join(skeletonDir, 'main.html'), '<main id="app-main">\n  {{ CONTENT }}\n</main>')
-    fs.writeFileSync(path.join(contentDir, 'test.html'), '<h1>Content</h1>')
+    await fs.writeFile(path.join(skeletonDir, 'main.html'), '<main id="app-main">\n  {{ CONTENT }}\n</main>')
+    await fs.writeFile(path.join(contentDir, 'test.html'), '<h1>Content</h1>')
 
     view.skeleton('main').set({content: 'pages/test'})
 

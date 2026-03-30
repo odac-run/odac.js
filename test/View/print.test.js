@@ -1,4 +1,5 @@
-const fsPromises = require('fs').promises
+const fs = require('fs').promises
+const path = require('path')
 const View = require('../../src/View')
 
 describe('View.print()', () => {
@@ -6,7 +7,7 @@ describe('View.print()', () => {
   let mockOdac
 
   beforeEach(() => {
-    global.__dir = require('path').resolve(__dirname, '../../')
+    global.__dir = path.resolve(__dirname, '../../')
     mockOdac = {
       Config: {view: {earlyHints: {enabled: false}}},
       View: {},
@@ -35,16 +36,13 @@ describe('View.print()', () => {
 
   describe('AJAX Rendering Edge Cases', () => {
     it("should extract title from priority parts even if their view path hasn't changed (skipped)", async () => {
-      const fs = require('fs')
-      const path = require('path')
-
       const headDir = path.join(global.__dir, 'view/head/inc')
       const contentDir = path.join(global.__dir, 'view/content/pages')
-      fs.mkdirSync(headDir, {recursive: true})
-      fs.mkdirSync(contentDir, {recursive: true})
+      await fs.mkdir(headDir, {recursive: true})
+      await fs.mkdir(contentDir, {recursive: true})
 
-      fs.writeFileSync(path.join(headDir, 'head.html'), '<title>Dynamic Title</title>')
-      fs.writeFileSync(path.join(contentDir, 'test.html'), '<h1>Test</h1>')
+      await fs.writeFile(path.join(headDir, 'head.html'), '<title>Dynamic Title</title>')
+      await fs.writeFile(path.join(contentDir, 'test.html'), '<h1>Test</h1>')
 
       mockOdac.Request.isAjaxLoad = true
       mockOdac.Request.ajaxLoad = ['head', 'content']
