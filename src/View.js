@@ -177,7 +177,7 @@ class View {
             // Extract title if present inside the part
             const titleMatch = html.match(TITLE_REGEX)
             if (titleMatch && titleMatch[1]) {
-              title = titleMatch[1]
+              title = titleMatch[1].trim()
             }
           }
         }
@@ -187,7 +187,8 @@ class View {
       if (!title) {
         const priorityParts = ['head', 'header', 'meta']
         for (const key of priorityParts) {
-          if (this.#part[key] && !this.#odac.Request.ajaxLoad.includes(key)) {
+          // Only extract if it wasn't already processed in the main loop above
+          if (this.#part[key] && output[key] === undefined) {
             let viewPath = this.#part[key]
             if (viewPath.includes('.')) viewPath = viewPath.replace(/\./g, '/')
             if (await this.#exists(`./view/${key}/${viewPath}.html`)) {
@@ -195,7 +196,7 @@ class View {
                 const partHtml = await this.#render(`./view/${key}/${viewPath}.html`)
                 const titleMatch = partHtml.match(TITLE_REGEX)
                 if (titleMatch && titleMatch[1]) {
-                  title = titleMatch[1]
+                  title = titleMatch[1].trim()
                   break
                 }
               } catch (e) {
@@ -568,20 +569,32 @@ class View {
   }
 
   #addNavigateAttribute(skeleton) {
-    // Inject data-odac-navigate for placeholders already wrapped in an HTML tag
-    skeleton = skeleton.replace(/(<(?!\/)[^>]+>)(\s*\{\{\s*([A-Z_]+)\s*\}\})/g, (match, openTag, content, partName) => {
-      const attrName = partName.toLowerCase()
-      if (openTag.includes('data-odac-navigate')) return match
-      const tagWithAttr = openTag.slice(0, -1) + ` data-odac-navigate="${attrName}">`
-      return tagWithAttr + content
-    })
+    // Single-pass regex to inject data-odac-navigate into parent tags or auto-wrap unwrapped placeholders.
+    // Group 1: Opening tag (<tag>)
+    // Group 2: Whitespace between tag and placeholder
+    // Group 3: Placeholder ({{ PART_NAME }})
+    // Group 4: Part name inside wrapped placeholder
+    // Group 5: Standalone/Unwrapped placeholder
+    // Group 6: Part name inside unwrapped placeholder
+    skeleton = skeleton.replace(
+      /(<(?!\/)[^>]+>)(\s*)(\{\{\s*([A-Z_]+)\s*\}\})|(\{\{\s*([A-Z_]+)\s*\}\})/g,
+      (match, openTag, spaces, wrappedPlaceholder, wrappedPartName, unwrappedPlaceholder, unwrappedPartName) => {
+        if (openTag) {
+          // Case 1: Placeholder immediately follows an opening tag. Inject attribute into the tag.
+          const attrName = wrappedPartName.toLowerCase()
+          const tagWithAttr = openTag.includes('data-odac-navigate') ? openTag : openTag.slice(0, -1) + ` data-odac-navigate="${attrName}">`
+          return `${tagWithAttr}${spaces}${wrappedPlaceholder}`
+        }
 
-    // Auto-wrap unwrapped placeholders so AJAX navigation can target them
-    // Uses display:contents to avoid breaking flex/grid layouts
-    skeleton = skeleton.replace(/(?<!>)\s*(\{\{\s*([A-Z_]+)\s*\}\})/g, (match, placeholder, partName) => {
-      const attrName = partName.toLowerCase()
-      return `<div style="display:contents" data-odac-navigate="${attrName}">${placeholder}</div>`
-    })
+        if (unwrappedPlaceholder) {
+          // Case 2: Placeholder is unwrapped (e.g. sibling to a closing tag). Wrap in display:contents.
+          const attrName = unwrappedPartName.toLowerCase()
+          return `<div style="display:contents" data-odac-navigate="${attrName}">${unwrappedPlaceholder}</div>`
+        }
+
+        return match
+      }
+    )
 
     const skeletonName = this.#part.skeleton || 'main'
     const pageName = this.#odac.Request.page || ''
