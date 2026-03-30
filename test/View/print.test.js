@@ -35,7 +35,7 @@ describe('View.print()', () => {
   })
 
   describe('AJAX Rendering Edge Cases', () => {
-    it("should extract title from priority parts even if their view path hasn't changed (skipped)", async () => {
+    it("should extract title from priority parts even if their view path hasn't changed", async () => {
       const headDir = path.join(global.__dir, 'view/head/inc')
       const contentDir = path.join(global.__dir, 'view/content/pages')
       await fs.mkdir(headDir, {recursive: true})
