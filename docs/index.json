@@ -1,6 +1,16 @@
 {
   "backend": [
     {
+      "file": "00-getting-started",
+      "title": "Getting Started",
+      "children": [
+        {
+          "file": "01-quick-start.md",
+          "title": "Quick Start"
+        }
+      ]
+    },
+    {
       "file": "01-overview",
       "title": "Backend Overview",
       "children": [

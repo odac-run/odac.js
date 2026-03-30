@@ -18,7 +18,8 @@ Views in ODAC are logic-light but powerful. They support automatic XSS protectio
 3.  **Data Binding — Two Equivalent Syntaxes**:
     -   `<odac var="key" />`: Tag-based output (HTML-escaped, XSS-safe).
     -   `{{ key }}`: Inline/interpolation output (HTML-escaped, XSS-safe). Identical behavior to `<odac var>`.
-    -   `<odac var="key" raw />` or `{!! key !!}`: Raw output (use with extreme caution).
+    -   `<odac get="key" />`: Query Parameter output (HTML-escaped, XSS-safe).
+    -   `<odac var="key" raw />`, `<odac get="key" raw />` or `{!! key !!}`: Raw output (use with extreme caution).
 4.  **Choosing the Right Syntax**:
     -   **Inside HTML attributes** (`src`, `alt`, `href`, `class`, `value`, etc.) → Always prefer `{{ }}`.
     -   **Inline within text or mixed HTML** → Prefer `{{ }}` for short interpolations.
@@ -111,6 +112,10 @@ module.exports = function (Odac) {
 
 <!-- Inline text interpolation -->
 <p>Welcome, {{ user.name }}. You have {{ notifications }} new messages.</p>
+
+<!-- Query parameter from URL (/page?q=search) -->
+<p>Search Results for: <odac get="q" /></p>
+<div class="raw-content"><odac get="htmlContent" raw /></div>
 
 <!-- Conditional -->
 <odac:if condition="stats.users > 100">
