@@ -1,5 +1,25 @@
 ### ⚙️ Engine Tuning
 
+- **test:** remove unused fsPromises and standardize async I/O in View tests
+
+### 📚 Documentation
+
+- add quick start guide and register in documentation index
+
+### 🛠️ Fixes & Improvements
+
+- add raw attribute support to `<odac get>` tag for unescaped HTML output
+- improve title extraction logic and optimize data-odac-navigate attribute injection in View rendering
+- prevent data-odac-navigate injection into closing HTML tags
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### ⚙️ Engine Tuning
+
 - replace global Odac reference with private instance and update dependency overrides for security hardening
 - **test/view:** remove unused CACHE_DIR variable in parseOdacTag tests
 
