@@ -56,7 +56,6 @@ describe('View.print()', () => {
       expect(mockOdac.Request.end).toHaveBeenCalled()
 
       const payload = mockOdac.Request.end.mock.calls[0][0]
-      console.log('PAYLOAD:', payload)
       expect(payload.output.head).toBeUndefined()
       expect(payload.title).toBe('Dynamic Title')
     })
