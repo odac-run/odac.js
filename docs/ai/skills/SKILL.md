@@ -18,7 +18,7 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [backend/config.md](backend/config.md) - Configuration management and environment variables
 - [backend/controllers.md](backend/controllers.md) - Request handling and Class-Based Controllers
 - [backend/cron.md](backend/cron.md) - Scheduled background tasks and automation
-- [backend/database.md](backend/database.md) - Query Builder and DB best practices
+- [backend/database.md](backend/database.md) - Query Builder, Write-Behind Cache, and DB best practices
 - [backend/forms.md](backend/forms.md) - Form processing and Validation logic
 - [backend/ipc.md](backend/ipc.md) - Inter-Process Communication and state sharing
 - [backend/mail.md](backend/mail.md) - Transactional email sending
