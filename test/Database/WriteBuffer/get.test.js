@@ -29,15 +29,18 @@ beforeEach(async () => {
 
   Object.defineProperty(cluster, 'isPrimary', {value: true, configurable: true})
 
+  const Ipc = require('../../../src/Ipc')
   global.Odac = {
-    Config: {},
+    Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
     Storage: {
       isReady: () => false,
       put: jest.fn(),
       remove: jest.fn(),
       getRange: () => []
-    }
+    },
+    Ipc
   }
+  await Ipc.init()
 
   WriteBuffer = require('../../../src/Database/WriteBuffer')
   await WriteBuffer.init({default: db})
@@ -45,9 +48,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await WriteBuffer.close()
+  await Odac.Ipc.close()
   await db.destroy()
   delete global.Odac
-  delete global.__odac_wb_message_handler
 })
 
 describe('WriteBuffer - get()', () => {

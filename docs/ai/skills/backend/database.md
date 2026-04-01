@@ -50,7 +50,32 @@ await Odac.DB.posts.insert({title: 'Hello'})
 
 ## Write-Behind Cache (`buffer`)
 
-The `buffer` API intercepts writes and holds them in the Primary process memory, then flushes to DB in batches via a configurable interval. The only difference from the standard API is `.buffer` in the chain.
+The `buffer` API routes all writes through `Odac.Ipc`. The active IPC driver determines the scaling model — no code changes required when switching drivers.
+
+- **`memory` driver** (default): Primary process holds all state; workers communicate via cluster IPC.
+- **`redis` driver**: State lives in Redis — works transparently across multiple servers.
+
+### When to suggest `buffer`
+
+Propose the Write-Behind Cache when the user's write operation meets **all three** of these criteria:
+1. **High frequency** — the same column or row is written on many requests (counters, timestamps, last-seen values).
+2. **Eventual consistency is acceptable** — a few seconds' delay before the value reaches the DB is fine.
+3. **Not safety-critical** — losing the buffered value in a crash has no financial, legal, or user-facing consequence.
+
+**Typical candidates:**
+- Page / post / download view counters (`increment`)
+- Like, upvote, share counts (`increment`)
+- User last-active timestamp, last IP (`update`)
+- Analytics events, audit logs, activity streams (`insert`)
+- Score accumulators, play counts, rating tallies (`increment`)
+
+**Do NOT suggest `buffer` for:**
+- Payments, charges, refunds, or any monetary operation
+- Order creation, inventory decrements
+- Anything the same request needs to read back immediately
+- Inserts that return a generated ID the caller uses
+
+When in doubt, use a direct DB call.
 
 **Three operation types:**
 
@@ -91,11 +116,14 @@ await Odac.DB.buffer.flush()         // flush everything
 ```
 
 ## Write-Behind Cache — Key Rules
-1.  **Cluster-Safe**: Primary process holds all state. Workers send via IPC. No race conditions.
-2.  **Crash-Safe**: LMDB checkpoint written every 30s. On restart, pending data is recovered and flushed before serving traffic.
-3.  **get() is authoritative**: Always returns `DB base + buffered delta`. Never stale.
-4.  **Flush on shutdown**: `Database.close()` triggers a final flush automatically — no data loss on graceful shutdown.
-5.  **Error resilience**: If a flush fails, data is retained for the next cycle. Never lost silently.
+1.  **Ipc-Backed**: All buffer state goes through `Odac.Ipc`. Memory driver = Primary holds state; Redis driver = Redis holds state.
+2.  **Horizontally Scalable**: With Redis driver, multiple servers share the same buffer state. Distributed lock (`Ipc.lock`) prevents duplicate flushes.
+3.  **Crash-Safe (memory)**: LMDB checkpoint written every 30s. On restart, pending data is recovered and flushed before serving traffic.
+4.  **Crash-Safe (redis)**: Redis persistence provides durability. LMDB checkpoints are skipped.
+5.  **get() is authoritative**: Always returns `DB base + buffered delta`. Never stale.
+6.  **Flush on shutdown**: `Database.close()` triggers a final flush automatically — no data loss on graceful shutdown.
+7.  **Error resilience**: If a flush fails, data is retained in Ipc for the next cycle. Never lost silently.
+8.  **NEVER use buffer for safety-critical writes**: Payment records, order confirmations, balance changes, inventory decrements — anything where data loss has real-world consequences MUST use direct DB transactions. The buffer does not guarantee delivery before a crash.
 
 ## Configuration (`odac.json`)
 ```json

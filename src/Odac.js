@@ -6,10 +6,11 @@ module.exports = {
 
     await global.Odac.Env.init()
     await global.Odac.Config.init()
-    await global.Odac.Database.init()
 
     global.Odac.Ipc = require('./Ipc.js')
     await global.Odac.Ipc.init()
+
+    await global.Odac.Database.init()
 
     await global.Odac.Route.init()
     await global.Odac.Server.init()

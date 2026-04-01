@@ -47,21 +47,23 @@ beforeEach(async () => {
 afterEach(async () => {
   await db.destroy()
   delete global.Odac
-  delete global.__odac_wb_message_handler
 })
 
 describe('WriteBuffer - Checkpoint', () => {
   it('should write counter deltas to LMDB on checkpoint', async () => {
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: createMockStorage()
+      Storage: createMockStorage(),
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
 
     await WriteBuffer.increment('default', 'posts', 1, 'views', 5)
-    WriteBuffer._writeCheckpoint()
+    await WriteBuffer._writeCheckpoint()
 
     const checkpoint = storageData.get('wb:c:default:posts:1:views')
     expect(checkpoint).toBeDefined()
@@ -69,20 +71,24 @@ describe('WriteBuffer - Checkpoint', () => {
     expect(checkpoint.base).toBe(100)
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 
   it('should write queue rows to LMDB on checkpoint', async () => {
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: createMockStorage()
+      Storage: createMockStorage(),
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
 
-    WriteBuffer._primaryInsert('default', 'activity_log', {user_id: 1, action: 'view'})
-    WriteBuffer._primaryInsert('default', 'activity_log', {user_id: 2, action: 'click'})
-    WriteBuffer._writeCheckpoint()
+    await WriteBuffer.insert('default', 'activity_log', {user_id: 1, action: 'view'})
+    await WriteBuffer.insert('default', 'activity_log', {user_id: 2, action: 'click'})
+    await WriteBuffer._writeCheckpoint()
 
     const checkpoint = storageData.get('wb:q:default:activity_log')
     expect(checkpoint).toBeDefined()
@@ -90,6 +96,7 @@ describe('WriteBuffer - Checkpoint', () => {
     expect(checkpoint[0].action).toBe('view')
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 })
 
@@ -99,10 +106,13 @@ describe('WriteBuffer - Recovery', () => {
     const mockStorage = createMockStorage()
     storageData.set('wb:c:default:posts:1:views', {delta: 7, base: 100})
 
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: mockStorage
+      Storage: mockStorage,
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
@@ -112,6 +122,7 @@ describe('WriteBuffer - Recovery', () => {
     expect(result).toBe(107) // base 100 + recovered delta 7
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 
   it('should recover queue rows from LMDB on startup', async () => {
@@ -124,10 +135,13 @@ describe('WriteBuffer - Recovery', () => {
     const mockStorage = createMockStorage()
     storageData.set('wb:q:default:activity_log', [{user_id: 1, action: 'recovered_view'}])
 
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: mockStorage
+      Storage: mockStorage,
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
@@ -140,16 +154,20 @@ describe('WriteBuffer - Recovery', () => {
     expect(rows[0].action).toBe('recovered_view')
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 
   it('should merge recovered data with new increments', async () => {
     const mockStorage = createMockStorage()
     storageData.set('wb:c:default:posts:1:views', {delta: 5, base: 100})
 
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: mockStorage
+      Storage: mockStorage,
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
@@ -161,16 +179,20 @@ describe('WriteBuffer - Recovery', () => {
     expect(result).toBe(108) // base 100 + recovered 5 + new 3
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 
   it('should clear LMDB checkpoint after successful flush', async () => {
     const mockStorage = createMockStorage()
     storageData.set('wb:c:default:posts:1:views', {delta: 5, base: 100})
 
+    const Ipc = require('../../../src/Ipc')
     global.Odac = {
       Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: mockStorage
+      Storage: mockStorage,
+      Ipc
     }
+    await Ipc.init()
 
     const WriteBuffer = require('../../../src/Database/WriteBuffer')
     await WriteBuffer.init({default: db})
@@ -180,5 +202,6 @@ describe('WriteBuffer - Recovery', () => {
     expect(storageData.has('wb:c:default:posts:1:views')).toBe(false)
 
     await WriteBuffer.close()
+    await Ipc.close()
   })
 })

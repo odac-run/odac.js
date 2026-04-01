@@ -16,19 +16,32 @@ await Odac.DB.posts.buffer.where(postId).increment('views')
 
 ## How It Works
 
-**Architecture: Primary-Replica**
+**Architecture: Ipc-Backed, Driver-Agnostic**
 
-In ODAC's clustered model, the Primary process holds all buffered state. Worker processes send write requests to the Primary via fast IPC (~0.5ms round-trip). On the configured interval, the Primary flushes everything to the database in a single batch transaction per table.
+All buffered state is held in `Odac.Ipc`. The active IPC driver determines the scaling model:
+
+| Driver | Scope | When to use |
+|---|---|---|
+| `memory` (default) | Single machine — cluster workers share state via Primary process | Single-server deployments |
+| `redis` | Multi-machine — all servers share state in Redis | Horizontal scaling behind a load balancer |
 
 ```
+// Memory driver (default)
 Worker 1 ─┐
-Worker 2 ─┼──→ Primary (buffer) ──→ DB (batch flush every 5s)
+Worker 2 ─┼──→ Primary (Ipc memory store) ──→ DB (batch flush every 5s)
 Worker N ─┘
+
+// Redis driver
+Server A ─┐
+Server B ─┼──→ Redis (Ipc state) ──→ DB (flush — distributed lock prevents duplicate writes)
+Server C ─┘
 ```
 
-**Crash Safety via LMDB Checkpoint**
+A **distributed lock** (`Ipc.lock`) guarantees that only one process or server flushes at a time, even across multiple machines.
 
-Every 30 seconds, pending buffer data is written to the local LMDB store. On a crash and restart, ODAC recovers this checkpoint and flushes it to the database before accepting any traffic — guaranteeing zero data loss.
+**Crash Safety via LMDB Checkpoint** *(memory driver only)*
+
+Every 30 seconds, pending buffer data is written to the local LMDB store. On a crash and restart, ODAC recovers this checkpoint and flushes it to the database before accepting any traffic. When using the Redis driver, Redis itself provides durability — LMDB checkpoints are skipped.
 
 ---
 
@@ -143,9 +156,31 @@ Add a `buffer` section to your `odac.json`:
 | Option | Default | Description |
 |---|---|---|
 | `flushInterval` | `5000` | How often (ms) to flush pending data to the database |
-| `checkpointInterval` | `30000` | How often (ms) to write a crash-recovery checkpoint to LMDB |
+| `checkpointInterval` | `30000` | How often (ms) to write a crash-recovery checkpoint to LMDB *(memory driver only)* |
 | `maxQueueSize` | `10000` | Auto-flush the insert queue when it reaches this many rows |
 | `primaryKey` | `"id"` | Default primary key column name for scalar `where()` values |
+
+---
+
+## Horizontal Scaling
+
+To share buffer state across multiple servers, switch the `ipc` driver to `redis`:
+
+```json
+{
+  "ipc": {
+    "driver": "redis",
+    "redis": "default"
+  }
+}
+```
+
+With the Redis driver active:
+- All `increment`, `update`, and `insert` operations go to Redis atomically.
+- Any server can trigger a `flush()` — the distributed lock ensures no server writes twice.
+- LMDB checkpoints are skipped (Redis persistence provides the durability guarantee).
+
+No code changes are required in your application. The `.buffer` API is identical regardless of driver.
 
 ---
 
@@ -167,12 +202,14 @@ await Odac.DB.analytics.events.buffer.insert({type: 'click', target: '#cta'})
 
 | Scenario | Behaviour |
 |---|---|
-| Worker crash | No data loss — all state is in the Primary process |
-| Primary crash | Pending data recovered from LMDB checkpoint on next startup |
-| DB flush error | Data is retained and retried on the next flush cycle |
+| Worker crash | No data loss — all state is in the Primary process (memory) or Redis |
+| Primary crash | Pending data recovered from LMDB checkpoint on next startup *(memory driver)* |
+| Server crash (Redis) | Pending data is durable in Redis — recovered on next flush cycle |
+| DB flush error | Data is retained in Ipc and retried on the next flush cycle |
 | Graceful shutdown | Automatic final flush before connections close |
 | `get()` after `increment()` | Returns base + buffered delta — always accurate, no extra DB read |
-| Concurrent workers | Primary process serializes all writes — no race conditions |
+| Concurrent workers | Primary serializes all writes (memory) or Redis atomic ops prevent races |
+| Multiple servers | Distributed lock guarantees exactly one flush at a time |
 
 ---
 
@@ -186,6 +223,8 @@ await Odac.DB.analytics.events.buffer.insert({type: 'click', target: '#cta'})
 - Any write that is not immediately safety-critical and occurs on every request
 
 **Do not use for:**
-- Financial transactions requiring immediate consistency (use direct DB with transactions)
 - Operations where the write must be visible to the *same* request that triggered it
 - Inserts that return generated IDs you need immediately (use direct `insert()`)
+
+> [!WARNING]
+> **Never use Write-Behind Cache for financial or safety-critical operations** — payment records, order confirmations, balance changes, inventory decrements, or any write where data loss or a delayed flush would have real-world consequences. The buffer does not guarantee that data reaches the database before a crash. Use direct database transactions for anything that matters immediately.

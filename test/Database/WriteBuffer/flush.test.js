@@ -30,6 +30,7 @@ beforeEach(async () => {
 
   Object.defineProperty(cluster, 'isPrimary', {value: true, configurable: true})
 
+  const Ipc = require('../../../src/Ipc')
   global.Odac = {
     Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
     Storage: {
@@ -37,8 +38,10 @@ beforeEach(async () => {
       put: jest.fn(),
       remove: jest.fn(),
       getRange: () => []
-    }
+    },
+    Ipc
   }
+  await Ipc.init()
 
   WriteBuffer = require('../../../src/Database/WriteBuffer')
   await WriteBuffer.init({default: db})
@@ -46,9 +49,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await WriteBuffer.close()
+  await Odac.Ipc.close()
   await db.destroy()
   delete global.Odac
-  delete global.__odac_wb_message_handler
 })
 
 describe('WriteBuffer - Counter Flush', () => {
@@ -75,12 +78,13 @@ describe('WriteBuffer - Counter Flush', () => {
     expect(row.likes).toBe(17)
   })
 
-  it('should clear counters after successful flush', async () => {
+  it('should clear counter index after successful flush', async () => {
     await WriteBuffer.increment('default', 'posts', 1, 'views', 5)
     await WriteBuffer.flush()
 
-    // Internal counters should be clear
-    expect(WriteBuffer._counters.size).toBe(0)
+    // Counter index should be empty after flush
+    const remaining = await Odac.Ipc.smembers('wb:idx:counters')
+    expect(remaining).toHaveLength(0)
   })
 
   it('should update base after flush so subsequent reads are correct', async () => {
@@ -158,8 +162,8 @@ describe('WriteBuffer - Queue Flush (Batch Insert)', () => {
     await WriteBuffer.insert('default', 'events', {type: 'pageview'})
     await WriteBuffer.flush()
 
-    const queue = WriteBuffer._queues.get('default:events')
-    expect(!queue || queue.length === 0).toBe(true)
+    const queue = await Odac.Ipc.lrange('wb:q:default:events', 0, -1)
+    expect(queue).toHaveLength(0)
   })
 
   it('should handle empty queues gracefully', async () => {

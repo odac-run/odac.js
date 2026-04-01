@@ -64,6 +64,178 @@ class Ipc extends EventEmitter {
     }
   }
 
+  // --- Atomic Counter Operations ---
+
+  /**
+   * Why: Atomically increment a numeric value. Essential for Write-Behind Cache counters
+   * where concurrent workers must not cause lost updates (get→modify→set race).
+   * Redis: INCRBYFLOAT. Memory: single-threaded Primary guarantees atomicity.
+   *
+   * @param {string} key
+   * @param {number} delta - Amount to add (can be negative)
+   * @returns {Promise<number>} New value after increment
+   */
+  async incrBy(key, delta) {
+    if (this.config.driver === 'redis') {
+      return Number(await this.redis.incrByFloat(key, delta))
+    }
+    return this._sendMemory('incrBy', {key, delta})
+  }
+
+  /**
+   * Why: Convenience wrapper. Flush logic needs to subtract flushed deltas atomically.
+   */
+  async decrBy(key, delta) {
+    return this.incrBy(key, -delta)
+  }
+
+  // --- Hash Operations ---
+
+  /**
+   * Why: Write-Behind Cache update coalescing stores pending column updates as hash fields.
+   * Merge semantics: existing fields are overwritten, new fields are added (last-write-wins).
+   * Redis: HSET key f1 v1 f2 v2. Memory: Object.assign into stored object.
+   *
+   * @param {string} key
+   * @param {object} obj - Field-value pairs to merge
+   * @returns {Promise<boolean>}
+   */
+  async hset(key, obj) {
+    if (this.config.driver === 'redis') {
+      const args = {}
+      for (const [field, value] of Object.entries(obj)) {
+        args[field] = JSON.stringify(value)
+      }
+      await this.redis.hSet(key, args)
+      return true
+    }
+    return this._sendMemory('hset', {key, obj})
+  }
+
+  /**
+   * Why: Flush reads all pending update fields for a row in one call.
+   *
+   * @param {string} key
+   * @returns {Promise<object|null>} All field-value pairs, or null if key doesn't exist
+   */
+  async hgetall(key) {
+    if (this.config.driver === 'redis') {
+      const raw = await this.redis.hGetAll(key)
+      if (!raw || Object.keys(raw).length === 0) return null
+      const result = {}
+      for (const [field, value] of Object.entries(raw)) {
+        result[field] = JSON.parse(value)
+      }
+      return result
+    }
+    return this._sendMemory('hgetall', {key})
+  }
+
+  // --- List Operations ---
+
+  /**
+   * Why: Write-Behind Cache batch insert queue. Workers push rows to a shared list;
+   * flush drains it to the database in a single INSERT.
+   * Redis: RPUSH. Memory: Array.push on Primary.
+   *
+   * @param {string} key
+   * @param {...*} items - Items to append
+   * @returns {Promise<number>} New list length
+   */
+  async rpush(key, ...items) {
+    if (this.config.driver === 'redis') {
+      const serialized = items.map(i => JSON.stringify(i))
+      return this.redis.rPush(key, serialized)
+    }
+    return this._sendMemory('rpush', {key, items})
+  }
+
+  /**
+   * Why: Flush reads queued rows before writing them to the database.
+   *
+   * @param {string} key
+   * @param {number} start - Start index (0-based, inclusive)
+   * @param {number} stop - End index (inclusive, -1 for last element)
+   * @returns {Promise<Array>} Elements in range
+   */
+  async lrange(key, start, stop) {
+    if (this.config.driver === 'redis') {
+      const raw = await this.redis.lRange(key, start, stop)
+      return raw.map(i => JSON.parse(i))
+    }
+    return this._sendMemory('lrange', {key, start, stop})
+  }
+
+  // --- Set Operations ---
+
+  /**
+   * Why: WriteBuffer maintains index sets (e.g., 'wb:idx:counters') to track which keys
+   * have pending data. Avoids expensive SCAN/KEYS pattern matching on flush.
+   *
+   * @param {string} key
+   * @param {...string} members
+   * @returns {Promise<number>} Number of members added
+   */
+  async sadd(key, ...members) {
+    if (this.config.driver === 'redis') {
+      return this.redis.sAdd(key, members)
+    }
+    return this._sendMemory('sadd', {key, members})
+  }
+
+  /**
+   * Why: Flush iterates all tracked keys in an index set to drain pending data.
+   *
+   * @param {string} key
+   * @returns {Promise<Array<string>>} All members
+   */
+  async smembers(key) {
+    if (this.config.driver === 'redis') {
+      return this.redis.sMembers(key)
+    }
+    return this._sendMemory('smembers', {key})
+  }
+
+  /**
+   * Why: After flushing a counter/update/queue key, remove it from the tracking index.
+   *
+   * @param {string} key
+   * @param {...string} members
+   * @returns {Promise<number>} Number of members removed
+   */
+  async srem(key, ...members) {
+    if (this.config.driver === 'redis') {
+      return this.redis.sRem(key, members)
+    }
+    return this._sendMemory('srem', {key, members})
+  }
+
+  // --- Distributed Lock ---
+
+  /**
+   * Why: Horizontal scaling requires exactly ONE server to run flush at a time.
+   * Redis: SET NX EX (atomic test-and-set with TTL). Memory: Primary-local boolean.
+   * TTL prevents deadlocks if the lock holder crashes mid-flush.
+   *
+   * @param {string} key
+   * @param {number} [ttl=10] - Lock time-to-live in seconds
+   * @returns {Promise<boolean>} true if lock acquired
+   */
+  async lock(key, ttl = 10) {
+    if (this.config.driver === 'redis') {
+      const result = await this.redis.set(key, '1', {NX: true, EX: ttl})
+      return result === 'OK'
+    }
+    return this._sendMemory('lock', {key, ttl})
+  }
+
+  /**
+   * Why: Release flush lock after completion so the next cycle can proceed.
+   */
+  async unlock(key) {
+    return this.del(key)
+  }
+
   async publish(channel, message) {
     if (this.config.driver === 'redis') {
       return this.redis.publish(channel, JSON.stringify(message))
@@ -219,32 +391,145 @@ class Ipc extends EventEmitter {
   }
 
   _handleDirectPrimaryCall(action, payload) {
-    // Basic implementation for Primary process using itself
-    if (action === 'set') {
-      const expireAt = payload.ttl > 0 ? Date.now() + payload.ttl * 1000 : Infinity
-      this._memoryStore.set(payload.key, {value: payload.value, expireAt})
-      return true
-    }
-    if (action === 'get') {
-      const data = this._memoryStore.get(payload.key)
-      if (!data) return null
-      if (data.expireAt !== Infinity && Date.now() > data.expireAt) {
-        this._memoryStore.delete(payload.key)
-        return null
+    return this._executePrimaryAction(action, payload)
+  }
+
+  /**
+   * Why: Single source of truth for all memory-driver operations.
+   * Both _handlePrimaryMessage (worker→primary) and _handleDirectPrimaryCall (primary self-call)
+   * funnel through this method, eliminating logic duplication.
+   */
+  _executePrimaryAction(action, msg) {
+    switch (action) {
+      case 'set': {
+        const expireAt = msg.ttl > 0 ? Date.now() + msg.ttl * 1000 : Infinity
+        this._memoryStore.set(msg.key, {value: msg.value, expireAt})
+        return true
       }
-      return data.value
-    }
-    if (action === 'del') return this._memoryStore.delete(payload.key)
-    if (action === 'publish') {
-      const workers = this._memorySubs.get(payload.channel)
-      if (workers) {
-        workers.forEach(wId => {
-          const w = cluster.workers[wId]
-          if (w) w.send({type: 'ipc:message', channel: payload.channel, message: payload.message})
-        })
+      case 'get': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data) return null
+        if (data.expireAt !== Infinity && Date.now() > data.expireAt) {
+          this._memoryStore.delete(msg.key)
+          return null
+        }
+        return data.value
+      }
+      case 'del':
+        return this._memoryStore.delete(msg.key)
+
+      // --- Atomic Counter ---
+      case 'incrBy': {
+        const data = this._memoryStore.get(msg.key) || {value: 0, expireAt: Infinity}
+        data.value = (typeof data.value === 'number' ? data.value : 0) + msg.delta
+        this._memoryStore.set(msg.key, data)
+        return data.value
+      }
+
+      // --- Hash ---
+      case 'hset': {
+        const data = this._memoryStore.get(msg.key) || {value: {}, expireAt: Infinity}
+        if (typeof data.value !== 'object' || data.value === null || Array.isArray(data.value)) {
+          data.value = {}
+        }
+        Object.assign(data.value, msg.obj)
+        this._memoryStore.set(msg.key, data)
+        return true
+      }
+      case 'hgetall': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data || typeof data.value !== 'object' || Array.isArray(data.value)) return null
+        return data.value
+      }
+
+      // --- List ---
+      case 'rpush': {
+        const data = this._memoryStore.get(msg.key) || {value: [], expireAt: Infinity}
+        if (!Array.isArray(data.value)) data.value = []
+        data.value.push(...msg.items)
+        this._memoryStore.set(msg.key, data)
+        return data.value.length
+      }
+      case 'lrange': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data || !Array.isArray(data.value)) return []
+        return msg.stop === -1 ? data.value.slice(msg.start) : data.value.slice(msg.start, msg.stop + 1)
+      }
+
+      // --- Set ---
+      case 'sadd': {
+        let data = this._memoryStore.get(msg.key)
+        if (!data) {
+          data = {value: [], expireAt: Infinity}
+          this._memoryStore.set(msg.key, data)
+        }
+        if (!Array.isArray(data.value)) data.value = []
+        let added = 0
+        for (const m of msg.members) {
+          if (!data.value.includes(m)) {
+            data.value.push(m)
+            added++
+          }
+        }
+        return added
+      }
+      case 'smembers': {
+        const data = this._memoryStore.get(msg.key)
+        return data && Array.isArray(data.value) ? data.value.slice() : []
+      }
+      case 'srem': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data || !Array.isArray(data.value)) return 0
+        let removed = 0
+        for (const m of msg.members) {
+          const idx = data.value.indexOf(m)
+          if (idx !== -1) {
+            data.value.splice(idx, 1)
+            removed++
+          }
+        }
+        return removed
+      }
+
+      // --- Lock ---
+      case 'lock': {
+        const existing = this._memoryStore.get(msg.key)
+        if (existing && existing.expireAt > Date.now()) return false
+        const expireAt = Date.now() + (msg.ttl || 10) * 1000
+        this._memoryStore.set(msg.key, {value: '1', expireAt})
+        return true
+      }
+
+      // --- Pub/Sub ---
+      case 'publish': {
+        const workers = this._memorySubs.get(msg.channel)
+        if (workers) {
+          workers.forEach(wId => {
+            const w = require('node:cluster').workers[wId]
+            if (w) w.send({type: 'ipc:message', channel: msg.channel, message: msg.message})
+          })
+        }
+        return undefined
+      }
+      case 'subscribe': {
+        if (!this._memorySubs.has(msg.channel)) {
+          this._memorySubs.set(msg.channel, new Set())
+        }
+        // msg.workerId is set by _handlePrimaryMessage for worker context
+        if (msg.workerId) this._memorySubs.get(msg.channel).add(msg.workerId)
+        return undefined
+      }
+      case 'unsubscribe': {
+        if (this._memorySubs.has(msg.channel)) {
+          this._memorySubs.get(msg.channel).delete(msg.workerId)
+          if (this._memorySubs.get(msg.channel).size === 0) {
+            this._memorySubs.delete(msg.channel)
+          }
+        }
+        return undefined
       }
     }
-    // subscribe on primary not deeply implemented to avoid complexity, usually workers listen.
+    return null
   }
 
   _startGarbageCollector() {
@@ -308,66 +593,17 @@ class Ipc extends EventEmitter {
   }
 
   _handlePrimaryMessage(worker, msg) {
-    const {type, id, key, value, ttl, channel, message} = msg
-    const action = type.replace('ipc:', '')
+    const action = msg.type.replace('ipc:', '')
 
-    let response = null
-
-    switch (action) {
-      case 'set': {
-        const expireAt = ttl > 0 ? Date.now() + ttl * 1000 : Infinity
-        this._memoryStore.set(key, {value, expireAt})
-        response = true
-        break
-      }
-      case 'get': {
-        const data = this._memoryStore.get(key)
-        if (data) {
-          if (data.expireAt !== Infinity && Date.now() > data.expireAt) {
-            this._memoryStore.delete(key)
-            response = null
-          } else {
-            response = data.value
-          }
-        } else {
-          response = null
-        }
-        break
-      }
-      case 'del':
-        response = this._memoryStore.delete(key)
-        break
-      case 'subscribe':
-        if (!this._memorySubs.has(channel)) {
-          this._memorySubs.set(channel, new Set())
-        }
-        this._memorySubs.get(channel).add(worker.id)
-        break
-      case 'unsubscribe':
-        if (this._memorySubs.has(channel)) {
-          this._memorySubs.get(channel).delete(worker.id)
-          if (this._memorySubs.get(channel).size === 0) {
-            this._memorySubs.delete(channel)
-          }
-        }
-        break
-      case 'publish': {
-        // Relay to all subscribed workers
-        const workers = this._memorySubs.get(channel)
-        if (workers) {
-          workers.forEach(wId => {
-            // Don't echo back to sender if desired? Usually pub/sub receives own too if subbed.
-            // Redis publishes to all subscribers.
-            const w = cluster.workers[wId]
-            if (w) w.send({type: 'ipc:message', channel, message})
-          })
-        }
-        break
-      }
+    // Inject worker context for subscribe/unsubscribe
+    if (action === 'subscribe' || action === 'unsubscribe') {
+      msg.workerId = worker.id
     }
 
-    if (id) {
-      worker.send({type: 'ipc:response', id, data: response})
+    const response = this._executePrimaryAction(action, msg)
+
+    if (msg.id) {
+      worker.send({type: 'ipc:response', id: msg.id, data: response})
     }
   }
 }

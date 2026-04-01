@@ -3,9 +3,9 @@
 const cluster = require('node:cluster')
 
 /**
- * Tests WriteBuffer update operations: last-write-wins coalescing.
- * Why: Validates that repeated SET operations (e.g., active_date) merge into
- * a single UPDATE per row at flush time, reducing DB writes dramatically.
+ * Tests WriteBuffer.update() — last-write-wins coalescing.
+ * Why: Validates that repeated updates to the same row collapse into one UPDATE query,
+ * and that different rows/tables are isolated correctly.
  */
 
 let knexLib, db, WriteBuffer
@@ -16,21 +16,21 @@ beforeEach(async () => {
   knexLib = require('knex')
   db = knexLib({client: 'sqlite3', connection: {filename: ':memory:'}, useNullAsDefault: true})
 
-  await db.schema.createTable('users', table => {
+  await db.schema.createTable('posts', table => {
     table.integer('id').primary()
-    table.string('name', 100)
-    table.string('active_date', 30)
-    table.string('last_ip', 45)
-    table.integer('login_count').defaultTo(0)
+    table.integer('views').defaultTo(0)
+    table.string('title', 255)
+    table.string('slug', 255)
   })
 
-  await db('users').insert([
-    {id: 1, name: 'Alice', active_date: '2026-03-01', last_ip: '10.0.0.1', login_count: 5},
-    {id: 2, name: 'Bob', active_date: '2026-03-15', last_ip: '10.0.0.2', login_count: 12}
+  await db('posts').insert([
+    {id: 1, views: 100, title: 'First Post', slug: 'first-post'},
+    {id: 2, views: 200, title: 'Second Post', slug: 'second-post'}
   ])
 
   Object.defineProperty(cluster, 'isPrimary', {value: true, configurable: true})
 
+  const Ipc = require('../../../src/Ipc')
   global.Odac = {
     Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
     Storage: {
@@ -38,8 +38,10 @@ beforeEach(async () => {
       put: jest.fn(),
       remove: jest.fn(),
       getRange: () => []
-    }
+    },
+    Ipc
   }
+  await Ipc.init()
 
   WriteBuffer = require('../../../src/Database/WriteBuffer')
   await WriteBuffer.init({default: db})
@@ -47,150 +49,130 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await WriteBuffer.close()
+  await Odac.Ipc.close()
   await db.destroy()
   delete global.Odac
-  delete global.__odac_wb_message_handler
 })
 
-describe('WriteBuffer - Update: buffer.update()', () => {
-  it('should buffer and flush a single column update', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
+describe('WriteBuffer - update()', () => {
+  it('should buffer and flush a single update', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Updated Title'})
     await WriteBuffer.flush()
 
-    const row = await db('users').where({id: 1}).first()
-    expect(row.active_date).toBe('2026-04-01')
+    const row = await db('posts').where({id: 1}).first()
+    expect(row.title).toBe('Updated Title')
+    expect(row.slug).toBe('first-post') // Untouched
   })
 
-  it('should merge multiple updates to the same row (last-write-wins)', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-02'})
-
+  it('should merge multiple updates (last-write-wins)', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'First Update'})
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Second Update'})
     await WriteBuffer.flush()
 
-    const row = await db('users').where({id: 1}).first()
-    expect(row.active_date).toBe('2026-04-02') // Last write wins
+    const row = await db('posts').where({id: 1}).first()
+    expect(row.title).toBe('Second Update')
   })
 
-  it('should merge different columns into a single UPDATE', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
-    await WriteBuffer.update('default', 'users', 1, {last_ip: '192.168.1.1'})
-
+  it('should merge different columns from multiple updates', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'New Title'})
+    await WriteBuffer.update('default', 'posts', 1, {slug: 'new-slug'})
     await WriteBuffer.flush()
 
-    const row = await db('users').where({id: 1}).first()
-    expect(row.active_date).toBe('2026-04-01')
-    expect(row.last_ip).toBe('192.168.1.1')
-    // Other columns untouched
-    expect(row.name).toBe('Alice')
-    expect(row.login_count).toBe(5)
+    const row = await db('posts').where({id: 1}).first()
+    expect(row.title).toBe('New Title')
+    expect(row.slug).toBe('new-slug')
   })
 
-  it('should handle updates to different rows independently', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
-    await WriteBuffer.update('default', 'users', 2, {active_date: '2026-04-02'})
-
+  it('should handle different rows independently', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Row 1'})
+    await WriteBuffer.update('default', 'posts', 2, {title: 'Row 2'})
     await WriteBuffer.flush()
 
-    const row1 = await db('users').where({id: 1}).first()
-    const row2 = await db('users').where({id: 2}).first()
-    expect(row1.active_date).toBe('2026-04-01')
-    expect(row2.active_date).toBe('2026-04-02')
+    const row1 = await db('posts').where({id: 1}).first()
+    const row2 = await db('posts').where({id: 2}).first()
+    expect(row1.title).toBe('Row 1')
+    expect(row2.title).toBe('Row 2')
   })
 
-  it('should handle composite where keys', async () => {
+  it('should handle composite where key', async () => {
     await db.schema.createTable('user_prefs', table => {
-      table.integer('user_id')
       table.string('pref_key', 50)
-      table.string('pref_value', 255)
-      table.primary(['user_id', 'pref_key'])
+      table.integer('user_id')
+      table.string('value', 255)
+      table.primary(['pref_key', 'user_id'])
     })
-    await db('user_prefs').insert({user_id: 1, pref_key: 'theme', pref_value: 'light'})
+    await db('user_prefs').insert({pref_key: 'theme', user_id: 1, value: 'light'})
 
-    await WriteBuffer.update('default', 'user_prefs', {user_id: 1, pref_key: 'theme'}, {pref_value: 'dark'})
+    await WriteBuffer.update('default', 'user_prefs', {pref_key: 'theme', user_id: 1}, {value: 'dark'})
     await WriteBuffer.flush()
 
-    const row = await db('user_prefs').where({user_id: 1, pref_key: 'theme'}).first()
-    expect(row.pref_value).toBe('dark')
+    const row = await db('user_prefs').where({pref_key: 'theme', user_id: 1}).first()
+    expect(row.value).toBe('dark')
   })
 
-  it('should clear update buffer after successful flush', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
+  it('should return true when buffered', async () => {
+    const result = await WriteBuffer.update('default', 'posts', 1, {title: 'Test'})
+    expect(result).toBe(true)
+  })
+
+  it('should clear update index after successful flush', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Test'})
     await WriteBuffer.flush()
 
-    expect(WriteBuffer._updates.size).toBe(0)
+    const remaining = await Odac.Ipc.smembers('wb:idx:updates')
+    expect(remaining).toHaveLength(0)
   })
 
-  it('should not affect other rows or tables during flush', async () => {
-    await WriteBuffer.update('default', 'users', 1, {last_ip: '172.16.0.1'})
+  it('should combine increment and update on same row during flush', async () => {
+    await WriteBuffer.increment('default', 'posts', 1, 'views', 5)
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Combo Test'})
     await WriteBuffer.flush()
 
-    const row2 = await db('users').where({id: 2}).first()
-    expect(row2.last_ip).toBe('10.0.0.2') // Untouched
+    const row = await db('posts').where({id: 1}).first()
+    expect(row.views).toBe(105)
+    expect(row.title).toBe('Combo Test')
   })
 
-  it('should scope flush to specific table', async () => {
-    await db.schema.createTable('sessions', table => {
+  it('should handle different tables independently', async () => {
+    await db.schema.createTable('comments', table => {
       table.integer('id').primary()
-      table.string('token', 100)
+      table.string('body', 255)
     })
-    await db('sessions').insert({id: 1, token: 'old'})
+    await db('comments').insert({id: 1, body: 'Original'})
 
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
-    await WriteBuffer.update('default', 'sessions', 1, {token: 'new'})
-
-    // Flush only users
-    await WriteBuffer.flush('default', 'users')
-
-    const user = await db('users').where({id: 1}).first()
-    const session = await db('sessions').where({id: 1}).first()
-    expect(user.active_date).toBe('2026-04-01') // Flushed
-    expect(session.token).toBe('old') // Not flushed
-  })
-})
-
-describe('WriteBuffer - Update: coalescing with counters', () => {
-  it('should flush both updates and counters in the same cycle', async () => {
-    await WriteBuffer.update('default', 'users', 1, {active_date: '2026-04-01'})
-    await WriteBuffer.increment('default', 'users', 1, 'login_count', 3)
-
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Post Updated'})
+    await WriteBuffer.update('default', 'comments', 1, {body: 'Comment Updated'})
     await WriteBuffer.flush()
 
-    const row = await db('users').where({id: 1}).first()
-    expect(row.active_date).toBe('2026-04-01')
-    expect(row.login_count).toBe(8) // 5 + 3
+    const post = await db('posts').where({id: 1}).first()
+    const comment = await db('comments').where({id: 1}).first()
+    expect(post.title).toBe('Post Updated')
+    expect(comment.body).toBe('Comment Updated')
   })
-})
 
-describe('WriteBuffer - Update: checkpoint recovery', () => {
-  it('should recover updates from LMDB checkpoint', async () => {
-    await WriteBuffer.close()
-    jest.resetModules()
+  it('should scope flush to specific table when provided', async () => {
+    await db.schema.createTable('comments', table => {
+      table.integer('id').primary()
+      table.string('body', 255)
+    })
+    await db('comments').insert({id: 1, body: 'Original'})
 
-    const storageData = new Map()
-    storageData.set('wb:u:default:users:1', {active_date: '2026-04-01', last_ip: '10.0.0.99'})
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Post Updated'})
+    await WriteBuffer.update('default', 'comments', 1, {body: 'Comment Updated'})
 
-    global.Odac = {
-      Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
-      Storage: {
-        isReady: () => true,
-        put: (k, v) => storageData.set(k, v),
-        remove: k => storageData.delete(k),
-        getRange: ({start, end}) => {
-          const results = []
-          for (const [key, value] of storageData) {
-            if (key >= start && key < end) results.push({key, value})
-          }
-          return results
-        }
-      }
-    }
+    // Flush only posts
+    await WriteBuffer.flush('default', 'posts')
 
-    WriteBuffer = require('../../../src/Database/WriteBuffer')
-    await WriteBuffer.init({default: db})
-    await WriteBuffer.flush()
+    const post = await db('posts').where({id: 1}).first()
+    const comment = await db('comments').where({id: 1}).first()
+    expect(post.title).toBe('Post Updated')
+    expect(comment.body).toBe('Original') // Not flushed
+  })
 
-    const row = await db('users').where({id: 1}).first()
-    expect(row.active_date).toBe('2026-04-01')
-    expect(row.last_ip).toBe('10.0.0.99')
+  it('should not modify DB before flush is called', async () => {
+    await WriteBuffer.update('default', 'posts', 1, {title: 'Buffered Only'})
+
+    const row = await db('posts').where({id: 1}).first()
+    expect(row.title).toBe('First Post') // Still original
   })
 })
