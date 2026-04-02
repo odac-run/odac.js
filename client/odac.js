@@ -679,7 +679,7 @@ if (typeof window !== 'undefined') {
     }
 
     get(url, callback) {
-      url = url + '?_token=' + this.token()
+      url = url + (url.includes('?') ? '&' : '?') + '_token=' + this.token()
       this.#ajax({url: url, success: callback})
     }
 
