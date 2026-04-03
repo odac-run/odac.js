@@ -1,30 +1,32 @@
 ---
 name: backend-database-skill
-description: High-performance ODAC database querying patterns using the built-in query builder with secure and efficient data access.
+description: High-performance ODAC database querying patterns including the Write-Behind Cache for counters, last-write-wins updates, and buffered batch inserts.
 metadata:
-  tags: backend, database, query-builder, sql, indexing, performance, security
+  tags: backend, database, query-builder, sql, write-behind-cache, performance, security
 ---
 
 # Backend Database Skill
 
-High-performance database operations using the ODAC Query Builder.
+High-performance database operations using the ODAC Query Builder and Write-Behind Cache.
 
 ## Principles
 1.  **Directness**: Avoid ORM overhead. Use fluent Query Builder.
 2.  **Safety**: Always use parameterized queries (built-in).
 3.  **Efficiency**: Index foreign keys. No `SELECT *`.
+4.  **Write Coalescing**: Use `buffer` for high-frequency writes to avoid DB saturation.
 
-## Patterns
+## Query Builder Patterns
 ```javascript
-const user = await Odac.DB.table('users')
+const user = await Odac.DB.users
   .select('id', 'name', 'email')
   .where('status', 'active')
-  .first();
+  .first()
 
-await Odac.DB.table('posts').insert({
-  title: 'Hello',
-  user_id: 1
-});
+await Odac.DB.posts.insert({title: 'Hello', user_id: 1})
+
+await Odac.DB.users.where('id', 1).update({last_login: new Date()})
+
+const count = await Odac.DB.users.where('active', true).count() // → Number
 ```
 
 ## ID Strategy (NanoID)
@@ -43,7 +45,96 @@ module.exports = {
 }
 
 // ID is generated automatically
-await Odac.DB.table('posts').insert({title: 'Hello'});
+await Odac.DB.posts.insert({title: 'Hello'})
+```
+
+## Write-Behind Cache (`buffer`)
+
+The `buffer` API routes all writes through `Odac.Ipc`. The active IPC driver determines the scaling model — no code changes required when switching drivers.
+
+- **`memory` driver** (default): Primary process holds all state; workers communicate via cluster IPC.
+- **`redis` driver**: State lives in Redis — works transparently across multiple servers.
+
+### When to suggest `buffer`
+
+Propose the Write-Behind Cache when the user's write operation meets **all three** of these criteria:
+1. **High frequency** — the same column or row is written on many requests (counters, timestamps, last-seen values).
+2. **Eventual consistency is acceptable** — a few seconds' delay before the value reaches the DB is fine.
+3. **Not safety-critical** — losing the buffered value in a crash has no financial, legal, or user-facing consequence.
+
+**Typical candidates:**
+- Page / post / download view counters (`increment`)
+- Like, upvote, share counts (`increment`)
+- User last-active timestamp, last IP (`update`)
+- Analytics events, audit logs, activity streams (`insert`)
+- Score accumulators, play counts, rating tallies (`increment`)
+
+**Do NOT suggest `buffer` for:**
+- Payments, charges, refunds, or any monetary operation
+- Order creation, inventory decrements
+- Anything the same request needs to read back immediately
+- Inserts that return a generated ID the caller uses
+
+When in doubt, use a direct DB call.
+
+**Three operation types:**
+
+### 1. Counter Increment (Write Coalescing)
+Accumulates deltas — multiple increments merge into one `UPDATE col = col + delta`.
+`get()` returns `base + pending delta` (always current, no DB read needed).
+```javascript
+// Increment — returns current total (DB base + buffered delta)
+const views = await Odac.DB.posts.buffer.where(postId).increment('views')
+const likes = await Odac.DB.posts.buffer.where(postId).increment('likes', 5)
+
+// Read buffered counter (no extra DB round-trip)
+const current = await Odac.DB.posts.buffer.where(postId).get('views')
+
+// Composite key
+await Odac.DB.post_stats.buffer.where({post_id: 1, date: '2026-04-01'}).increment('views')
+```
+
+### 2. Last-Write-Wins Update (Field Coalescing)
+Multiple updates to the same row merge column maps — 50 requests = 1 `UPDATE` at flush.
+```javascript
+// Columns are merged per row: first update + second update = single UPDATE at flush
+await Odac.DB.users.buffer.where(userId).update({active_date: new Date()})
+await Odac.DB.users.buffer.where(userId).update({last_ip: req.ip})
+// → UPDATE users SET active_date = ?, last_ip = ? WHERE id = ?  (one query)
+```
+
+### 3. Batch Insert (Queue)
+Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueueSize` is reached.
+```javascript
+await Odac.DB.activity_log.buffer.insert({user_id: userId, action: 'page_view', meta: url})
+```
+
+### Manual Flush
+```javascript
+await Odac.DB.posts.buffer.flush()   // flush this table only
+await Odac.DB.buffer.flush()         // flush everything
+```
+
+## Write-Behind Cache — Key Rules
+1.  **Ipc-Backed**: All buffer state goes through `Odac.Ipc`. Memory driver = Primary holds state; Redis driver = Redis holds state.
+2.  **Horizontally Scalable**: With Redis driver, multiple servers share the same buffer state. Distributed lock (`Ipc.lock`) prevents duplicate flushes.
+3.  **Crash-Safe (memory)**: LMDB checkpoint written every 30s. On restart, pending data is recovered and flushed before serving traffic.
+4.  **Crash-Safe (redis)**: Redis persistence provides durability. LMDB checkpoints are skipped.
+5.  **get() is authoritative**: Always returns `DB base + buffered delta`. Never stale.
+6.  **Flush on shutdown**: `Database.close()` triggers a final flush automatically — no data loss on graceful shutdown.
+7.  **Error resilience**: If a flush fails, data is retained in Ipc for the next cycle. Never lost silently.
+8.  **NEVER use buffer for safety-critical writes**: Payment records, order confirmations, balance changes, inventory decrements — anything where data loss has real-world consequences MUST use direct DB transactions. The buffer does not guarantee delivery before a crash.
+
+## Configuration (`odac.json`)
+```json
+{
+  "buffer": {
+    "flushInterval": 5000,
+    "checkpointInterval": 30000,
+    "maxQueueSize": 10000,
+    "primaryKey": "id"
+  }
+}
 ```
 
 ## Migration Awareness
@@ -53,4 +144,4 @@ await Odac.DB.table('posts').insert({title: 'Hello'});
 4.  **Indexes**: Keep index definitions in schema so add/drop is managed automatically.
 5.  **Data Changes**: Use `migration/*.js` only for one-time data transformation.
 
-See: [migrations.md](./migrations.md)
+See: [migrations.md](./migrations.md) | [write-behind-cache user docs](../../../backend/08-database/05-write-behind-cache.md)

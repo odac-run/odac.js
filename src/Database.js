@@ -1,6 +1,7 @@
 'use strict'
 const {buildConnections} = require('./Database/ConnectionFactory')
 const nanoid = require('./Database/nanoid')
+const writeBuffer = require('./Database/WriteBuffer')
 
 class DatabaseManager {
   constructor() {
@@ -31,6 +32,9 @@ class DatabaseManager {
     // Cache nanoid column metadata from schema files for insert-time auto-generation.
     // Runs on ALL processes (primary + workers) since every process may insert data.
     this._loadNanoidMeta()
+
+    // Initialize Write-Behind Cache (Primary holds state, Workers communicate via IPC)
+    await writeBuffer.init(this.connections)
   }
 
   /**
@@ -63,9 +67,17 @@ class DatabaseManager {
 
   /**
    * Gracefully destroys all active database connections.
+   * Flushes WriteBuffer before closing to prevent data loss.
    * Called during shutdown to release connection pools and prevent resource leaks.
    */
   async close() {
+    // Flush buffered writes before destroying connections
+    try {
+      await writeBuffer.close()
+    } catch (err) {
+      console.error('\x1b[31m[Database]\x1b[0m WriteBuffer close error:', err.message)
+    }
+
     const entries = Object.entries(this.connections)
     if (entries.length === 0) return
 
@@ -174,6 +186,19 @@ const tableProxyHandler = {
 
     // Create the Query Builder
     const qb = knexInstance(prop)
+    const connectionKey = knexInstance._odacConnectionKey || 'default'
+
+    // Write-Behind Cache: Odac.DB.posts.buffer.where(id).update({...}) / .increment('col') / .get('col')
+    //                     Odac.DB.posts.buffer.insert(row) / .flush()
+    qb.buffer = {
+      where: where => ({
+        update: data => writeBuffer.update(connectionKey, prop, where, data),
+        increment: (column, delta = 1) => writeBuffer.increment(connectionKey, prop, where, column, delta),
+        get: column => writeBuffer.get(connectionKey, prop, where, column)
+      }),
+      insert: row => writeBuffer.insert(connectionKey, prop, row),
+      flush: () => writeBuffer.flush(connectionKey, prop)
+    }
 
     // Odac DX Improvement: Wrap count() to return a clean number
     const originalCount = qb.count
@@ -184,7 +209,6 @@ const tableProxyHandler = {
 
     // Odac DX Improvement: Auto-generate NanoID for columns defined as type 'nanoid' in schema.
     // Why: Zero-config ID generation — no manual Odac.DB.nanoid() calls needed.
-    const connectionKey = knexInstance._odacConnectionKey || 'default'
     const nanoidCols = manager._nanoidColumns[connectionKey]?.[prop]
     if (nanoidCols) {
       const originalInsert = qb.insert
@@ -256,6 +280,13 @@ const rootProxy = new Proxy(manager, {
     if (prop === 'connections') return target.connections
     if (prop === '_nanoidColumns') return target._nanoidColumns
     if (prop === '_loadNanoidMeta') return target._loadNanoidMeta.bind(target)
+
+    // Global WriteBuffer: Odac.DB.buffer.flush()
+    if (prop === 'buffer') {
+      return {
+        flush: (connection, table) => writeBuffer.flush(connection, table)
+      }
+    }
 
     // Access to specific database connection: Odac.DB.analytics
     if (target.connections[prop]) {

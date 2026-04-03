@@ -45,12 +45,14 @@ class OdacStorage {
 
   put(key, value) {
     if (!this.ready) return false
-    return this.db.put(key, value)
+    this.db.putSync(key, value)
+    return true
   }
 
   remove(key) {
     if (!this.ready) return false
-    return this.db.remove(key)
+    this.db.removeSync(key)
+    return true
   }
 
   // --- Range Operations ---

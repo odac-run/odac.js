@@ -24,7 +24,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `backend/config.md`: Configuration management and environment variables.
 - `backend/controllers.md`: Request handling and Class-Based Controllers.
 - `backend/cron.md`: Scheduled background tasks and automation.
-- `backend/database.md`: High-performance query builder usage.
+- `backend/database.md`: High-performance query builder usage, Write-Behind Cache (buffered counters, last-write-wins updates, batch inserts).
 - `backend/forms.md`: Form processing and validation logic.
 - `backend/ipc.md`: Inter-Process Communication and state sharing.
 - `backend/mail.md`: Transactional email sending.
