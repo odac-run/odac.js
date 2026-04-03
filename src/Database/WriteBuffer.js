@@ -133,7 +133,7 @@ class WriteBuffer {
 
     // Auto-flush when queue exceeds threshold
     if (length >= this._config.maxQueueSize) {
-      this._flushQueues(connection, table)
+      void this._flushQueues(connection, table).catch(() => {})
     }
 
     return true
@@ -294,18 +294,18 @@ class WriteBuffer {
       const knex = this._connections[connection]
       if (!knex) continue
 
-      // Atomically read all rows and clear the list
-      const rows = await Odac.Ipc.lrange(`wb:q:${queueKey}`, 0, -1)
+      // Atomic drain — reads all rows and clears the list in one step
+      const rows = await Odac.Ipc.lrangeAndDel(`wb:q:${queueKey}`)
       if (rows.length === 0) continue
 
-      // Clear immediately — new inserts arriving during flush go to a fresh list
-      await Odac.Ipc.del(`wb:q:${queueKey}`)
-
       try {
-        for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
-          const chunk = rows.slice(i, i + this._config.insertBatchSize)
-          await knex(table).insert(chunk)
-        }
+        // Wrap all chunks in a single transaction to prevent partial-insert duplicates
+        await knex.transaction(async trx => {
+          for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
+            const chunk = rows.slice(i, i + this._config.insertBatchSize)
+            await trx(table).insert(chunk)
+          }
+        })
 
         // Clean up index after successful insert
         await Odac.Ipc.srem('wb:idx:queues', queueKey)

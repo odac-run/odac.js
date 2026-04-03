@@ -166,6 +166,25 @@ class Ipc extends EventEmitter {
     return this._sendMemory('lrange', {key, start, stop})
   }
 
+  /**
+   * Why: Atomic read-and-clear for queue flush. Prevents data loss caused by
+   * non-atomic lrange() + del() where new rpush() arrivals between the two
+   * calls would be silently deleted. Redis: MULTI/EXEC pipeline.
+   * Memory: single-threaded Primary guarantees atomicity.
+   *
+   * @param {string} key
+   * @returns {Promise<Array>} All elements that were in the list
+   */
+  async lrangeAndDel(key) {
+    if (this.config.driver === 'redis') {
+      const results = await this.redis.multi().lRange(key, 0, -1).del(key).exec()
+      const raw = results[0]
+      if (!raw || !Array.isArray(raw)) return []
+      return raw.map(i => JSON.parse(i))
+    }
+    return this._sendMemory('lrangeAndDel', {key})
+  }
+
   // --- Set Operations ---
 
   /**
@@ -439,7 +458,7 @@ class Ipc extends EventEmitter {
       case 'hgetall': {
         const data = this._memoryStore.get(msg.key)
         if (!data || typeof data.value !== 'object' || Array.isArray(data.value)) return null
-        return data.value
+        return {...data.value}
       }
 
       // --- List ---
@@ -454,6 +473,13 @@ class Ipc extends EventEmitter {
         const data = this._memoryStore.get(msg.key)
         if (!data || !Array.isArray(data.value)) return []
         return msg.stop === -1 ? data.value.slice(msg.start) : data.value.slice(msg.start, msg.stop + 1)
+      }
+      case 'lrangeAndDel': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data || !Array.isArray(data.value)) return []
+        const items = data.value
+        this._memoryStore.delete(msg.key)
+        return items
       }
 
       // --- Set ---
