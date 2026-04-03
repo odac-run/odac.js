@@ -1,3 +1,20 @@
+### ✨ What's New
+
+- **database:** add Write-Behind Cache with counter, update, and batch insert buffering
+- **ipc,database:** extend Ipc with atomic ops and delegate WriteBuffer state to Ipc layer
+
+### 🛠️ Fixes & Improvements
+
+- atomic queue drain, transaction-safe flush, hgetall clone & unhandled rejection
+- **odac:** ensure proper token query parameter handling in get method
+- **storage:** ensure synchronous operations for put and remove methods
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ⚙️ Engine Tuning
 
 - **test:** remove unused fsPromises and standardize async I/O in View tests
