@@ -200,11 +200,24 @@ odac.form({
 ### Disable Specific Messages
 
 ```javascript
+// Only show error messages, suppress success messages
 odac.form({
   form: '#my-form',
-  messages: ['error']  // Only show errors, not success
+  messages: ['error']
 }, function(data) {
-  // Custom success handling
+  if (data.result.success) {
+    // Custom success handling
+  }
+})
+
+// Only show success messages, suppress error messages
+odac.form({
+  form: '#my-form',
+  messages: ['success']
+}, function(data) {
+  if (!data.result.success) {
+    // Custom error handling
+  }
 })
 ```
 
