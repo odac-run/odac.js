@@ -4,6 +4,7 @@ const TOKEN_ROTATION_GRACE_PERIOD_MS = 60 * 1000
 class Auth {
   #request = null
   #table = null
+  #token = null
   #user = null
   static #migrationCache = new Set()
 
@@ -139,6 +140,8 @@ class Auth {
 
       this.#user = await Odac.DB[this.#table].where(primaryKey, sql_token[0].user).first()
       if (!this.#user) return false
+
+      this.#token = sql_token[0]
 
       let triggerRotation = false
       let isRecoveryRotation = false
@@ -434,6 +437,7 @@ class Auth {
     this.#request.cookie('odac_x', '', {'max-age': -1})
     this.#request.cookie('odac_y', '', {'max-age': -1})
 
+    this.#token = null
     this.#user = null
     return true
   }
@@ -711,6 +715,19 @@ class Auth {
 
       t.timestamps(true, true) // created_at, updated_at
     })
+  }
+
+  /**
+   * Retrieves the active auth token record or a specific column from it.
+   * Why: To provide access to the current session's token metadata (e.g., auth ID, IP, date).
+   *
+   * @param {string|null} [col=null] - The column to retrieve, or null for the full token object.
+   * @returns {object|string|number|boolean|false} The token object, column value, or false if no active session.
+   */
+  token(col = null) {
+    if (!this.#token) return false
+    if (col === null) return this.#token
+    return this.#token[col]
   }
 
   /**

@@ -19,21 +19,27 @@ ODAC provides built-in drivers for session handling (Memory/Redis) and multiple 
 4.  **Magic Links**: Use `Odac.Auth.magic(email)` for passwordless flows.
 5.  **Token Rotation**: Enterprise-grade rotation is enabled by default. It uses a 60s grace period to prevent race conditions in SPAs.
 6.  **Persistence**: Cookies use the configured `maxAge` to persist beyond browser closure.
+7.  **Token Accessor**: Use `Odac.Auth.token()` to access the active auth session record (e.g., auth ID, IP, timestamps). Returns `false` if no active session.
+
 ## Reference Patterns
 
 ### 1. Standard Login & Check
 ```javascript
 // Check if user is logged in
-if (Odac.Auth.check()) {
-  const user = Odac.Auth.user();
-  const userId = Odac.Auth.id();
+if (await Odac.Auth.check()) {
+  const user = Odac.Auth.user()           // Full user object
+  const userId = Odac.Auth.user('id')     // Specific user field
+
+  const authRecord = Odac.Auth.token()    // Full auth token record
+  const authId = Odac.Auth.token('id')    // Auth session ID from token table
+  const authIp = Odac.Auth.token('ip')    // IP address of the session
 }
 
-// Log in a user manually
-await Odac.Auth.login(userId);
+// Log in a user
+await Odac.Auth.login({ email, password })
 
 // Log out
-await Odac.Auth.logout();
+await Odac.Auth.logout()
 ```
 
 ### 2. Magic Links (Passwordless)

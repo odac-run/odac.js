@@ -255,7 +255,7 @@
       "title": "Authentication & Security",
       "children": [
         {
-          "file": "01-user-logins-with-authjs.md",
+          "file": "01-authentication-basics.md",
           "title": "User Authentication"
         },
         {
