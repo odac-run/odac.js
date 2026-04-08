@@ -14,10 +14,26 @@ const OPCODE = {
   PONG: 0xa
 }
 
+/**
+ * RFC 6455 connection lifecycle states.
+ * Exposed as static constants on WebSocketClient for consumer-side checks.
+ */
+const READY_STATE = {
+  CONNECTING: 0,
+  OPEN: 1,
+  CLOSING: 2,
+  CLOSED: 3
+}
+
 class WebSocketClient {
+  static CONNECTING = READY_STATE.CONNECTING
+  static OPEN = READY_STATE.OPEN
+  static CLOSING = READY_STATE.CLOSING
+  static CLOSED = READY_STATE.CLOSED
+
   #socket
   #handlers = {}
-  #closed = false
+  #readyState = READY_STATE.CONNECTING
   #server
   #id
   #rooms = new Set()
@@ -26,6 +42,7 @@ class WebSocketClient {
   #rateLimitWindow
   #messageCount = 0
   #rateLimitTimer
+  #fragments = null
   data = {}
 
   constructor(socket, server, id, options = {}) {
@@ -47,8 +64,18 @@ class WebSocketClient {
     this.#setupListeners()
   }
 
+  /**
+   * Transitions the client from CONNECTING to OPEN and resumes the underlying socket.
+   * Must be called after the handler is attached to begin receiving frames.
+   */
   resume() {
+    this.#readyState = READY_STATE.OPEN
     this.#socket.resume()
+  }
+
+  /** @returns {number} Current RFC 6455 ready state (0–3). */
+  get readyState() {
+    return this.#readyState
   }
 
   get id() {
@@ -154,10 +181,36 @@ class WebSocketClient {
 
     switch (frame.opcode) {
       case OPCODE.TEXT:
-        this.#handleMessage(frame.payload.toString('utf8'))
-        break
       case OPCODE.BINARY:
-        this.#handleMessage(frame.payload)
+        if (frame.fin) {
+          if (this.#fragments) {
+            // Final fragment of a fragmented sequence
+            this.#fragments.buffers.push(frame.payload)
+            const merged = Buffer.concat(this.#fragments.buffers)
+            const opcode = this.#fragments.opcode
+            this.#fragments = null
+            this.#handleMessage(opcode === OPCODE.TEXT ? merged.toString('utf8') : merged)
+          } else {
+            // Single, unfragmented message
+            this.#handleMessage(frame.opcode === OPCODE.TEXT ? frame.payload.toString('utf8') : frame.payload)
+          }
+        } else {
+          // First fragment — start accumulating
+          this.#fragments = {opcode: frame.opcode, buffers: [frame.payload]}
+        }
+        break
+      case OPCODE.CONTINUATION:
+        if (!this.#fragments) {
+          this.close(1002, 'Protocol error: unexpected continuation frame')
+          return
+        }
+        this.#fragments.buffers.push(frame.payload)
+        if (frame.fin) {
+          const merged = Buffer.concat(this.#fragments.buffers)
+          const opcode = this.#fragments.opcode
+          this.#fragments = null
+          this.#handleMessage(opcode === OPCODE.TEXT ? merged.toString('utf8') : merged)
+        }
         break
       case OPCODE.PING:
         this.#sendFrame(OPCODE.PONG, frame.payload)
@@ -181,11 +234,16 @@ class WebSocketClient {
     }
   }
 
-  #handleClose() {
-    if (this.#closed) return
-    this.#closed = true
+  /**
+   * Centralised resource teardown — called by both close() and the socket 'close' event.
+   * Idempotent: subsequent calls are no-ops once state reaches CLOSED.
+   */
+  #cleanup() {
+    if (this.#readyState === READY_STATE.CLOSED) return
+    this.#readyState = READY_STATE.CLOSED
 
     if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
+    this.#fragments = null
 
     this.#socket.removeAllListeners()
 
@@ -197,8 +255,15 @@ class WebSocketClient {
     this.#server.removeClient(this.#id)
   }
 
+  #handleClose() {
+    this.#cleanup()
+  }
+
   #sendFrame(opcode, data) {
-    if (this.#closed && opcode !== OPCODE.CLOSE) return
+    if (this.#readyState === READY_STATE.CLOSED) return
+    if (this.#readyState === READY_STATE.CLOSING && opcode !== OPCODE.CLOSE) return
+    if (!this.#socket.writable) return
+
     const payload = Buffer.isBuffer(data) ? data : Buffer.from(data)
     const length = payload.length
 
@@ -247,28 +312,27 @@ class WebSocketClient {
   }
 
   send(data) {
-    if (this.#closed) return this
+    if (this.#readyState !== READY_STATE.OPEN) return this
     const payload = typeof data === 'object' ? JSON.stringify(data) : String(data)
     this.#sendFrame(OPCODE.TEXT, payload)
     return this
   }
 
   sendBinary(data) {
-    if (this.#closed) return this
+    if (this.#readyState !== READY_STATE.OPEN) return this
     this.#sendFrame(OPCODE.BINARY, data)
     return this
   }
 
   ping() {
+    if (this.#readyState !== READY_STATE.OPEN) return this
     this.#sendFrame(OPCODE.PING, Buffer.alloc(0))
     return this
   }
 
   close(code = 1000, reason = '') {
-    if (this.#closed) return
-    this.#closed = true
-
-    if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
+    if (this.#readyState === READY_STATE.CLOSED || this.#readyState === READY_STATE.CLOSING) return
+    this.#readyState = READY_STATE.CLOSING
 
     const reasonBuffer = Buffer.from(reason)
     const payload = Buffer.alloc(2 + reasonBuffer.length)
@@ -277,14 +341,7 @@ class WebSocketClient {
 
     this.#sendFrame(OPCODE.CLOSE, payload)
     this.#socket.end()
-    this.#socket.removeAllListeners()
-
-    for (const room of this.#rooms) {
-      this.#server.leaveRoom(this.#id, room)
-    }
-
-    this.#emit('close')
-    this.#server.removeClient(this.#id)
+    this.#cleanup()
   }
 
   join(room) {
@@ -448,4 +505,4 @@ class WebSocketServer {
   }
 }
 
-module.exports = {WebSocketServer, WebSocketClient}
+module.exports = {WebSocketServer, WebSocketClient, READY_STATE}

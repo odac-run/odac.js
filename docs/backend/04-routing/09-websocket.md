@@ -97,9 +97,30 @@ Odac.ws.on('error', err => {})     // Error occurred
 ### Connection Management
 
 ```javascript
-Odac.ws.close()           // Close connection
+Odac.ws.close()           // Close connection (sends close frame, transitions to CLOSED)
 Odac.ws.ping()            // Send ping frame
 Odac.ws.id                // Unique client ID
+Odac.ws.readyState        // Current connection state (0–3)
+```
+
+### Connection State
+
+`Odac.ws.readyState` reflects the RFC 6455 lifecycle. Use the static constants on `WebSocketClient` or the exported `READY_STATE` enum for readable comparisons:
+
+| Value | Constant | Description |
+|-------|----------|-------------|
+| `0` | `CONNECTING` | Handshake complete, handler not yet called |
+| `1` | `OPEN` | Connection active, messages can be sent |
+| `2` | `CLOSING` | Close frame sent, waiting for socket drain |
+| `3` | `CLOSED` | Connection fully terminated |
+
+```javascript
+const {READY_STATE} = require('odac')
+
+Odac.ws.on('message', data => {
+  if (Odac.ws.readyState !== READY_STATE.OPEN) return
+  Odac.ws.send({echo: data})
+})
 ```
 
 ## Rooms
