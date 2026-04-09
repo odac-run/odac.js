@@ -83,3 +83,138 @@ describe('Migration.migrate() - Column Diff', () => {
     expect(alterOps).toHaveLength(0)
   })
 })
+
+describe('Migration.migrate() - Foreign Key Diff', () => {
+  it('should add a foreign key to an existing column', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {columns: {id: {type: 'increments'}, user_id: {type: 'integer', unsigned: true}}})
+    await Migration.migrate()
+
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', unsigned: true, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    const result = await Migration.migrate()
+    const fkOps = result.default.schema.filter(op => op.type === 'add_foreign_key')
+
+    expect(fkOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'add_foreign_key', column: 'user_id', table: 'posts'})]))
+  })
+
+  it('should drop a foreign key removed from schema', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', unsigned: true, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    await Migration.migrate()
+
+    writeSchema('posts', {columns: {id: {type: 'increments'}, user_id: {type: 'integer', unsigned: true}}})
+    const result = await Migration.migrate()
+    const fkOps = result.default.schema.filter(op => op.type === 'drop_foreign_key')
+
+    expect(fkOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'drop_foreign_key', column: 'user_id', table: 'posts'})]))
+  })
+
+  it('should replace a foreign key when onDelete action changes', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', unsigned: true, references: {table: 'users', column: 'id'}, onDelete: 'SET NULL'}
+      }
+    })
+    await Migration.migrate()
+
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', unsigned: true, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    const result = await Migration.migrate()
+    const dropOps = result.default.schema.filter(op => op.type === 'drop_foreign_key')
+    const addOps = result.default.schema.filter(op => op.type === 'add_foreign_key')
+
+    expect(dropOps).toHaveLength(1)
+    expect(addOps).toHaveLength(1)
+    expect(addOps[0]).toMatchObject({column: 'user_id', table: 'posts'})
+  })
+
+  it('should not produce FK ops when references are unchanged', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', unsigned: true, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    await Migration.migrate()
+
+    const result = await Migration.migrate()
+    const fkOps = result.default.schema.filter(op => op.type === 'add_foreign_key' || op.type === 'drop_foreign_key')
+
+    expect(fkOps).toHaveLength(0)
+  })
+
+  it('should clean orphan rows before adding a foreign key constraint', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {columns: {id: {type: 'increments'}, user_id: {type: 'integer', nullable: true}}})
+    await Migration.migrate()
+
+    // Insert a valid parent and an orphan child
+    await db('users').insert({name: 'Alice'})
+    await db('posts').insert({user_id: 1})
+    await db('posts').insert({user_id: 999}) // orphan — user 999 does not exist
+
+    // Now add FK constraint
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', nullable: true, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    await Migration.migrate()
+
+    // Orphan row should have user_id set to NULL (nullable column)
+    const orphan = await db('posts').where('id', 2).first()
+    expect(orphan.user_id).toBeNull()
+
+    // Valid row should be untouched
+    const valid = await db('posts').where('id', 1).first()
+    expect(valid.user_id).toBe(1)
+  })
+
+  it('should skip FK and warn when non-nullable column has orphan rows', async () => {
+    writeSchema('users', {columns: {id: {type: 'increments'}, name: {type: 'string'}}})
+    writeSchema('posts', {columns: {id: {type: 'increments'}, user_id: {type: 'integer', nullable: false}}})
+    await Migration.migrate()
+
+    await db('users').insert({name: 'Alice'})
+    await db('posts').insert({user_id: 1})
+    await db('posts').insert({user_id: 999}) // orphan
+
+    const warnSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+    writeSchema('posts', {
+      columns: {
+        id: {type: 'increments'},
+        user_id: {type: 'integer', nullable: false, references: {table: 'users', column: 'id'}, onDelete: 'CASCADE'}
+      }
+    })
+    await Migration.migrate()
+
+    // Orphan row must NOT be deleted — all data preserved
+    const rows = await db('posts').select()
+    expect(rows).toHaveLength(2)
+
+    // Warning must have been emitted
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Skipping foreign key'))
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('1 orphan row(s)'))
+
+    warnSpy.mockRestore()
+  })
+})
