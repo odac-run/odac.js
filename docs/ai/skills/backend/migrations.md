@@ -45,6 +45,29 @@ module.exports = {
 }
 ```
 
+### 2. Foreign Keys & Referential Actions
+```javascript
+// schema/posts.js
+module.exports = {
+  columns: {
+    id:      {type: 'nanoid', primary: true},
+    user_id: {
+      type:       'integer',
+      unsigned:   true,
+      nullable:   false,
+      references: {table: 'users', column: 'id'},
+      onDelete:   'CASCADE',  // 'CASCADE' | 'SET NULL' | 'RESTRICT' | 'NO ACTION' | 'SET DEFAULT'
+      onUpdate:   'CASCADE'
+    }
+  }
+}
+```
+
+**Rules:**
+- `references` + `onDelete`/`onUpdate` are supported in both table creation (`_buildColumns`) and column addition (`_addColumn`).
+- Altering an existing column's foreign key constraint is **not supported** via schema diff. Use an imperative `migration/` file for that.
+- Always index foreign key columns for query performance.
+
 ### NanoID Notes
 - `length` can be customized: `{type: 'nanoid', length: 12, primary: true}`.
 - If seed rows omit the nanoid field, ODAC fills it automatically.
