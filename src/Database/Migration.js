@@ -481,7 +481,39 @@ class Migration {
     // drivers (SQLite) return maxLength as a string, e.g. '100' vs 100.
     if (desired.length && current.maxLength && Number(desired.length) !== Number(current.maxLength)) return true
 
+    // Default value mismatch — normalize both sides before comparing because
+    // drivers return defaults as strings (e.g. "'active'" in PG, "active" in SQLite).
+    const desiredDefault = desired.default !== undefined ? this._normalizeDefaultValue(desired.default) : null
+    const currentDefault =
+      current.defaultValue !== undefined && current.defaultValue !== null ? this._normalizeDefaultValue(current.defaultValue) : null
+
+    if (desiredDefault !== currentDefault) return true
+
     return false
+  }
+
+  /**
+   * Normalizes a column default value to a canonical string for cross-driver comparison.
+   * Why: Each DB driver serializes defaults differently — PG wraps strings in single quotes
+   * and appends type casts (e.g. `'active'::character varying`), SQLite returns raw values,
+   * MySQL returns unquoted strings. Stripping quotes and casts gives a stable comparison key.
+   * @param {*} value - Raw default value from schema definition or DB introspection
+   * @returns {string} Normalized string representation
+   */
+  _normalizeDefaultValue(value) {
+    if (value === null || value === undefined) return 'null'
+
+    let str = String(value)
+
+    // Strip PG type cast suffix: 'foo'::character varying → 'foo'
+    str = str.replace(/::[\w\s]+$/, '')
+
+    // Strip surrounding single quotes added by PG/MySQL: 'foo' → foo
+    if (str.startsWith("'") && str.endsWith("'")) {
+      str = str.slice(1, -1)
+    }
+
+    return str.trim().toLowerCase()
   }
 
   /**

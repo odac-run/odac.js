@@ -49,4 +49,37 @@ describe('Migration.migrate() - Column Diff', () => {
 
     expect(dropOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'drop_column', column: 'obsolete', table: 'items'})]))
   })
+
+  it('should alter a column when its default value changes', async () => {
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string', default: 'active'}}})
+    await Migration.migrate()
+
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string', default: 'inactive'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'status', table: 'settings'})]))
+  })
+
+  it('should alter a column when its default value is removed', async () => {
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string', default: 'active'}}})
+    await Migration.migrate()
+
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'status', table: 'settings'})]))
+  })
+
+  it('should not alter a column when its default value is unchanged', async () => {
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string', default: 'active'}}})
+    await Migration.migrate()
+
+    writeSchema('settings', {columns: {id: {type: 'increments'}, status: {type: 'string', default: 'active'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
 })
