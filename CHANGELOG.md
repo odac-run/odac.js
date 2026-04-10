@@ -1,3 +1,31 @@
+### ⚙️ Engine Tuning
+
+- migrate hashing from BCrypt to scrypt and update Odac.Var documentation and validation logic
+
+### ✨ What's New
+
+- **auth:** add token tracking and retrieval method
+- **database:** add read-through cache API for SELECT query results
+- **migration:** add cross-driver default value comparison
+- **migration:** add foreign key introspection and synchronization
+- **websocket:** add readyState tracking and message fragmentation support
+
+### 📚 Documentation
+
+- **forms:** add options to control message display for success and error handling
+- **migrations:** add foreign keys and referential actions documentation
+
+### 🛠️ Fixes & Improvements
+
+- **database:** add catch method to write operation thenable for Promise compatibility
+- **pr-review:** apply ReadCache null sentinel, fix invalidation test, correct auth docs login example
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - **database:** add Write-Behind Cache with counter, update, and batch insert buffering
