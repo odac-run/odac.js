@@ -235,10 +235,12 @@ const tableProxyHandler = {
     const wrapWithInvalidation = original =>
       function (...args) {
         const qbResult = original.apply(this, args)
-        return {
+        const thenable = {
           then: (resolve, reject) =>
-            qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject)
+            qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
+          catch: fn => thenable.then(undefined, fn)
         }
+        return thenable
       }
 
     const originalUpdate = qb.update
