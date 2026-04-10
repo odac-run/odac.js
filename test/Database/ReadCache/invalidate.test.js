@@ -64,17 +64,17 @@ describe('ReadCache.invalidate()', () => {
     await readCache.get('default', 'posts', qb1, () => qb1.then(r => r), 60)
     await readCache.get('default', 'posts', qb2, () => qb2.then(r => r), 60)
 
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(2)
+    const cachedKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    expect(cachedKeys).toHaveLength(2)
 
     // Invalidate
     await readCache.invalidate('default', 'posts')
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
     expect(keys).toHaveLength(0)
 
     // Verify cache entries are actually deleted
-    for (const key of keys) {
+    for (const key of cachedKeys) {
       const val = await Odac.Ipc.get(key)
       expect(val).toBeNull()
     }

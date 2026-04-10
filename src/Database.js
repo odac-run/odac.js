@@ -225,7 +225,7 @@ const tableProxyHandler = {
     }
 
     qb.cache = Object.assign(cacheFactory, {
-      clear: where => readCache.clear(connectionKey, prop, where)
+      clear: () => readCache.clear(connectionKey, prop)
     })
 
     // Automatic cache invalidation on write operations (insert/update/delete/truncate).

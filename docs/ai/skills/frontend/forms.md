@@ -64,7 +64,7 @@ Odac.form(
   }
 )
 
-// 5) Manual GET request helper
+// 7) Manual GET request helper
 Odac.get('/api/status', data => {
   const status = document.querySelector('[data-api-status]')
   if (status) status.textContent = String(data?.status ?? '')

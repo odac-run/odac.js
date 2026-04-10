@@ -449,7 +449,8 @@ class Migration {
         }
       }
     } else if (client === 'sqlite3') {
-      const rows = await knex.raw(`PRAGMA foreign_key_list('${tableName}')`)
+      const result = await knex.raw(`PRAGMA foreign_key_list('${tableName}')`)
+      const rows = Array.isArray(result) ? result : []
       for (const row of rows) {
         fks[row.from] = {
           table: row.table,

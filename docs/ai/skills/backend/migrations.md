@@ -64,8 +64,8 @@ module.exports = {
 ```
 
 **Rules:**
-- `references` + `onDelete`/`onUpdate` are supported in both table creation (`_buildColumns`) and column addition (`_addColumn`).
-- Altering an existing column's foreign key constraint is **not supported** via schema diff. Use an imperative `migration/` file for that.
+- `references` + `onDelete`/`onUpdate` are supported in table creation, column addition, and schema-diff updates to existing columns.
+- Schema diff supports adding, dropping, and replacing an existing column's foreign key constraint. Use an imperative `migration/` file only for cases that require custom data movement or engine-specific manual SQL.
 - Always index foreign key columns for query performance.
 
 ### NanoID Notes

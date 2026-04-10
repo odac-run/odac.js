@@ -31,9 +31,9 @@ When you call this, `Auth` creates a secure session for the user.
 module.exports = async function (Odac) {
     const { username, password } = Odac.Request.post
 
-    const isLoggedIn = await Odac.Auth.check({ username, password })
+    const loginSuccess = await Odac.Auth.login({ username, password })
 
-    if (isLoggedIn) {
+    if (loginSuccess) {
         return Odac.direct('/dashboard')
     } else {
         return Odac.direct('/login?error=1')

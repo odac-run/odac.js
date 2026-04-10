@@ -79,9 +79,9 @@ class ReadCache {
     const effectiveTtl = ttl || this._config.ttl
     const cacheKey = this.buildKey(connection, table, queryBuilder)
 
-    // O(1) cache lookup via Ipc
+    // O(1) cache lookup via Ipc — sentinel envelope {__v} distinguishes "cached null" from MISS
     const cached = await Odac.Ipc.get(cacheKey)
-    if (cached !== null) return cached
+    if (cached !== null && typeof cached === 'object' && '__v' in cached) return cached.__v
 
     // MISS — execute the actual DB query via the original (unwrapped) .then()
     const result = await executeFn()
@@ -91,7 +91,7 @@ class ReadCache {
     const currentKeys = await Odac.Ipc.smembers(indexKey)
 
     if (currentKeys.length < this._config.maxKeys) {
-      await Odac.Ipc.set(cacheKey, result, effectiveTtl)
+      await Odac.Ipc.set(cacheKey, {__v: result}, effectiveTtl)
       await Odac.Ipc.sadd(indexKey, cacheKey)
 
       // Cross-table invalidation: register cache key in joined tables' indexes too.
