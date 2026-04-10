@@ -148,7 +148,8 @@ class Migration {
       } else {
         const currentColumns = await this._introspectColumns(knex, tableName)
         const currentIndexes = await this._introspectIndexes(knex, tableName)
-        const diff = this._computeDiff(desired, currentColumns, currentIndexes)
+        const currentForeignKeys = await this._introspectForeignKeys(knex, tableName)
+        const diff = this._computeDiff(desired, currentColumns, currentIndexes, currentForeignKeys)
 
         if (diff.length > 0) {
           operations.push(...diff.map(d => ({...d, table: tableName})))
@@ -380,6 +381,91 @@ class Migration {
   }
 
   // ---------------------------------------------------------------------------
+  // FOREIGN KEY INTROSPECTION
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Introspects existing foreign key constraints for a given table.
+   * Why: The diff engine needs current FK state to detect when a schema adds, changes,
+   * or removes a `references` / `onDelete` / `onUpdate` definition on an existing column.
+   * @param {object} knex - Knex instance
+   * @param {string} tableName - Table to introspect
+   * @returns {Promise<Object>} Map of columnName -> {table, column, onDelete, onUpdate}
+   */
+  async _introspectForeignKeys(knex, tableName) {
+    const client = knex.client.config.client
+    const fks = {}
+
+    if (client === 'pg') {
+      const result = await knex.raw(
+        `SELECT
+           kcu.column_name,
+           ccu.table_name  AS foreign_table,
+           ccu.column_name AS foreign_column,
+           rc.delete_rule,
+           rc.update_rule,
+           tc.constraint_name
+         FROM information_schema.table_constraints tc
+         JOIN information_schema.key_column_usage kcu
+           ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+         JOIN information_schema.constraint_column_usage ccu
+           ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+         JOIN information_schema.referential_constraints rc
+           ON tc.constraint_name = rc.constraint_name AND tc.table_schema = rc.constraint_schema
+         WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_name = ?`,
+        [tableName]
+      )
+      for (const row of result.rows) {
+        fks[row.column_name] = {
+          table: row.foreign_table,
+          column: row.foreign_column,
+          onDelete: (row.delete_rule || 'NO ACTION').toUpperCase(),
+          onUpdate: (row.update_rule || 'NO ACTION').toUpperCase(),
+          constraintName: row.constraint_name
+        }
+      }
+    } else if (client === 'mysql2' || client === 'mysql') {
+      const [rows] = await knex.raw(
+        `SELECT
+           kcu.COLUMN_NAME          AS column_name,
+           kcu.REFERENCED_TABLE_NAME AS foreign_table,
+           kcu.REFERENCED_COLUMN_NAME AS foreign_column,
+           rc.DELETE_RULE            AS delete_rule,
+           rc.UPDATE_RULE            AS update_rule,
+           kcu.CONSTRAINT_NAME       AS constraint_name
+         FROM information_schema.KEY_COLUMN_USAGE kcu
+         JOIN information_schema.REFERENTIAL_CONSTRAINTS rc
+           ON kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME AND kcu.TABLE_SCHEMA = rc.CONSTRAINT_SCHEMA
+         WHERE kcu.TABLE_SCHEMA = DATABASE() AND kcu.TABLE_NAME = ? AND kcu.REFERENCED_TABLE_NAME IS NOT NULL`,
+        [tableName]
+      )
+      for (const row of rows) {
+        fks[row.column_name] = {
+          table: row.foreign_table,
+          column: row.foreign_column,
+          onDelete: (row.delete_rule || 'NO ACTION').toUpperCase(),
+          onUpdate: (row.update_rule || 'NO ACTION').toUpperCase(),
+          constraintName: row.constraint_name
+        }
+      }
+    } else if (client === 'sqlite3') {
+      const result = await knex.raw(`PRAGMA foreign_key_list('${tableName}')`)
+      const rows = Array.isArray(result) ? result : []
+      for (const row of rows) {
+        fks[row.from] = {
+          table: row.table,
+          column: row.to,
+          onDelete: (row.on_delete || 'NO ACTION').toUpperCase(),
+          onUpdate: (row.on_update || 'NO ACTION').toUpperCase(),
+          constraintName: null
+        }
+      }
+    }
+
+    return fks
+  }
+
+  // ---------------------------------------------------------------------------
   // DIFF ENGINE — Compute desired vs current delta
   // ---------------------------------------------------------------------------
 
@@ -391,7 +477,7 @@ class Migration {
    * @param {Array} currentIndexes - Introspected index list
    * @returns {Array} Ordered list of diff operations
    */
-  _computeDiff(desired, currentColumns, currentIndexes) {
+  _computeDiff(desired, currentColumns, currentIndexes, currentForeignKeys = {}) {
     const ops = []
     const desiredColumns = desired.columns || {}
     const desiredIndexes = desired.indexes || []
@@ -442,6 +528,34 @@ class Migration {
       }
     }
 
+    // --- Foreign key synchronization ---
+    for (const [colName, colDef] of Object.entries(desiredColumns)) {
+      if (colDef.type === 'timestamps') continue
+      if (!currentColumns[colName]) continue // New column — _addColumn handles FK
+
+      const desiredRef = colDef.references || null
+      const currentFK = currentForeignKeys[colName] || null
+      const desiredOnDelete = (colDef.onDelete || 'NO ACTION').toUpperCase()
+      const desiredOnUpdate = (colDef.onUpdate || 'NO ACTION').toUpperCase()
+
+      if (desiredRef && !currentFK) {
+        // FK added to existing column
+        ops.push({type: 'add_foreign_key', column: colName, definition: colDef})
+      } else if (!desiredRef && currentFK) {
+        // FK removed from schema
+        ops.push({type: 'drop_foreign_key', column: colName, constraintName: currentFK.constraintName})
+      } else if (desiredRef && currentFK) {
+        // FK exists — check if target table/column or actions changed
+        const targetChanged = desiredRef.table !== currentFK.table || desiredRef.column !== currentFK.column
+        const actionChanged = desiredOnDelete !== currentFK.onDelete || desiredOnUpdate !== currentFK.onUpdate
+
+        if (targetChanged || actionChanged) {
+          ops.push({type: 'drop_foreign_key', column: colName, constraintName: currentFK.constraintName})
+          ops.push({type: 'add_foreign_key', column: colName, definition: colDef})
+        }
+      }
+    }
+
     // --- Index synchronization ---
     const desiredIndexSignatures = new Set(desiredIndexes.map(idx => this._indexSignature(idx)))
     const currentIndexSignatures = new Set(currentIndexes.map(idx => this._indexSignature(idx)))
@@ -481,7 +595,39 @@ class Migration {
     // drivers (SQLite) return maxLength as a string, e.g. '100' vs 100.
     if (desired.length && current.maxLength && Number(desired.length) !== Number(current.maxLength)) return true
 
+    // Default value mismatch — normalize both sides before comparing because
+    // drivers return defaults as strings (e.g. "'active'" in PG, "active" in SQLite).
+    const desiredDefault = desired.default !== undefined ? this._normalizeDefaultValue(desired.default) : null
+    const currentDefault =
+      current.defaultValue !== undefined && current.defaultValue !== null ? this._normalizeDefaultValue(current.defaultValue) : null
+
+    if (desiredDefault !== currentDefault) return true
+
     return false
+  }
+
+  /**
+   * Normalizes a column default value to a canonical string for cross-driver comparison.
+   * Why: Each DB driver serializes defaults differently — PG wraps strings in single quotes
+   * and appends type casts (e.g. `'active'::character varying`), SQLite returns raw values,
+   * MySQL returns unquoted strings. Stripping quotes and casts gives a stable comparison key.
+   * @param {*} value - Raw default value from schema definition or DB introspection
+   * @returns {string} Normalized string representation
+   */
+  _normalizeDefaultValue(value) {
+    if (value === null || value === undefined) return 'null'
+
+    let str = String(value)
+
+    // Strip PG type cast suffix: 'foo'::character varying → 'foo'
+    str = str.replace(/::[\w\s]+$/, '')
+
+    // Strip surrounding single quotes added by PG/MySQL: 'foo' → foo
+    if (str.startsWith("'") && str.endsWith("'")) {
+      str = str.slice(1, -1)
+    }
+
+    return str.trim().toLowerCase()
   }
 
   /**
@@ -538,6 +684,7 @@ class Migration {
   async _applyDiff(knex, tableName, diff) {
     const columnOps = diff.filter(op => op.type === 'add_column' || op.type === 'drop_column' || op.type === 'alter_column')
     const indexOps = diff.filter(op => op.type === 'add_index' || op.type === 'drop_index')
+    const fkOps = diff.filter(op => op.type === 'add_foreign_key' || op.type === 'drop_foreign_key')
 
     // Phase 1: Column operations — atomic batch
     if (columnOps.length > 0) {
@@ -558,7 +705,19 @@ class Migration {
       })
     }
 
-    // Phase 2: Index operations — each applied individually for idempotent safety
+    // Phase 2: Foreign key operations — drop before add to handle replacements
+    for (const op of fkOps) {
+      if (op.type === 'drop_foreign_key') {
+        await this._applyForeignKeyOp(knex, tableName, op)
+      }
+    }
+    for (const op of fkOps) {
+      if (op.type === 'add_foreign_key') {
+        await this._applyForeignKeyOp(knex, tableName, op)
+      }
+    }
+
+    // Phase 3: Index operations — each applied individually for idempotent safety
     for (const op of indexOps) {
       await this._applyIndexOp(knex, tableName, op)
     }
@@ -599,6 +758,63 @@ class Migration {
 
       if ((op.type === 'add_index' && isDuplicate) || (op.type === 'drop_index' && isNotFound)) {
         // DB is already in the desired state — safe no-op
+        return
+      }
+
+      throw e
+    }
+  }
+
+  /**
+   * Applies a single foreign key add/drop operation with idempotent error handling.
+   * Why: Knex's col.alter() cannot manage FK constraints — they require table-level
+   * alterTable calls (add .foreign() / drop .dropForeign()) which are separate from column ops.
+   * @param {object} knex - Knex instance
+   * @param {string} tableName - Target table
+   * @param {object} op - FK operation {type, column, definition?, constraintName?}
+   */
+  async _applyForeignKeyOp(knex, tableName, op) {
+    try {
+      if (op.type === 'add_foreign_key') {
+        const ref = op.definition.references
+
+        // Clean orphan rows before adding constraint — existing data may reference
+        // rows that no longer exist in the parent table, which would cause PG error 23503.
+        // Nullable columns get SET NULL safely. Non-nullable columns are NOT deleted —
+        // instead the constraint is skipped with a warning to prevent silent data loss.
+        const orphanCondition = knex(tableName).whereNotIn(op.column, knex(ref.table).select(ref.column)).whereNotNull(op.column)
+
+        if (op.definition.nullable !== false) {
+          await orphanCondition.update({[op.column]: null})
+        } else {
+          const [{count: orphanCount}] = await orphanCondition.clone().count('* as count')
+
+          if (Number(orphanCount) > 0) {
+            console.error(
+              `\x1b[31m[ODAC Migration]\x1b[0m Skipping foreign key on "${tableName}.${op.column}" → ` +
+                `"${ref.table}.${ref.column}": ${orphanCount} orphan row(s) found. ` +
+                `Column is NOT NULL so rows cannot be nullified. ` +
+                `Clean the data manually and restart, or make the column nullable.`
+            )
+            return
+          }
+        }
+
+        await knex.schema.alterTable(tableName, table => {
+          const fk = table.foreign(op.column).references(ref.column).inTable(ref.table)
+          if (op.definition.onDelete) fk.onDelete(op.definition.onDelete)
+          if (op.definition.onUpdate) fk.onUpdate(op.definition.onUpdate)
+        })
+      } else if (op.type === 'drop_foreign_key') {
+        await knex.schema.alterTable(tableName, table => {
+          table.dropForeign(op.column)
+        })
+      }
+    } catch (e) {
+      const isDuplicate = e.message && (e.message.includes('already exists') || e.code === '42710')
+      const isNotFound = e.message && (e.message.includes('does not exist') || e.code === '42704')
+
+      if ((op.type === 'add_foreign_key' && isDuplicate) || (op.type === 'drop_foreign_key' && isNotFound)) {
         return
       }
 

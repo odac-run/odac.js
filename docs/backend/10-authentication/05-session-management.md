@@ -148,10 +148,19 @@ const isLoggedIn = await Odac.Auth.check()
 
 **Get user info:**
 ```javascript
-const user = Odac.Auth.user(null)  // Full user object
-const user = Odac.Auth.user(null)  // Full user object
-const email = Odac.Auth.user('email')  // Specific field
+const user = Odac.Auth.user()          // Full user object
+const email = Odac.Auth.user('email')  // Specific user field
 ```
+
+**Get auth session record:**
+```javascript
+const authRecord = Odac.Auth.token()       // Full token record from auth table
+const authId = Odac.Auth.token('id')       // Auth session ID
+const sessionIp = Odac.Auth.token('ip')    // IP address of the session
+const sessionDate = Odac.Auth.token('date') // When the session was created
+```
+
+> **Note:** `token()` returns `false` if no active session exists. It is populated after a successful `check()` call.
 
 ### Custom Session Data
 

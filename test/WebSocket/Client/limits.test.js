@@ -11,12 +11,15 @@ describe('WebSocketClient Limits', () => {
     it('should close connection if payload exceeds limit', () => {
       const socket = {
         pause: jest.fn(),
+        resume: jest.fn(),
         on: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-        removeAllListeners: jest.fn()
+        removeAllListeners: jest.fn(),
+        writable: true
       }
-      new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
+      const client = new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
+      client.resume()
 
       const buffer = Buffer.alloc(100)
       buffer[0] = 0x81
@@ -32,12 +35,15 @@ describe('WebSocketClient Limits', () => {
     it('should close connection if rate limit exceeded', () => {
       const socket = {
         pause: jest.fn(),
+        resume: jest.fn(),
         on: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-        removeAllListeners: jest.fn()
+        removeAllListeners: jest.fn(),
+        writable: true
       }
-      new WebSocketClient(socket, server, 'test-id', {rateLimit: {max: 2, window: 1000}})
+      const client = new WebSocketClient(socket, server, 'test-id', {rateLimit: {max: 2, window: 1000}})
+      client.resume()
 
       const buffer = Buffer.alloc(7)
       buffer[0] = 0x81

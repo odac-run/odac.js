@@ -29,7 +29,8 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [backend/streaming.md](backend/streaming.md) - Server-Sent Events (SSE) and Streaming API
 - [backend/structure.md](backend/structure.md) - Project organization and Service Classes
 - [backend/translations.md](backend/translations.md) - Multi-language support (i18n)
-- [backend/utilities.md](backend/utilities.md) - Odac.Var (String Manipulation) and Flow Control
+- [backend/odac-var.md](backend/odac-var.md) - Odac.Var (Fluent String Manipulation, Hashing, Encryption)
+- [backend/utilities.md](backend/utilities.md) - Flow Control (abort, direct, session)
 - [backend/validation.md](backend/validation.md) - Input sanitization and security checks
 - [backend/views.md](backend/views.md) - Template syntax, skeletons, and server-side JS
 

@@ -1,19 +1,20 @@
 ---
 name: backend-database-skill
-description: High-performance ODAC database querying patterns including the Write-Behind Cache for counters, last-write-wins updates, and buffered batch inserts.
+description: High-performance ODAC database querying patterns including the Read-Through Cache for SELECT results and the Write-Behind Cache for counters, last-write-wins updates, and buffered batch inserts.
 metadata:
-  tags: backend, database, query-builder, sql, write-behind-cache, performance, security
+  tags: backend, database, query-builder, sql, read-through-cache, write-behind-cache, performance, security
 ---
 
 # Backend Database Skill
 
-High-performance database operations using the ODAC Query Builder and Write-Behind Cache.
+High-performance database operations using the ODAC Query Builder, Read-Through Cache, and Write-Behind Cache.
 
 ## Principles
 1.  **Directness**: Avoid ORM overhead. Use fluent Query Builder.
 2.  **Safety**: Always use parameterized queries (built-in).
 3.  **Efficiency**: Index foreign keys. No `SELECT *`.
-4.  **Write Coalescing**: Use `buffer` for high-frequency writes to avoid DB saturation.
+4.  **Read Caching**: Use `cache()` for frequently-read, rarely-changed data.
+5.  **Write Coalescing**: Use `buffer` for high-frequency writes to avoid DB saturation.
 
 ## Query Builder Patterns
 ```javascript
@@ -27,6 +28,85 @@ await Odac.DB.posts.insert({title: 'Hello', user_id: 1})
 await Odac.DB.users.where('id', 1).update({last_login: new Date()})
 
 const count = await Odac.DB.users.where('active', true).count() // → Number
+```
+
+## Read-Through Cache (`cache`)
+
+The `cache()` API stores SELECT results in `Odac.Ipc` and serves subsequent requests from memory. Cache keys are SHA-256 hashes of the compiled SQL + bindings — identical queries always hit the same key.
+
+### When to suggest `cache`
+
+Propose the Read-Through Cache when the data meets **all three** of these criteria:
+1. **High read frequency** — the same query runs on many requests.
+2. **Low write frequency** — the data changes infrequently (minutes to hours between updates).
+3. **Not user-specific** — the same result is safe to serve to all users (no per-user filtering that could leak data).
+
+**Typical candidates:**
+- Blog posts, articles, product listings
+- Navigation menus, category trees, tag lists
+- Site settings, feature flags, configuration values
+- Public API responses that don't vary by user
+
+**Do NOT suggest `cache` for:**
+- Queries with user-specific WHERE clauses (data leakage risk)
+- Account balances, inventory counts, or anything requiring real-time accuracy
+- Queries inside transactions where consistency is critical
+
+### API
+
+```javascript
+// Cache with explicit TTL (seconds)
+const posts = await Odac.DB.posts.cache(60).where('active', true).select('id', 'title')
+
+// Cache with default TTL (from config, default 300s)
+const post = await Odac.DB.posts.cache().where({id: 5}).first()
+
+// Named connection
+const stats = await Odac.DB.analytics.events.cache(120).where('date', today).select()
+
+// Manual invalidation — table-level
+await Odac.DB.posts.cache.clear()
+
+// Global invalidation
+await Odac.DB.cache.clear('default', 'posts')
+```
+
+### Automatic Invalidation
+
+`insert()`, `update()`, `delete()`, `del()`, and `truncate()` automatically purge all cached queries for that table. No manual `.cache.clear()` needed after writes.
+
+```javascript
+// This update automatically clears all cached queries on 'posts'
+await Odac.DB.posts.where({id: 5}).update({title: 'New Title'})
+```
+
+**Cross-table (JOIN) invalidation:** When a cached query includes `JOIN` clauses, the cache key is registered in all joined tables' indexes. A write to any table involved in the query triggers invalidation automatically.
+
+```javascript
+// Cached in both 'posts' and 'users' indexes
+await Odac.DB.posts.cache(60).join('users', 'posts.user_id', '=', 'users.id').select(...)
+
+// Writing to 'users' invalidates the cached join query above
+await Odac.DB.users.where({id: 1}).update({name: 'New Name'})
+```
+
+> **`buffer` + `cache` interaction:** `buffer` writes are deferred and do NOT trigger automatic invalidation. Call `Odac.DB.posts.cache.clear()` after a `buffer.flush()` if the cache must reflect the latest state immediately.
+
+### Read-Through Cache — Key Rules
+1.  **Ipc-Backed**: Cache state goes through `Odac.Ipc`. Memory driver = Primary holds state; Redis driver = Redis holds state.
+2.  **Horizontally Scalable**: With Redis driver, all servers share the same cache. Invalidation on one server is immediately visible to all others.
+3.  **TTL is the safety net**: Even without explicit invalidation, cached data expires after TTL seconds.
+4.  **maxKeys guard**: Once `maxKeys` is reached for a table, new entries are skipped — existing cache still served. Prevents unbounded memory growth.
+5.  **Ipc-safe**: If `Odac.Ipc` is not initialized (e.g., in isolated test environments), invalidation is a no-op — never throws.
+
+## Configuration (`odac.json`)
+```json
+{
+  "cache": {
+    "ttl": 300,
+    "maxKeys": 10000
+  }
+}
 ```
 
 ## ID Strategy (NanoID)
@@ -144,4 +224,4 @@ await Odac.DB.buffer.flush()         // flush everything
 4.  **Indexes**: Keep index definitions in schema so add/drop is managed automatically.
 5.  **Data Changes**: Use `migration/*.js` only for one-time data transformation.
 
-See: [migrations.md](./migrations.md) | [write-behind-cache user docs](../../../backend/08-database/05-write-behind-cache.md)
+See: [migrations.md](./migrations.md) | [write-behind-cache user docs](../../../backend/08-database/05-write-behind-cache.md) | [read-through-cache user docs](../../../backend/08-database/06-read-through-cache.md)

@@ -42,7 +42,29 @@ Odac.form(
   }
 )
 
-// 5) Manual GET request helper
+// 5) Disable all automatic messages and handle everything in the callback
+Odac.form(
+  {form: 'form[data-odac-form]', messages: false},
+  response => {
+    if (response?.result?.success) {
+      // Custom success: e.g. show a toast, update UI
+    } else if (response?.errors) {
+      // Custom error: manually map errors to DOM
+    }
+  }
+)
+
+// 6) Only show success messages, handle errors manually
+Odac.form(
+  {form: 'form[data-odac-form]', messages: ['success']},
+  response => {
+    if (!response?.result?.success && response?.errors) {
+      // Custom error handling
+    }
+  }
+)
+
+// 7) Manual GET request helper
 Odac.get('/api/status', data => {
   const status = document.querySelector('[data-api-status]')
   if (status) status.textContent = String(data?.status ?? '')

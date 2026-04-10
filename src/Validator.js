@@ -224,7 +224,7 @@ class Validator {
                     error = value && value !== '' && !this.#odac.Var(value).is('url')
                     break
                   case 'username':
-                    error = value && value !== '' && !/^[a-zA-Z0-9]+$/.test(value)
+                    error = value && value !== '' && !this.#odac.Var(value).is('username')
                     break
                   case 'xss':
                     error = value && value !== '' && /<[^>]*>/g.test(value)

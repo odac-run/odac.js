@@ -21,7 +21,7 @@ String manipulation, hashing, and flow control.
 ```javascript
 const slug = Odac.Var('My Post Title').slug();
 const isValid = Odac.Var('test@test.com').is('email');
-const password = Odac.Var('secret').hash(); // BCrypt
+const password = Odac.Var('secret').hash(); // scrypt
 ```
 
 ### 2. Redirect and Abort

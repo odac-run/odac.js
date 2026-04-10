@@ -139,6 +139,7 @@ class Var {
           /([0-9#][\u20E3])|[\u00ae\u00a9\u203C\u2047\u2048\u2049\u3030\u303D\u2139\u2122\u3297\u3299][\uFE00-\uFEFF]?|[\u2190-\u21FF][\uFE00-\uFEFF]?|[\u2300-\u23FF][\uFE00-\uFEFF]?|[\u2460-\u24FF][\uFE00-\uFEFF]?|[\u25A0-\u25FF][\uFE00-\uFEFF]?|[\u2600-\u27BF][\uFE00-\uFEFF]?|[\u2900-\u297F][\uFE00-\uFEFF]?|[\u2B00-\u2BF0][\uFE00-\uFEFF]?|[\u1F000-\u1F6FF][\uFE00-\uFEFF]?/u.test(
             this.#value
           ))
+    if (args.includes('username')) result = (result || any) && ((any && result) || /^[a-zA-Z0-9]+$/.test(this.#value))
     if (args.includes('xss')) result = (result || any) && ((any && result) || this.#value == this.#value.replace(/<[^>]*>/g, ''))
     return result
   }

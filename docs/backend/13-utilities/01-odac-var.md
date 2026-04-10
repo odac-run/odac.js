@@ -8,9 +8,6 @@
 // Create a Var instance
 const result = Odac.Var('hello world').slug()
 // Returns: 'hello-world'
-
-// Chain multiple operations
-const email = Odac.Var('  USER@EXAMPLE.COM  ').trim().toLowerCase()
 ```
 
 ### String Validation
@@ -47,19 +44,20 @@ Odac.Var('example.com').isAny('email', 'domain')       // true
 'alphaspace'         // Letters and spaces
 'alphanumeric'       // Letters and numbers
 'alphanumericspace'  // Letters, numbers, and spaces
-'bcrypt'             // BCrypt hash format
+'username'           // Alphanumeric only (no spaces)
+'hash'               // scrypt hash format ($scrypt$)
 'date'               // Valid date string
 'domain'             // Valid domain name (example.com)
 'email'              // Valid email address
 'float'              // Floating point number
-'host'               // IP address
+'host'               // IP address / Host
 'ip'                 // IP address
 'json'               // Valid JSON string
 'mac'                // MAC address
-'md5'                // MD5 hash
+'md5'                // 32-char MD5 hash
 'numeric'            // Numbers only
-'url'                // Valid URL
-'emoji'              // Contains emoji
+'url'                // Valid URL (protocol + domain)
+'emoji'              // Contains emoji characters
 'xss'                // XSS-safe (no HTML tags)
 ```
 
@@ -193,21 +191,18 @@ Odac.Var('<script>alert("xss")</script>').html()
 
 ### Encryption & Hashing
 
-#### hash() - BCrypt password hashing
+#### hash() - Secure scrypt password hashing
 
 ```javascript
-// Hash a password
+// Hash a password using enterprise-grade scrypt
 const hashedPassword = Odac.Var('mypassword').hash()
-// Returns: '$2b$10$...' (BCrypt hash)
-
-// Custom salt rounds
-const hashedPassword = Odac.Var('mypassword').hash(12)
+// Returns: '$scrypt$[salt]$[hash]'
 ```
 
-#### hashCheck() - Verify BCrypt hash
+#### hashCheck() - Verify scrypt hash
 
 ```javascript
-const hashedPassword = '$2b$10$...'
+const hashedPassword = '$scrypt$...'
 const isValid = Odac.Var(hashedPassword).hashCheck('mypassword')
 // Returns: true or false
 ```
@@ -498,7 +493,6 @@ module.exports = async function(Odac) {
 
 ### Notes
 
-- `Odac.Var()` returns the processed string value, not a Var instance (except for chaining)
-- Encryption uses AES-256-CBC with a fixed IV
-- BCrypt hashing is one-way and cannot be decrypted
+- Encryption uses AES-256-CBC with a fixed IV (defined in framework core).
+- scrypt hashing is one-way and computationally expensive to prevent brute-force.
 - Date formatting works with any valid JavaScript date string

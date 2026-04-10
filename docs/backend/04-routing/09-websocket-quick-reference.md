@@ -31,6 +31,7 @@ Odac.Route.ws('/path', Odac => {
 | Property | Description |
 |----------|-------------|
 | `Odac.ws.id` | Unique client ID |
+| `Odac.ws.readyState` | RFC 6455 state: `0` CONNECTING, `1` OPEN, `2` CLOSING, `3` CLOSED |
 | `Odac.ws.rooms` | Array of joined rooms |
 | `Odac.ws.data` | Custom data storage |
 
@@ -169,13 +170,32 @@ const ws = Odac.ws('/chat', {shared: true})
 |------|-------------|
 | `1000` | Normal closure |
 | `1001` | Going away |
-| `1002` | Protocol error |
+| `1002` | Protocol error (e.g. unexpected continuation frame) |
 | `1003` | Unsupported data |
 | `1006` | Abnormal closure |
+| `1008` | Rate limit exceeded |
+| `1009` | Payload too large |
 | `4000` | Middleware rejected |
 | `4001` | Unauthorized |
 | `4002` | Invalid/missing token |
 | `4003` | Forbidden (middleware) |
+
+## readyState Constants
+
+| Value | Constant | Description |
+|-------|----------|-------------|
+| `0` | `CONNECTING` | Handshake done, handler not yet invoked |
+| `1` | `OPEN` | Active — messages can be sent/received |
+| `2` | `CLOSING` | Close frame sent, draining |
+| `3` | `CLOSED` | Fully terminated |
+
+```javascript
+const {READY_STATE} = require('odac')
+
+if (Odac.ws.readyState === READY_STATE.OPEN) {
+  Odac.ws.send({status: 'alive'})
+}
+```
 
 ## Best Practices
 

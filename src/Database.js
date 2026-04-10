@@ -1,6 +1,7 @@
 'use strict'
 const {buildConnections} = require('./Database/ConnectionFactory')
 const nanoid = require('./Database/nanoid')
+const readCache = require('./Database/ReadCache')
 const writeBuffer = require('./Database/WriteBuffer')
 
 class DatabaseManager {
@@ -32,6 +33,9 @@ class DatabaseManager {
     // Cache nanoid column metadata from schema files for insert-time auto-generation.
     // Runs on ALL processes (primary + workers) since every process may insert data.
     this._loadNanoidMeta()
+
+    // Initialize Read-Through Cache (all processes — every worker may read cached data)
+    readCache.init()
 
     // Initialize Write-Behind Cache (Primary holds state, Workers communicate via IPC)
     await writeBuffer.init(this.connections)
@@ -200,6 +204,54 @@ const tableProxyHandler = {
       flush: () => writeBuffer.flush(connectionKey, prop)
     }
 
+    // Read-Through Cache: Odac.DB.posts.cache(60).where({active: true}).select('id', 'title')
+    //                     Odac.DB.posts.cache().where({id: 5}).first()
+    //                     Odac.DB.posts.cache.clear()
+    // Why: Returns a Proxy that intercepts .then() to inject cache lookup before DB execution.
+    // The ttl parameter on cache() sets per-query TTL; omit for config default.
+    const cacheFactory = ttl => {
+      const cachedQb = knexInstance(prop)
+      cachedQb._odacCacheTtl = ttl || 0
+
+      // Capture the ORIGINAL .then() before overriding — prevents infinite recursion
+      // when ReadCache.get() needs to execute the actual DB query on cache MISS.
+      const originalCacheThen = cachedQb.then.bind(cachedQb)
+      cachedQb.then = function (resolve, reject) {
+        const executeFn = () => new Promise((res, rej) => originalCacheThen(res, rej))
+        return readCache.get(connectionKey, prop, this, executeFn, this._odacCacheTtl).then(resolve, reject)
+      }
+
+      return cachedQb
+    }
+
+    qb.cache = Object.assign(cacheFactory, {
+      clear: () => readCache.clear(connectionKey, prop)
+    })
+
+    // Automatic cache invalidation on write operations (insert/update/delete/truncate).
+    // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
+    // Write methods are terminal (no further chaining after await), so wrapping the return
+    // as a simple thenable is safe and avoids .then() override conflicts with count/other wraps.
+    const wrapWithInvalidation = original =>
+      function (...args) {
+        const qbResult = original.apply(this, args)
+        const thenable = {
+          then: (resolve, reject) =>
+            qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
+          catch: fn => thenable.then(undefined, fn)
+        }
+        return thenable
+      }
+
+    const originalUpdate = qb.update
+    const originalDelete = qb.delete
+    const originalDel = qb.del
+    const originalTruncate = qb.truncate
+    qb.update = wrapWithInvalidation(originalUpdate)
+    qb.delete = wrapWithInvalidation(originalDelete)
+    qb.del = wrapWithInvalidation(originalDel)
+    qb.truncate = wrapWithInvalidation(originalTruncate)
+
     // Odac DX Improvement: Wrap count() to return a clean number
     const originalCount = qb.count
     qb.count = function (...args) {
@@ -227,6 +279,10 @@ const tableProxyHandler = {
         return originalInsert.call(this, data, ...args)
       }
     }
+
+    // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
+    const currentInsert = qb.insert
+    qb.insert = wrapWithInvalidation(currentInsert)
 
     const originalThen = qb.then
     qb.then = function (resolve, reject) {
@@ -285,6 +341,13 @@ const rootProxy = new Proxy(manager, {
     if (prop === 'buffer') {
       return {
         flush: (connection, table) => writeBuffer.flush(connection, table)
+      }
+    }
+
+    // Global ReadCache: Odac.DB.cache.clear(connection, table)
+    if (prop === 'cache') {
+      return {
+        clear: (connection, table) => readCache.clear(connection, table)
       }
     }
 
