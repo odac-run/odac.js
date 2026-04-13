@@ -295,3 +295,69 @@ describe('Migration.migrate() - Nullable Preservation on Alter', () => {
     expect(alterOps[0]).toMatchObject({column: 'note', currentNullable: true})
   })
 })
+
+describe('Migration - PG Primary Key Alter Safety', () => {
+  it('should carry primary flag in alter_column diff for PK columns', async () => {
+    // Create table with a primary nanoid column
+    writeSchema('domains', {columns: {id: {type: 'nanoid', primary: true}, name: {type: 'string'}}})
+    await Migration.migrate()
+
+    // Simulate a type mismatch by changing to a different length — triggers alter
+    writeSchema('domains', {columns: {id: {type: 'nanoid', primary: true, length: 30}, name: {type: 'string'}}})
+    const result = await Migration.migrate({dryRun: true})
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column' && op.column === 'id')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0].definition.primary).toBe(true)
+  })
+
+  it('should map ODAC types to PG types correctly via _pgColumnType', () => {
+    const m = Migration
+    expect(m._pgColumnType({type: 'nanoid'})).toBe('varchar(21)')
+    expect(m._pgColumnType({type: 'nanoid', length: 30})).toBe('varchar(30)')
+    expect(m._pgColumnType({type: 'string'})).toBe('varchar(255)')
+    expect(m._pgColumnType({type: 'string', length: 100})).toBe('varchar(100)')
+    expect(m._pgColumnType({type: 'text'})).toBe('text')
+    expect(m._pgColumnType({type: 'integer'})).toBe('integer')
+    expect(m._pgColumnType({type: 'bigInteger'})).toBe('bigint')
+    expect(m._pgColumnType({type: 'boolean'})).toBe('boolean')
+    expect(m._pgColumnType({type: 'uuid'})).toBe('uuid')
+    expect(m._pgColumnType({type: 'jsonb'})).toBe('jsonb')
+    expect(m._pgColumnType({type: 'timestamp'})).toBe('timestamp')
+    expect(m._pgColumnType({type: 'binary'})).toBe('bytea')
+    expect(m._pgColumnType({type: 'decimal'})).toBe('numeric(10,2)')
+    expect(m._pgColumnType({type: 'decimal', precision: 8, scale: 4})).toBe('numeric(8,4)')
+    expect(m._pgColumnType({type: 'specificType', length: 'text[]'})).toBe('text[]')
+  })
+})
+
+describe('Migration - specificType handling', () => {
+  it('should create a specificType column using the length field as the raw DB type', async () => {
+    writeSchema('events', {
+      columns: {
+        id: {type: 'increments'},
+        tags: {type: 'specificType', length: 'text'}
+      }
+    })
+    await Migration.migrate()
+
+    const info = await db('events').columnInfo()
+    expect(info).toHaveProperty('tags')
+  })
+
+  it('should not produce false alter for specificType when DB type matches', async () => {
+    writeSchema('events', {
+      columns: {
+        id: {type: 'increments'},
+        tags: {type: 'specificType', length: 'text'}
+      }
+    })
+    await Migration.migrate()
+
+    // Re-run with same schema — should not trigger alter
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+})
