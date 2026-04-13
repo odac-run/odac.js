@@ -38,7 +38,7 @@ class DatabaseManager {
     readCache.init()
 
     // Initialize Write-Behind Cache (Primary holds state, Workers communicate via IPC)
-    await writeBuffer.init(this.connections)
+    await writeBuffer.init(this.connections, this._nanoidColumns)
   }
 
   /**
@@ -281,8 +281,22 @@ const tableProxyHandler = {
     }
 
     // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
-    const currentInsert = qb.insert
-    qb.insert = wrapWithInvalidation(currentInsert)
+    // IMPORTANT: Unlike update/delete/truncate, insert is NOT terminal — it supports
+    // chaining (e.g. .insert().onConflict().merge()). So we cannot use wrapWithInvalidation
+    // which returns a plain thenable. Instead, override .then() on the query builder to
+    // inject invalidation at execution time, preserving the full Knex chain.
+    const insertBeforeInvalidation = qb.insert
+    qb.insert = function (...args) {
+      const result = insertBeforeInvalidation.apply(this, args)
+      const origThen = result.then
+      result.then = function (resolve, reject) {
+        return origThen
+          .call(this)
+          .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
+          .then(resolve, reject)
+      }
+      return result
+    }
 
     const originalThen = qb.then
     qb.then = function (resolve, reject) {

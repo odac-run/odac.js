@@ -218,3 +218,146 @@ describe('Migration.migrate() - Foreign Key Diff', () => {
     warnSpy.mockRestore()
   })
 })
+
+describe('Migration.migrate() - Column Type Change', () => {
+  it('should alter a column when its type changes (string → text)', async () => {
+    writeSchema('articles', {columns: {id: {type: 'increments'}, body: {type: 'string'}}})
+    await Migration.migrate()
+
+    writeSchema('articles', {columns: {id: {type: 'increments'}, body: {type: 'text'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'body', table: 'articles'})]))
+  })
+
+  it('should alter a column when its type changes (integer → bigInteger)', async () => {
+    writeSchema('counters', {columns: {id: {type: 'increments'}, value: {type: 'integer'}}})
+    await Migration.migrate()
+
+    writeSchema('counters', {columns: {id: {type: 'increments'}, value: {type: 'bigInteger'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'value', table: 'counters'})]))
+  })
+
+  it('should not alter a column when its type is unchanged', async () => {
+    writeSchema('logs', {columns: {id: {type: 'increments'}, message: {type: 'text'}}})
+    await Migration.migrate()
+
+    writeSchema('logs', {columns: {id: {type: 'increments'}, message: {type: 'text'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+
+  it('should not produce alter for nanoid columns stored as string', async () => {
+    writeSchema('tokens', {columns: {id: {type: 'nanoid', length: 21}, name: {type: 'string'}}})
+    await Migration.migrate()
+
+    // Re-run with same schema — nanoid maps to varchar in DB, should not trigger false alter
+    writeSchema('tokens', {columns: {id: {type: 'nanoid', length: 21}, name: {type: 'string'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+})
+
+describe('Migration.migrate() - Nullable Preservation on Alter', () => {
+  it('should preserve NOT NULL when altering a column that has no explicit nullable in schema', async () => {
+    // Create table with a NOT NULL column
+    writeSchema('domains', {columns: {id: {type: 'increments'}, code: {type: 'string', nullable: false, default: 'A'}}})
+    await Migration.migrate()
+
+    // Change default value but omit nullable — should preserve NOT NULL from DB
+    writeSchema('domains', {columns: {id: {type: 'increments'}, code: {type: 'string', default: 'B'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0]).toMatchObject({column: 'code', currentNullable: false})
+  })
+
+  it('should preserve NULLABLE when altering a column that has no explicit nullable in schema', async () => {
+    // Create table with a NULLABLE column
+    writeSchema('logs', {columns: {id: {type: 'increments'}, note: {type: 'string', nullable: true, default: 'x'}}})
+    await Migration.migrate()
+
+    // Change default but omit nullable — should preserve nullable from DB
+    writeSchema('logs', {columns: {id: {type: 'increments'}, note: {type: 'string', default: 'y'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0]).toMatchObject({column: 'note', currentNullable: true})
+  })
+})
+
+describe('Migration - PG Primary Key Alter Safety', () => {
+  it('should carry primary flag in alter_column diff for PK columns', async () => {
+    // Create table with a primary nanoid column
+    writeSchema('domains', {columns: {id: {type: 'nanoid', primary: true}, name: {type: 'string'}}})
+    await Migration.migrate()
+
+    // Simulate a type mismatch by changing to a different length — triggers alter
+    writeSchema('domains', {columns: {id: {type: 'nanoid', primary: true, length: 30}, name: {type: 'string'}}})
+    const result = await Migration.migrate({dryRun: true})
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column' && op.column === 'id')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0].definition.primary).toBe(true)
+  })
+
+  it('should map ODAC types to PG types correctly via _pgColumnType', () => {
+    const m = Migration
+    expect(m._pgColumnType({type: 'nanoid'})).toBe('varchar(21)')
+    expect(m._pgColumnType({type: 'nanoid', length: 30})).toBe('varchar(30)')
+    expect(m._pgColumnType({type: 'string'})).toBe('varchar(255)')
+    expect(m._pgColumnType({type: 'string', length: 100})).toBe('varchar(100)')
+    expect(m._pgColumnType({type: 'text'})).toBe('text')
+    expect(m._pgColumnType({type: 'integer'})).toBe('integer')
+    expect(m._pgColumnType({type: 'bigInteger'})).toBe('bigint')
+    expect(m._pgColumnType({type: 'boolean'})).toBe('boolean')
+    expect(m._pgColumnType({type: 'uuid'})).toBe('uuid')
+    expect(m._pgColumnType({type: 'jsonb'})).toBe('jsonb')
+    expect(m._pgColumnType({type: 'timestamp'})).toBe('timestamp')
+    expect(m._pgColumnType({type: 'binary'})).toBe('bytea')
+    expect(m._pgColumnType({type: 'decimal'})).toBe('numeric(10,2)')
+    expect(m._pgColumnType({type: 'decimal', precision: 8, scale: 4})).toBe('numeric(8,4)')
+    expect(m._pgColumnType({type: 'specificType', length: 'text[]'})).toBe('text[]')
+  })
+})
+
+describe('Migration - specificType handling', () => {
+  it('should create a specificType column using the length field as the raw DB type', async () => {
+    writeSchema('events', {
+      columns: {
+        id: {type: 'increments'},
+        tags: {type: 'specificType', length: 'text'}
+      }
+    })
+    await Migration.migrate()
+
+    const info = await db('events').columnInfo()
+    expect(info).toHaveProperty('tags')
+  })
+
+  it('should not produce false alter for specificType when DB type matches', async () => {
+    writeSchema('events', {
+      columns: {
+        id: {type: 'increments'},
+        tags: {type: 'specificType', length: 'text'}
+      }
+    })
+    await Migration.migrate()
+
+    // Re-run with same schema — should not trigger alter
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+})

@@ -524,7 +524,7 @@ class Migration {
       if (!currentColumns[colName]) continue // New column, handled above
 
       if (this._columnNeedsAlter(colDef, currentColumns[colName])) {
-        ops.push({type: 'alter_column', column: colName, definition: colDef})
+        ops.push({type: 'alter_column', column: colName, definition: colDef, currentNullable: currentColumns[colName].nullable})
       }
     }
 
@@ -582,18 +582,35 @@ class Migration {
   /**
    * Checks if a column definition differs from the current DB metadata enough to warrant ALTER.
    * Conservative: only alters when there is a clear type or constraint mismatch.
+   * Why: Without type comparison, changing a column from e.g. 'string' to 'text' in the
+   * schema file would be silently ignored — the DB would never receive the ALTER.
    * @param {object} desired - Column definition from schema file
    * @param {object} current - Column metadata from introspection
    * @returns {boolean}
    */
   _columnNeedsAlter(desired, current) {
+    // Type mismatch — map the raw DB type back to an ODAC type and compare.
+    // nanoid is stored as 'string' (varchar) in the DB, so normalize before comparison.
+    // specificType uses the raw DB type directly (def.length holds the actual PG type),
+    // so compare against the raw introspected type instead of reverse-mapping.
+    if (desired.type === 'specificType') {
+      const rawDesired = (desired.length || '').toLowerCase().trim()
+      const rawCurrent = (current.type || '').toLowerCase().trim()
+      if (rawDesired !== rawCurrent) return true
+    } else {
+      const desiredType = desired.type === 'nanoid' ? 'string' : desired.type
+      const currentType = this._reverseMapType(current.type)
+      if (desiredType !== currentType) return true
+    }
+
     // Nullable mismatch
     if (desired.nullable === false && current.nullable === true) return true
     if (desired.nullable === true && current.nullable === false) return true
 
     // Length mismatch for string types — use Number() coercion since some
     // drivers (SQLite) return maxLength as a string, e.g. '100' vs 100.
-    if (desired.length && current.maxLength && Number(desired.length) !== Number(current.maxLength)) return true
+    if (desired.type !== 'specificType' && desired.length && current.maxLength && Number(desired.length) !== Number(current.maxLength))
+      return true
 
     // Default value mismatch — normalize both sides before comparing because
     // drivers return defaults as strings (e.g. "'active'" in PG, "active" in SQLite).
@@ -686,10 +703,17 @@ class Migration {
     const indexOps = diff.filter(op => op.type === 'add_index' || op.type === 'drop_index')
     const fkOps = diff.filter(op => op.type === 'add_foreign_key' || op.type === 'drop_foreign_key')
 
-    // Phase 1: Column operations — atomic batch
-    if (columnOps.length > 0) {
+    // Separate primary key alter ops — PostgreSQL's ALTER COLUMN via Knex emits
+    // DROP NOT NULL before SET NOT NULL, which PG rejects on PK columns (42P16).
+    // These must be handled with raw ALTER COLUMN ... TYPE ... USING instead.
+    const isPG = knex.client?.config?.client === 'pg' || knex.client?.config?.client === 'postgresql'
+    const pkAlterOps = isPG ? columnOps.filter(op => op.type === 'alter_column' && op.definition.primary) : []
+    const batchOps = isPG ? columnOps.filter(op => !(op.type === 'alter_column' && op.definition.primary)) : columnOps
+
+    // Phase 1a: Batch column operations (non-PK alters + adds + drops)
+    if (batchOps.length > 0) {
       await knex.schema.alterTable(tableName, table => {
-        for (const op of columnOps) {
+        for (const op of batchOps) {
           switch (op.type) {
             case 'add_column':
               this._addColumn(table, op.column, op.definition)
@@ -698,11 +722,29 @@ class Migration {
               table.dropColumn(op.column)
               break
             case 'alter_column':
-              this._alterColumn(table, op.column, op.definition)
+              this._alterColumn(table, op.column, op.definition, op.currentNullable)
               break
           }
         }
       })
+    }
+
+    // Phase 1b: Primary key column type changes on PostgreSQL — raw SQL.
+    // Why: Knex .alter() generates "DROP NOT NULL" + "SET NOT NULL" sequence,
+    // but PG forbids DROP NOT NULL on primary key columns. Raw ALTER COLUMN TYPE
+    // changes the type without touching the NOT NULL constraint.
+    for (const op of pkAlterOps) {
+      const sqlType = this._pgColumnType(op.definition)
+      await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? TYPE ${sqlType} USING ??::${sqlType}`, [tableName, op.column, op.column])
+
+      // Apply default value change if specified
+      if (op.definition.default !== undefined) {
+        if (op.definition.default === 'now()') {
+          await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT now()`, [tableName, op.column])
+        } else {
+          await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT ?`, [tableName, op.column, op.definition.default])
+        }
+      }
     }
 
     // Phase 2: Foreign key operations — drop before add to handle replacements
@@ -720,6 +762,51 @@ class Migration {
     // Phase 3: Index operations — each applied individually for idempotent safety
     for (const op of indexOps) {
       await this._applyIndexOp(knex, tableName, op)
+    }
+  }
+
+  /**
+   * Maps an ODAC column definition to a PostgreSQL type string for raw ALTER COLUMN TYPE.
+   * @param {object} def - Column definition from schema
+   * @returns {string} PostgreSQL type name
+   */
+  _pgColumnType(def) {
+    switch (def.type) {
+      case 'nanoid':
+      case 'string':
+        return `varchar(${def.length || (def.type === 'nanoid' ? 21 : 255)})`
+      case 'text':
+        return 'text'
+      case 'integer':
+        return 'integer'
+      case 'bigInteger':
+        return 'bigint'
+      case 'boolean':
+        return 'boolean'
+      case 'float':
+        return 'double precision'
+      case 'decimal':
+        return `numeric(${def.precision || 10},${def.scale || 2})`
+      case 'uuid':
+        return 'uuid'
+      case 'json':
+        return 'json'
+      case 'jsonb':
+        return 'jsonb'
+      case 'timestamp':
+        return 'timestamp'
+      case 'datetime':
+        return 'timestamp'
+      case 'date':
+        return 'date'
+      case 'time':
+        return 'time'
+      case 'binary':
+        return 'bytea'
+      case 'specificType':
+        return def.length || def.specificType || def.type
+      default:
+        return def.type
     }
   }
 
@@ -902,6 +989,8 @@ class Migration {
         return table.uuid(colName)
       case 'enum':
         return table.enum(colName, def.values || [])
+      case 'specificType':
+        return table.specificType(colName, def.length || def.specificType || def.type)
       default:
         return table.specificType(colName, def.type)
     }
@@ -950,12 +1039,18 @@ class Migration {
    * @param {string} colName - Column name
    * @param {object} def - Column definition
    */
-  _alterColumn(table, colName, def) {
+  _alterColumn(table, colName, def, currentNullable) {
     const col = this._createColumnBuilder(table, colName, def)
     if (!col) return
 
+    // Knex .alter() defaults to nullable when no explicit nullable/notNullable is set,
+    // which generates "ALTER COLUMN ... DROP NOT NULL" — PostgreSQL rejects this on
+    // primary key columns (error 42P16). When the schema doesn't specify nullable,
+    // preserve the column's current DB state to avoid destructive no-op alterations.
     if (def.nullable === false) col.notNullable()
     else if (def.nullable === true) col.nullable()
+    else if (currentNullable === false) col.notNullable()
+    else if (currentNullable === true) col.nullable()
 
     if (def.default !== undefined) col.defaultTo(def.default)
 

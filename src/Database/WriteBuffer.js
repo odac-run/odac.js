@@ -1,5 +1,6 @@
 'use strict'
 const cluster = require('node:cluster')
+const nanoid = require('./nanoid')
 
 /**
  * Write-Behind Cache with Write Coalescing for ODAC Database layer.
@@ -56,12 +57,15 @@ class WriteBuffer {
    * Why: Initializes the WriteBuffer. Called from Database.init() after Ipc is ready.
    * Primary: recovers LMDB checkpoint, starts flush/checkpoint timers.
    * All processes: stores connection references for flush DB writes.
+   * @param {object} connections - Knex connection map {connectionKey: knexInstance}
+   * @param {object} nanoidColumns - NanoID column metadata from DatabaseManager {connectionKey: {tableName: [{column, size}]}}
    */
-  async init(connections) {
+  async init(connections, nanoidColumns = {}) {
     if (this._initialized) return
     this._initialized = true
 
     this._connections = connections
+    this._nanoidColumns = nanoidColumns
     this._config = {...DEFAULT_CONFIG, ...Odac.Config.buffer}
 
     if (cluster.isPrimary) {
@@ -127,6 +131,16 @@ class WriteBuffer {
    * that are drained to the database in a single INSERT batch.
    */
   async insert(connection, table, row) {
+    // Auto-generate nanoid values for columns defined as type 'nanoid' in schema.
+    // Why: The Database.js proxy nanoid injection only covers direct QB calls.
+    // WriteBuffer bypasses that proxy — rows must be populated here before queuing.
+    const nanoidCols = this._nanoidColumns?.[connection]?.[table]
+    if (nanoidCols) {
+      for (const {column, size} of nanoidCols) {
+        if (!row[column]) row[column] = nanoid(size)
+      }
+    }
+
     const queueKey = `${connection}:${table}`
     const length = await Odac.Ipc.rpush(`wb:q:${queueKey}`, row)
     await Odac.Ipc.sadd('wb:idx:queues', queueKey)
