@@ -524,7 +524,7 @@ class Migration {
       if (!currentColumns[colName]) continue // New column, handled above
 
       if (this._columnNeedsAlter(colDef, currentColumns[colName])) {
-        ops.push({type: 'alter_column', column: colName, definition: colDef})
+        ops.push({type: 'alter_column', column: colName, definition: colDef, currentNullable: currentColumns[colName].nullable})
       }
     }
 
@@ -706,7 +706,7 @@ class Migration {
               table.dropColumn(op.column)
               break
             case 'alter_column':
-              this._alterColumn(table, op.column, op.definition)
+              this._alterColumn(table, op.column, op.definition, op.currentNullable)
               break
           }
         }
@@ -958,12 +958,18 @@ class Migration {
    * @param {string} colName - Column name
    * @param {object} def - Column definition
    */
-  _alterColumn(table, colName, def) {
+  _alterColumn(table, colName, def, currentNullable) {
     const col = this._createColumnBuilder(table, colName, def)
     if (!col) return
 
+    // Knex .alter() defaults to nullable when no explicit nullable/notNullable is set,
+    // which generates "ALTER COLUMN ... DROP NOT NULL" — PostgreSQL rejects this on
+    // primary key columns (error 42P16). When the schema doesn't specify nullable,
+    // preserve the column's current DB state to avoid destructive no-op alterations.
     if (def.nullable === false) col.notNullable()
     else if (def.nullable === true) col.nullable()
+    else if (currentNullable === false) col.notNullable()
+    else if (currentNullable === true) col.nullable()
 
     if (def.default !== undefined) col.defaultTo(def.default)
 

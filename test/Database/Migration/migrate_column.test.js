@@ -265,3 +265,33 @@ describe('Migration.migrate() - Column Type Change', () => {
     expect(alterOps).toHaveLength(0)
   })
 })
+
+describe('Migration.migrate() - Nullable Preservation on Alter', () => {
+  it('should preserve NOT NULL when altering a column that has no explicit nullable in schema', async () => {
+    // Create table with a NOT NULL column
+    writeSchema('domains', {columns: {id: {type: 'increments'}, code: {type: 'string', nullable: false, default: 'A'}}})
+    await Migration.migrate()
+
+    // Change default value but omit nullable — should preserve NOT NULL from DB
+    writeSchema('domains', {columns: {id: {type: 'increments'}, code: {type: 'string', default: 'B'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0]).toMatchObject({column: 'code', currentNullable: false})
+  })
+
+  it('should preserve NULLABLE when altering a column that has no explicit nullable in schema', async () => {
+    // Create table with a NULLABLE column
+    writeSchema('logs', {columns: {id: {type: 'increments'}, note: {type: 'string', nullable: true, default: 'x'}}})
+    await Migration.migrate()
+
+    // Change default but omit nullable — should preserve nullable from DB
+    writeSchema('logs', {columns: {id: {type: 'increments'}, note: {type: 'string', default: 'y'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(1)
+    expect(alterOps[0]).toMatchObject({column: 'note', currentNullable: true})
+  })
+})
