@@ -1,3 +1,18 @@
+### 🛠️ Fixes & Improvements
+
+- **cache:** preserve Knex chain for insert operations during invalidation
+- **database:** resolve duplicate error handler bug in insert cache invalidation
+- **migration:** add column type comparison to detect schema changes
+- **migration:** handle PostgreSQL primary key type changes safely
+- **migration:** preserve column nullable state when altering without explicit schema
+- **write-buffer:** auto-generate nanoid values for buffered inserts
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ⚙️ Engine Tuning
 
 - migrate hashing from BCrypt to scrypt and update Odac.Var documentation and validation logic
