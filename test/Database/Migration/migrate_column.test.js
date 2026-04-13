@@ -218,3 +218,50 @@ describe('Migration.migrate() - Foreign Key Diff', () => {
     warnSpy.mockRestore()
   })
 })
+
+describe('Migration.migrate() - Column Type Change', () => {
+  it('should alter a column when its type changes (string → text)', async () => {
+    writeSchema('articles', {columns: {id: {type: 'increments'}, body: {type: 'string'}}})
+    await Migration.migrate()
+
+    writeSchema('articles', {columns: {id: {type: 'increments'}, body: {type: 'text'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'body', table: 'articles'})]))
+  })
+
+  it('should alter a column when its type changes (integer → bigInteger)', async () => {
+    writeSchema('counters', {columns: {id: {type: 'increments'}, value: {type: 'integer'}}})
+    await Migration.migrate()
+
+    writeSchema('counters', {columns: {id: {type: 'increments'}, value: {type: 'bigInteger'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toEqual(expect.arrayContaining([expect.objectContaining({type: 'alter_column', column: 'value', table: 'counters'})]))
+  })
+
+  it('should not alter a column when its type is unchanged', async () => {
+    writeSchema('logs', {columns: {id: {type: 'increments'}, message: {type: 'text'}}})
+    await Migration.migrate()
+
+    writeSchema('logs', {columns: {id: {type: 'increments'}, message: {type: 'text'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+
+  it('should not produce alter for nanoid columns stored as string', async () => {
+    writeSchema('tokens', {columns: {id: {type: 'nanoid', length: 21}, name: {type: 'string'}}})
+    await Migration.migrate()
+
+    // Re-run with same schema — nanoid maps to varchar in DB, should not trigger false alter
+    writeSchema('tokens', {columns: {id: {type: 'nanoid', length: 21}, name: {type: 'string'}}})
+    const result = await Migration.migrate()
+    const alterOps = result.default.schema.filter(op => op.type === 'alter_column')
+
+    expect(alterOps).toHaveLength(0)
+  })
+})

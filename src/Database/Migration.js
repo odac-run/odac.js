@@ -582,11 +582,19 @@ class Migration {
   /**
    * Checks if a column definition differs from the current DB metadata enough to warrant ALTER.
    * Conservative: only alters when there is a clear type or constraint mismatch.
+   * Why: Without type comparison, changing a column from e.g. 'string' to 'text' in the
+   * schema file would be silently ignored — the DB would never receive the ALTER.
    * @param {object} desired - Column definition from schema file
    * @param {object} current - Column metadata from introspection
    * @returns {boolean}
    */
   _columnNeedsAlter(desired, current) {
+    // Type mismatch — map the raw DB type back to an ODAC type and compare.
+    // nanoid is stored as 'string' (varchar) in the DB, so normalize before comparison.
+    const desiredType = desired.type === 'nanoid' ? 'string' : desired.type
+    const currentType = this._reverseMapType(current.type)
+    if (desiredType !== currentType) return true
+
     // Nullable mismatch
     if (desired.nullable === false && current.nullable === true) return true
     if (desired.nullable === true && current.nullable === false) return true
