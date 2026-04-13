@@ -38,7 +38,7 @@ class DatabaseManager {
     readCache.init()
 
     // Initialize Write-Behind Cache (Primary holds state, Workers communicate via IPC)
-    await writeBuffer.init(this.connections)
+    await writeBuffer.init(this.connections, this._nanoidColumns)
   }
 
   /**
