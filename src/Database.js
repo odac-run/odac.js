@@ -290,7 +290,10 @@ const tableProxyHandler = {
       const result = insertBeforeInvalidation.apply(this, args)
       const origThen = result.then
       result.then = function (resolve, reject) {
-        return origThen.call(this, res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject)
+        return origThen
+          .call(this)
+          .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
+          .then(resolve, reject)
       }
       return result
     }
