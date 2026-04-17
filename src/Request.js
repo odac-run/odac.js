@@ -310,6 +310,27 @@ class OdacRequest {
     }
   }
 
+  // - SET PROXY CACHE
+  /**
+   * Enables ODAC Proxy caching for the current response.
+   * Sets the X-ODAC-Cache header with the specified TTL (in seconds)
+   * and updates Cache-Control to allow proxy caching.
+   *
+   * Why: Allows controllers to declaratively opt-in to proxy-level
+   * caching for static or semi-static HTML responses, offloading
+   * repeated rendering from the application server.
+   *
+   * @param {number} seconds - Cache TTL in seconds (must be a positive integer)
+   * @throws {TypeError} If seconds is not a positive integer
+   */
+  cache(seconds) {
+    if (!Number.isInteger(seconds) || seconds < 1) {
+      throw new TypeError('Odac.cache() requires a positive integer (seconds)')
+    }
+    this.header('X-ODAC-Cache', seconds)
+    this.header('Cache-Control', `public, max-age=${seconds}`)
+  }
+
   // - HTTP CODE
   status(code) {
     this.#status = code
