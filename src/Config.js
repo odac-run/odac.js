@@ -27,6 +27,13 @@ module.exports = {
     driver: 'memory',
     redis: 'default'
   },
+  js: {
+    target: 'es2020',
+    minify: true,
+    sourcemap: false,
+    bundle: true,
+    obfuscate: false
+  },
   debug: process.env.NODE_ENV !== 'production',
 
   init: function () {

@@ -219,6 +219,10 @@
         {
           "file": "10-styling-and-tailwind.md",
           "title": "Styling & Tailwind CSS"
+        },
+        {
+          "file": "12-scripts-and-typescript.md",
+          "title": "Scripts & TypeScript"
         }
       ]
     },

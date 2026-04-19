@@ -1,8 +1,14 @@
-/* global Odac */
 /**
  * ODAC Template - Client-Side Application
  *
- * This file demonstrates odac.js features including:
+ * This file is automatically compiled by ODAC's JS/TS pipeline.
+ * Write your frontend logic here — TypeScript (.ts) and plain JavaScript (.js) both work.
+ *
+ * - Place files in view/js/ to create entry points
+ * - Files starting with _ are ignored (use them as shared imports)
+ * - Output goes to public/assets/js/{name}.min.js
+ *
+ * Features demonstrated:
  * - AJAX page loading with Odac.loader() for smooth navigation
  * - History API integration
  * - Event delegation
