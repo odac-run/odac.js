@@ -156,6 +156,9 @@ module.exports = {
         _odac.write = function (value) {
           return _odac.Request.write(value)
         }
+        _odac.cache = function (seconds) {
+          return _odac.Request.cache(seconds)
+        }
         _odac.stream = function (input) {
           _odac.Request.clearTimeout()
           return new (require('./Stream'))(_odac.Request.req, _odac.Request.res, input, _odac)

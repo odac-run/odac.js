@@ -38,10 +38,29 @@ export default defineConfig([
   },
   {
     files: ['template/**/*.js'],
-    ignores: ['template/public/**/*.js'],
+    ignores: ['template/public/**/*.js', 'template/view/js/**/*.js'],
     languageOptions: {
       globals: {
         ...globals.node,
+        Odac: 'readonly'
+      },
+      sourceType: 'script'
+    },
+    plugins: {
+      js,
+      prettier: prettierPlugin
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...prettierConfig.rules,
+      'prettier/prettier': 'error'
+    }
+  },
+  {
+    files: ['template/view/js/**/*.js'],
+    languageOptions: {
+      globals: {
+        ...globals.browser,
         Odac: 'readonly'
       },
       sourceType: 'script'

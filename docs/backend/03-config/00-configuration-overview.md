@@ -161,6 +161,19 @@ const nodeEnv = process.env.NODE_ENV
 }
 ```
 
+**Scripts (JS/TS Pipeline):**
+```json
+{
+  "js": {
+    "target": "es2020",
+    "minify": true,
+    "sourcemap": false,
+    "bundle": true,
+    "obfuscate": false
+  }
+}
+```
+
 **Debug Mode:**
 Enable verbose logging for development. This helps in troubleshooting by inspecting detailed logs for system actions like sending emails (e.g., SMTP connection details, server responses). Default is `false`.
 

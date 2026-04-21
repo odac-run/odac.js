@@ -165,6 +165,10 @@
         {
           "file": "02-sending-a-response-replying-to-the-user.md",
           "title": "Response Object"
+        },
+        {
+          "file": "03-proxy-cache.md",
+          "title": "Proxy Cache"
         }
       ]
     },
@@ -215,6 +219,10 @@
         {
           "file": "10-styling-and-tailwind.md",
           "title": "Styling & Tailwind CSS"
+        },
+        {
+          "file": "12-scripts-and-typescript.md",
+          "title": "Scripts & TypeScript"
         }
       ]
     },

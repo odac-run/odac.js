@@ -142,6 +142,195 @@ function getTailwindConfigs() {
 }
 
 /**
+ * Resolves JS/TS entry points from 'view/js' and returns esbuild-compatible configs.
+ * Supports multiple entry points: each .js/.ts/.mjs/.mts file in view/js/ becomes a separate bundle.
+ * Why: Mirrors the Tailwind CSS pipeline pattern for zero-config frontend asset compilation.
+ * @returns {Array<{ input: string, output: string, name: string }>}
+ */
+function getJsConfigs() {
+  const jsDir = path.join(process.cwd(), 'view/js')
+  const outputDir = path.join(process.cwd(), 'public/assets/js')
+  const configs = []
+
+  if (!fs.existsSync(jsDir) || !fs.lstatSync(jsDir).isDirectory()) return configs
+
+  const validExtensions = ['.ts', '.js', '.mts', '.mjs']
+  const files = fs.readdirSync(jsDir).filter(file => {
+    const fullPath = path.join(jsDir, file)
+    if (!fs.lstatSync(fullPath).isFile()) return false
+    const ext = path.extname(file).toLowerCase()
+    return validExtensions.includes(ext) && !file.startsWith('_')
+  })
+
+  fs.mkdirSync(outputDir, {recursive: true})
+
+  for (const file of files) {
+    const input = path.join(jsDir, file)
+    const baseName = path.basename(file, path.extname(file))
+    const output = path.join(outputDir, `${baseName}.js`)
+
+    configs.push({input, output, name: file})
+  }
+
+  return configs
+}
+
+/**
+ * Reads the project's odac.json and returns the js pipeline configuration.
+ * Merges user config with sensible defaults for zero-config operation.
+ * @returns {{ target: string, minify: boolean, sourcemap: boolean, bundle: boolean, obfuscate: boolean|string }}
+ */
+function getJsPipelineOptions() {
+  const configPath = path.join(process.cwd(), 'odac.json')
+  const defaults = {
+    target: 'es2020',
+    minify: true,
+    sourcemap: false,
+    bundle: true,
+    obfuscate: false
+  }
+
+  try {
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+      if (config.js && typeof config.js === 'object') {
+        return {...defaults, ...config.js}
+      }
+    }
+  } catch {
+    // Config read failure is non-fatal; use defaults
+  }
+
+  return defaults
+}
+
+/**
+ * Resolves esbuild mangle/obfuscation options based on the obfuscate config level.
+ * Why: Provides lightweight code obfuscation without external dependencies by leveraging
+ * esbuild's built-in property mangling and identifier minification capabilities.
+ *
+ * Levels:
+ * - false (default): No obfuscation, only standard minification.
+ * - true / "low": Mangles properties starting with _ (private-by-convention).
+ * - "medium": Mangles _ properties + top-level names + applies aggressive mangling.
+ * - "high": Maximum obfuscation — mangles all properties matching common patterns,
+ *           drops console/debugger, and rewrites identifiers aggressively.
+ *
+ * @param {boolean|string} level Obfuscation level
+ * @returns {object} esbuild-compatible options to spread into the build config
+ */
+function getObfuscationOptions(level) {
+  if (!level) return {}
+
+  const normalized = level === true ? 'low' : String(level).toLowerCase()
+
+  if (normalized === 'low') {
+    return {
+      mangleProps: /^_/
+    }
+  }
+
+  if (normalized === 'medium') {
+    return {
+      mangleProps: /^_/,
+      drop: ['debugger'],
+      pure: ['console.debug', 'console.trace']
+    }
+  }
+
+  if (normalized === 'high') {
+    return {
+      mangleProps: /^[_$]/,
+      drop: ['debugger', 'console'],
+      legalComments: 'none',
+      keepNames: false
+    }
+  }
+
+  return {}
+}
+
+/**
+ * Builds JS/TS entry points using esbuild.
+ * Why: Provides TypeScript transpilation, bundling, minification, and tree-shaking in a single pass.
+ * @param {Array<{ input: string, output: string, name: string }>} configs Entry point configurations
+ * @param {{ target: string, minify: boolean, sourcemap: boolean, bundle: boolean }} options Build options
+ * @param {boolean} [production=false] Whether to enable production optimizations
+ * @returns {Promise<boolean>} True if all builds succeeded
+ */
+async function buildJs(configs, options, production = false) {
+  if (configs.length === 0) return true
+
+  const esbuild = require('esbuild')
+  const obfuscation = production ? getObfuscationOptions(options.obfuscate) : {}
+  let hasError = false
+
+  const buildPromises = configs.map(async ({input, output, name}) => {
+    try {
+      await esbuild.build({
+        entryPoints: [input],
+        outfile: output,
+        bundle: options.bundle,
+        minify: production ? true : options.minify,
+        sourcemap: options.sourcemap,
+        target: options.target,
+        platform: 'browser',
+        format: 'iife',
+        treeShaking: true,
+        legalComments: 'none',
+        logLevel: 'warning',
+        ...obfuscation
+      })
+    } catch (err) {
+      console.error(`❌ \x1b[31m[ODAC Script Error]\x1b[0m Build failed for ${name}:`, err.message)
+      hasError = true
+    }
+  })
+
+  await Promise.all(buildPromises)
+  return !hasError
+}
+
+/**
+ * Starts esbuild watch contexts for JS/TS entry points.
+ * Why: Provides instant rebuilds during development, matching the Tailwind CSS watcher pattern.
+ * @param {Array<{ input: string, output: string, name: string }>} configs Entry point configurations
+ * @param {{ target: string, minify: boolean, sourcemap: boolean, bundle: boolean }} options Build options
+ * @returns {Promise<Array<{ dispose: Function }>>} Array of esbuild watch contexts for cleanup
+ */
+async function watchJs(configs, options) {
+  if (configs.length === 0) return []
+
+  const esbuild = require('esbuild')
+  const contexts = []
+
+  for (const {input, output, name} of configs) {
+    try {
+      const ctx = await esbuild.context({
+        entryPoints: [input],
+        outfile: output,
+        bundle: options.bundle,
+        minify: false,
+        sourcemap: true,
+        target: options.target,
+        platform: 'browser',
+        format: 'iife',
+        treeShaking: false,
+        legalComments: 'none',
+        logLevel: 'warning'
+      })
+
+      await ctx.watch()
+      contexts.push(ctx)
+    } catch (err) {
+      console.error(`❌ \x1b[31m[ODAC Script Error]\x1b[0m Watch failed for ${name}:`, err.message)
+    }
+  }
+
+  return contexts
+}
+
+/**
  * Manages the AI Agent skills synchronization.
  * @param {string} targetDir The directory to sync skills into.
  */
@@ -529,6 +718,31 @@ async function run() {
       process.on('SIGINT', cleanup)
       process.on('SIGTERM', cleanup)
       process.on('exit', cleanup)
+
+      // JS/TS Pipeline — esbuild watch mode
+      const jsConfigs = getJsConfigs()
+      if (jsConfigs.length > 0) {
+        const jsOptions = getJsPipelineOptions()
+        const jsNames = jsConfigs.map(c => c.name).join(', ')
+        console.log(`📦 \x1b[36mODAC Scripts:\x1b[0m Watching for changes (${jsNames})`)
+
+        watchJs(jsConfigs, jsOptions)
+          .then(contexts => {
+            const jsCleanup = () => {
+              contexts.forEach(ctx => {
+                try {
+                  ctx.dispose()
+                } catch {}
+              })
+            }
+            process.on('SIGINT', jsCleanup)
+            process.on('SIGTERM', jsCleanup)
+            process.on('exit', jsCleanup)
+          })
+          .catch(err => {
+            console.error(`❌ \x1b[31m[ODAC Script Error]\x1b[0m Failed to initialize JS watcher:`, err.message)
+          })
+      }
     }
 
     require('../index.js')
@@ -554,7 +768,22 @@ async function run() {
     if (hasError) {
       process.exit(1)
     } else {
-      console.log('✅ All builds completed successfully!')
+      console.log('✅ All CSS builds completed successfully!')
+    }
+
+    // JS/TS Pipeline — production build with minification and tree-shaking
+    const jsConfigs = getJsConfigs()
+    if (jsConfigs.length > 0) {
+      const jsOptions = getJsPipelineOptions()
+      const jsNames = jsConfigs.map(c => c.name).join(', ')
+      console.log(`📦 Compiling scripts (${jsNames})...`)
+
+      const jsSuccess = await buildJs(jsConfigs, jsOptions, true)
+      if (!jsSuccess) {
+        process.exit(1)
+      } else {
+        console.log('✅ All script builds completed successfully!')
+      }
     }
   } else if (command === 'start') {
     process.env.NODE_ENV = 'production'
