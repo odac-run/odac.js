@@ -1,3 +1,18 @@
+### ✨ What's New
+
+- add esbuild-powered JS/TS frontend pipeline
+- **cache:** add proxy cache support with Odac.cache() method
+
+### 🛠️ Fixes & Improvements
+
+- **frontend:** enforce pipeline .js output, handle watcher rejections and skip esbuild directory scans
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - **cache:** preserve Knex chain for insert operations during invalidation
