@@ -6,7 +6,7 @@
  *
  * - Place files in view/js/ to create entry points
  * - Files starting with _ are ignored (use them as shared imports)
- * - Output goes to public/assets/js/{name}.min.js
+ * - Output goes to public/assets/js/{name}.js
  *
  * Features demonstrated:
  * - AJAX page loading with Odac.loader() for smooth navigation

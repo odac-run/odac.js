@@ -63,7 +63,7 @@ export const fetchUsers = async (): Promise<unknown> => {
 ```
 
 ```typescript
-// view/js/admin.ts (entry point — compiled to admin.min.js)
+// view/js/admin.ts (entry point — compiled to admin.js)
 import { fetchUsers } from './_api'
 
 document.addEventListener('DOMContentLoaded', async () => {

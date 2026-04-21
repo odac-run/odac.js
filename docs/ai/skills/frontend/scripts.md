@@ -24,13 +24,13 @@ Zero-config frontend asset pipeline powered by esbuild for TypeScript transpilat
 ## Example Structure
 ```
 view/js/
-├── app.ts          → public/assets/js/app.min.js
-├── admin.ts        → public/assets/js/admin.min.js
+├── app.ts          → public/assets/js/app.js
+├── admin.ts        → public/assets/js/admin.js
 ├── _api.ts         (shared module, not compiled)
 └── _utils.ts       (shared module, not compiled)
 ```
 
 ## HTML Integration
 ```html
-<script src="/assets/js/app.min.js"></script>
+<script src="/assets/js/app.js"></script>
 ```

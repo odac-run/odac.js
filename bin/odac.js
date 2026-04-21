@@ -156,7 +156,9 @@ function getJsConfigs() {
 
   const validExtensions = ['.ts', '.js', '.mts', '.mjs']
   const files = fs.readdirSync(jsDir).filter(file => {
-    const ext = path.extname(file)
+    const fullPath = path.join(jsDir, file)
+    if (!fs.lstatSync(fullPath).isFile()) return false
+    const ext = path.extname(file).toLowerCase()
     return validExtensions.includes(ext) && !file.startsWith('_')
   })
 
@@ -724,18 +726,22 @@ async function run() {
         const jsNames = jsConfigs.map(c => c.name).join(', ')
         console.log(`📦 \x1b[36mODAC Scripts:\x1b[0m Watching for changes (${jsNames})`)
 
-        watchJs(jsConfigs, jsOptions).then(contexts => {
-          const jsCleanup = () => {
-            contexts.forEach(ctx => {
-              try {
-                ctx.dispose()
-              } catch {}
-            })
-          }
-          process.on('SIGINT', jsCleanup)
-          process.on('SIGTERM', jsCleanup)
-          process.on('exit', jsCleanup)
-        })
+        watchJs(jsConfigs, jsOptions)
+          .then(contexts => {
+            const jsCleanup = () => {
+              contexts.forEach(ctx => {
+                try {
+                  ctx.dispose()
+                } catch {}
+              })
+            }
+            process.on('SIGINT', jsCleanup)
+            process.on('SIGTERM', jsCleanup)
+            process.on('exit', jsCleanup)
+          })
+          .catch(err => {
+            console.error(`❌ \x1b[31m[ODAC Script Error]\x1b[0m Failed to initialize JS watcher:`, err.message)
+          })
       }
     }
 
