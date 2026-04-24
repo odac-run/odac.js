@@ -16,6 +16,46 @@ High-performance database operations using the ODAC Query Builder, Read-Through 
 4.  **Read Caching**: Use `cache()` for frequently-read, rarely-changed data.
 5.  **Write Coalescing**: Use `buffer` for high-frequency writes to avoid DB saturation.
 
+## Database Configuration (`odac.json`)
+
+ODAC connects to databases automatically based on the `database` key in `odac.json`.
+
+### 1. Single Connection
+```json
+{
+  "database": {
+    "type": "mysql",
+    "host": "${DB_HOST}",
+    "user": "${DB_USER}",
+    "password": "${DB_PASSWORD}",
+    "database": "myapp"
+  }
+}
+```
+
+### 2. Multiple Connections
+Define named objects. The one named `default` (or the first one) is used by default.
+```json
+{
+  "database": {
+    "default": {
+      "type": "mysql",
+      "database": "app_db"
+    },
+    "analytics": {
+      "type": "postgres",
+      "host": "remote-stats.db",
+      "database": "events"
+    }
+  }
+}
+```
+
+Access named connections via: `Odac.DB.analytics.tableName`
+
+### 3. Environment Variables
+Always use `${VAR_NAME}` for sensitive credentials. Map them in `.env`.
+
 ## Query Builder Patterns
 ```javascript
 const user = await Odac.DB.users

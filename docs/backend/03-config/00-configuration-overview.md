@@ -12,7 +12,8 @@ The main configuration file located in your website's root directory. This file 
   "request": {
     "timeout": 30000
   },
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "secret123",
@@ -38,7 +39,8 @@ Perfect for development or non-sensitive settings:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "password": "dev123"
   }
@@ -50,7 +52,8 @@ Use `${VARIABLE}` syntax in `odac.json` to reference `.env` values:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "${MYSQL_HOST}",
     "password": "${MYSQL_PASSWORD}"
   }
@@ -68,7 +71,8 @@ Combine both methods - use direct values for non-sensitive data and environment 
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "${MYSQL_PASSWORD}",
@@ -88,7 +92,7 @@ You can access configuration values in three ways:
 
 ```javascript
 // 1. From Odac.Config (recommended for structured config)
-const dbHost = Odac.Config.mysql.host
+const dbHost = Odac.Config.database.host
 
 // 2. Using Odac.env() helper
 const apiKey = Odac.env('API_KEY')
@@ -130,6 +134,7 @@ const nodeEnv = process.env.NODE_ENV
 ```json
 {
   "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "${MYSQL_PASSWORD}",
@@ -195,7 +200,8 @@ See individual documentation sections for detailed configuration options.
   "request": {
     "timeout": 30000
   },
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "${MYSQL_HOST}",
     "user": "${MYSQL_USER}",
     "password": "${MYSQL_PASSWORD}",

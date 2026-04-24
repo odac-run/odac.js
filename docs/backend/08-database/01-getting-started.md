@@ -66,6 +66,17 @@ You can configure multiple database connections. The connection named `default` 
 }
 ```
 
+To use a named connection in your code, simply access it through `Odac.DB`:
+
+```javascript
+// Primary database (default)
+const users = await Odac.DB.users.where('active', true)
+
+// Analytics database
+const logs = await Odac.DB.analytics.events.insert({ type: 'login' })
+```
+
+
 ---
 
 ## Environment Variables
