@@ -317,6 +317,62 @@ class Mail {
     return '=?UTF-8?B?' + Buffer.from(text).toString('base64') + '?='
   }
 
+  #wrapLines(content, limit = 76) {
+    if (!content) return ''
+    const normalized = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    const out = []
+    for (const line of normalized.split('\n')) {
+      if (Buffer.byteLength(line, 'utf8') <= limit) {
+        out.push(line)
+        continue
+      }
+      let buf = ''
+      let bufBytes = 0
+      const flush = () => {
+        if (buf.length) out.push(buf)
+        buf = ''
+        bufBytes = 0
+      }
+      for (const word of line.split(/(\s+)/)) {
+        if (!word) continue
+        const wordBytes = Buffer.byteLength(word, 'utf8')
+        if (bufBytes + wordBytes <= limit) {
+          buf += word
+          bufBytes += wordBytes
+          continue
+        }
+        if (buf.length && /^\s+$/.test(word)) {
+          flush()
+          continue
+        }
+        if (buf.length) flush()
+        if (wordBytes <= limit) {
+          buf = word
+          bufBytes = wordBytes
+          continue
+        }
+        let chunk = ''
+        let chunkBytes = 0
+        for (const ch of word) {
+          const chBytes = Buffer.byteLength(ch, 'utf8')
+          if (chunkBytes + chBytes > limit) {
+            out.push(chunk)
+            chunk = ''
+            chunkBytes = 0
+          }
+          chunk += ch
+          chunkBytes += chBytes
+        }
+        if (chunk.length) {
+          buf = chunk
+          bufBytes = chunkBytes
+        }
+      }
+      flush()
+    }
+    return out.join('\r\n')
+  }
+
   #stripHtml(html) {
     if (!html) return ''
 
@@ -375,6 +431,11 @@ class Mail {
               textContent = this.#stripHtml(htmlContent)
             }
           }
+
+          // RFC 5321 §4.5.3.1.6: SMTP lines must be ≤1000 octets including CRLF.
+          // Wrap to 76 chars and force CRLF so downstream SMTP doesn't reject "too long a line".
+          htmlContent = this.#wrapLines(htmlContent)
+          textContent = this.#wrapLines(textContent)
 
           if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
           if (!this.#header['To']) {
