@@ -681,7 +681,7 @@ class Migration {
    */
   async _createTable(knex, tableName, schema) {
     await knex.schema.createTable(tableName, table => {
-      this._buildColumns(table, schema.columns)
+      this._buildColumns(knex, table, schema.columns)
       this._buildIndexes(table, schema.indexes)
     })
   }
@@ -716,13 +716,13 @@ class Migration {
         for (const op of batchOps) {
           switch (op.type) {
             case 'add_column':
-              this._addColumn(table, op.column, op.definition)
+              this._addColumn(knex, table, op.column, op.definition)
               break
             case 'drop_column':
               table.dropColumn(op.column)
               break
             case 'alter_column':
-              this._alterColumn(table, op.column, op.definition, op.currentNullable)
+              this._alterColumn(knex, table, op.column, op.definition, op.currentNullable)
               break
           }
         }
@@ -739,8 +739,9 @@ class Migration {
 
       // Apply default value change if specified
       if (op.definition.default !== undefined) {
-        if (op.definition.default === 'now()') {
-          await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT now()`, [tableName, op.column])
+        const lower = String(op.definition.default).toLowerCase()
+        if (lower === 'now()' || lower === 'current_timestamp' || lower === 'current_timestamp()') {
+          await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT ${lower}`, [tableName, op.column])
         } else {
           await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT ?`, [tableName, op.column, op.definition.default])
         }
@@ -915,7 +916,27 @@ class Migration {
    * @param {object} table - Knex TableBuilder instance
    * @param {object} columns - Column definition map
    */
-  _buildColumns(table, columns) {
+  /**
+   * Resolves a column default value, wrapping special SQL keywords in knex.raw().
+   * Why: Knex.defaultTo() quotes string values by default. For keywords like
+   * CURRENT_TIMESTAMP, this results in 'CURRENT_TIMESTAMP' which MySQL rejects.
+   * Wrapping in knex.raw() ensures the keyword is emitted without quotes.
+   * @param {object} knex - Knex instance
+   * @param {*} value - Raw default value from schema
+   * @returns {*} Resolved value (possibly knex.raw)
+   */
+  _resolveDefault(knex, value) {
+    if (typeof value !== 'string') return value
+
+    const lower = value.toLowerCase().trim()
+    if (lower === 'current_timestamp' || lower === 'current_timestamp()' || lower === 'now()') {
+      return knex.raw(value)
+    }
+
+    return value
+  }
+
+  _buildColumns(knex, table, columns) {
     if (!columns) return
 
     for (const [colName, def] of Object.entries(columns)) {
@@ -930,7 +951,7 @@ class Migration {
       if (def.nullable === false) col.notNullable()
       else if (def.nullable === true) col.nullable()
 
-      if (def.default !== undefined) col.defaultTo(def.default)
+      if (def.default !== undefined) col.defaultTo(this._resolveDefault(knex, def.default))
       if (def.unsigned) col.unsigned()
       // Column-level unique is handled via _normalizeSchema → _buildIndexes.
       // Applying it here as well would create duplicate constraints.
@@ -1019,14 +1040,14 @@ class Migration {
    * @param {string} colName - Column name
    * @param {object} def - Column definition
    */
-  _addColumn(table, colName, def) {
+  _addColumn(knex, table, colName, def) {
     const col = this._createColumnBuilder(table, colName, def)
     if (!col) return
 
     if (def.nullable === false) col.notNullable()
     else col.nullable()
 
-    if (def.default !== undefined) col.defaultTo(def.default)
+    if (def.default !== undefined) col.defaultTo(this._resolveDefault(knex, def.default))
     if (def.unsigned) col.unsigned()
     if (def.references) col.references(def.references.column).inTable(def.references.table)
     if (def.onDelete) col.onDelete(def.onDelete)
@@ -1039,7 +1060,7 @@ class Migration {
    * @param {string} colName - Column name
    * @param {object} def - Column definition
    */
-  _alterColumn(table, colName, def, currentNullable) {
+  _alterColumn(knex, table, colName, def, currentNullable) {
     const col = this._createColumnBuilder(table, colName, def)
     if (!col) return
 
@@ -1052,7 +1073,7 @@ class Migration {
     else if (currentNullable === false) col.notNullable()
     else if (currentNullable === true) col.nullable()
 
-    if (def.default !== undefined) col.defaultTo(def.default)
+    if (def.default !== undefined) col.defaultTo(this._resolveDefault(knex, def.default))
 
     col.alter()
   }
