@@ -104,6 +104,15 @@ class Cron {
     }
   }
 
+  /**
+   * Removes all cron jobs registered from a given route file.
+   * Called before hot-reloading a route file to prevent duplicate cron registrations.
+   */
+  clear(route) {
+    if (!route) return
+    this.#jobs = this.#jobs.filter(job => job.route !== route)
+  }
+
   job(controller) {
     let path
     if (typeof controller !== 'function') {
@@ -114,6 +123,7 @@ class Cron {
       }
     }
     this.#jobs.push({
+      route: global.Odac?.Route?.buff || null,
       controller: typeof controller === 'function' ? null : controller,
       lastRun: null,
       condition: [],

@@ -43,7 +43,8 @@ Reference environment variables using `${VARIABLE_NAME}` syntax:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "${MYSQL_HOST}",
     "user": "${MYSQL_USER}",
     "password": "${MYSQL_PASSWORD}",
@@ -95,7 +96,7 @@ module.exports = function() {
 
 ```javascript
 module.exports = function() {
-  const dbHost = Odac.Config.mysql.host
+  const dbHost = Odac.Config.database.host
   const apiKey = Odac.Config.api.stripe.key
 }
 ```

@@ -30,10 +30,30 @@ const apiKey = Odac.env('API_KEY');
 ### 2. odac.json Structure
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "${DB_HOST}",
     "password": "${DB_PASSWORD}"
   },
   "debug": true
 }
 ```
+
+### 3. Multiple Databases
+```json
+{
+  "database": {
+    "default": {
+      "type": "mysql",
+      "database": "main_app"
+    },
+    "analytics": {
+      "type": "postgres",
+      "host": "analytics.local",
+      "database": "events"
+    }
+  }
+}
+```
+
+Access via: `Odac.DB.analytics.tableName`

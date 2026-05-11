@@ -8,7 +8,8 @@ The `<odac:login>` component provides a zero-configuration way to create secure 
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "",
@@ -47,7 +48,8 @@ If you want to customize table names or primary key:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "",
@@ -428,11 +430,12 @@ input._odac_error {
 
 ### Required Configuration
 
-Only MySQL configuration is required:
+Only database configuration is required:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "",

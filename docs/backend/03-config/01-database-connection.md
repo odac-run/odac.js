@@ -1,12 +1,13 @@
 ## 🔌 Database Connection
 
-When you add a `mysql` object to your `odac.json`, the system will automatically connect to your MySQL database. No separate connection setup is needed in your code.
+When you add a `database` object to your `odac.json`, the system will automatically connect to your database. No separate connection setup is needed in your code.
 
 ### Basic Configuration
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "your_user",
     "password": "your_password",
@@ -24,7 +25,8 @@ For better security, especially in production, you can use environment variables
 **odac.json:**
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "${MYSQL_HOST}",
     "user": "${MYSQL_USER}",
     "password": "${MYSQL_PASSWORD}",
@@ -48,7 +50,8 @@ You can also mix direct values with environment variables:
 
 ```json
 {
-  "mysql": {
+  "database": {
+    "type": "mysql",
     "host": "localhost",
     "user": "root",
     "password": "${MYSQL_PASSWORD}",
@@ -58,3 +61,37 @@ You can also mix direct values with environment variables:
 ```
 
 This way, non-sensitive values are directly in the config while passwords remain in the `.env` file.
+
+### Multiple Database Connections
+
+ODAC supports multiple simultaneous database connections. You can define them as named objects within the `database` configuration:
+
+```json
+{
+  "database": {
+    "default": {
+      "type": "mysql",
+      "host": "localhost",
+      "database": "app_db"
+    },
+    "analytics": {
+      "type": "postgres",
+      "host": "remote-stats.db",
+      "database": "events"
+    }
+  }
+}
+```
+
+#### Usage in Code
+
+To use a specific connection, access it by its name via `Odac.DB`:
+
+```javascript
+// Uses 'default' connection
+const users = await Odac.DB.users.select('*')
+
+// Uses 'analytics' connection
+const events = await Odac.DB.analytics.pageviews.select('*')
+```
+

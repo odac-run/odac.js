@@ -452,6 +452,7 @@ class Route {
 
         if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
           delete require.cache[require.resolve(filePath)]
+          Cron.clear(Odac.Route.buff)
           routes2[Odac.Route.buff] = mtime
           const routeModule = require(filePath)
           if (typeof routeModule === 'function') {
