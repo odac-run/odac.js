@@ -739,7 +739,7 @@ class Migration {
 
       // Apply default value change if specified
       if (op.definition.default !== undefined) {
-        const lower = String(op.definition.default).toLowerCase()
+        const lower = String(op.definition.default).toLowerCase().trim()
         if (lower === 'now()' || lower === 'current_timestamp' || lower === 'current_timestamp()') {
           await knex.raw(`ALTER TABLE ?? ALTER COLUMN ?? SET DEFAULT ${lower}`, [tableName, op.column])
         } else {

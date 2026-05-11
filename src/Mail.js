@@ -433,8 +433,8 @@ class Mail {
           }
 
           // RFC 5321 §4.5.3.1.6: SMTP lines must be ≤1000 octets including CRLF.
-          // Wrap to 76 chars and force CRLF so downstream SMTP doesn't reject "too long a line".
-          htmlContent = this.#wrapLines(htmlContent)
+          // Wrap to 990 chars for HTML and 76 for text to prevent SMTP rejection.
+          htmlContent = this.#wrapLines(htmlContent, 990)
           textContent = this.#wrapLines(textContent)
 
           if (!this.#header['From']) this.#header['From'] = `${this.#encode(this.#from.name)} <${this.#from.email}>`
