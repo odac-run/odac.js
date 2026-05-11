@@ -1,3 +1,19 @@
+### 📚 Documentation
+
+- refactor database configuration to a unified structure and document multi-connection support
+
+### 🛠️ Fixes & Improvements
+
+- **mail:** add line wrapping for email content to comply with SMTP standards
+- **mail:** use 990-char wrap for HTML, 76 for text; trim migration defaults
+- **route:** hot-reload cron fix
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - add esbuild-powered JS/TS frontend pipeline
