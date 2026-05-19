@@ -3,6 +3,49 @@ const nodeCrypto = require('crypto')
 class Form {
   static FORM_TYPES = ['register', 'login', 'magic-login', 'form']
 
+  static FORM_META = {
+    form: {
+      cssClass: 'odac-custom-form',
+      dataAttr: 'data-odac-form',
+      tokenInputName: '_odac_form_token',
+      action: '/_odac/form',
+      defaultSubmitText: 'Submit',
+      defaultSubmitLoading: 'Processing...',
+      storageKey: 'customForms',
+      sessionKeyPrefix: '_custom_form_'
+    },
+    register: {
+      cssClass: 'odac-register-form',
+      dataAttr: 'data-odac-register',
+      tokenInputName: '_odac_register_token',
+      action: '/_odac/register',
+      defaultSubmitText: 'Register',
+      defaultSubmitLoading: 'Processing...',
+      storageKey: 'registerForms',
+      sessionKeyPrefix: '_register_form_'
+    },
+    login: {
+      cssClass: 'odac-login-form',
+      dataAttr: 'data-odac-login',
+      tokenInputName: '_odac_login_token',
+      action: '/_odac/login',
+      defaultSubmitText: 'Login',
+      defaultSubmitLoading: 'Logging in...',
+      storageKey: 'loginForms',
+      sessionKeyPrefix: '_login_form_'
+    },
+    'magic-login': {
+      cssClass: 'odac-magic-login-form',
+      dataAttr: 'data-odac-magic-login',
+      tokenInputName: '_odac_magic_login_token',
+      action: '/_odac/magic-login',
+      defaultSubmitText: 'Send Magic Link',
+      defaultSubmitLoading: 'Sending...',
+      storageKey: 'magicLoginForms',
+      sessionKeyPrefix: '_magic_login_form_'
+    }
+  }
+
   static escapeHtml(value) {
     if (value === null || value === undefined) return ''
     const map = {
@@ -22,70 +65,137 @@ class Form {
     return content
   }
 
+  /**
+   * Compile-time transform for <odac:{type}>...</odac:{type}> blocks.
+   *
+   * Emits two <script:odac> runtime hooks (openForm / closeForm) with the
+   * form body kept inline between them. This preserves the view engine
+   * pipeline for inner content — <odac:if>, <odac:for>, {{ }} interpolation,
+   * etc. all keep working inside forms instead of being frozen into a JSON
+   * string blob and then mangled by later passes.
+   */
   static parseFormType(content, Odac, type) {
+    const meta = this.FORM_META[type]
     const regex = new RegExp(`<odac:${type}[\\s\\S]*?<\\/odac:${type}>`, 'g')
+
     return content.replace(regex, match => {
       const formConfig = this.extractConfig(match, null, type)
+
+      const openTagRegex = new RegExp(`^<odac:${type}[^>]*>`)
+      const closeTagRegex = new RegExp(`</odac:${type}>$`)
+      let innerContent = match.replace(openTagRegex, '').replace(closeTagRegex, '')
+
+      // Pre-render <odac:input> tags into <input>/<textarea>/<label> markup.
+      // Field values may contain {{ }} — those stay as-is here and get
+      // resolved by the view engine's {{ }} pass on the surrounding HTML.
+      innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
+        const field = this.parseInput(fieldMatch)
+        if (!field) return fieldMatch
+        return this.generateFieldHtml(field)
+      })
+
+      // Pre-render <odac:submit>...</odac:submit> (or self-closing) into <button>
+      let submitRendered = false
+      innerContent = innerContent.replace(/<odac:submit([^>]*?)(?:\/>|>(.*?)<\/odac:submit>)/g, () => {
+        submitRendered = true
+        return this.generateSubmitButton(formConfig, meta)
+      })
+
+      // magic-login convenience: if the author didn't write any <odac:input>,
+      // append the default email field that extractConfig pushed into config.
+      if (type === 'magic-login' && !match.includes('<odac:input')) {
+        const emailField = formConfig.fields.find(f => f.name === 'email')
+        if (emailField) innerContent += '\n' + this.generateFieldHtml(emailField)
+      }
+
+      // magic-login convenience: if no <odac:submit> was rendered, add one.
+      if (type === 'magic-login' && !submitRendered) {
+        innerContent += '\n' + this.generateSubmitButton(formConfig, meta)
+      }
+
+      // <odac:set> is server-side only (sent into stored config) — strip from DOM.
+      innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
+
+      // Serialize config; turn "{{ expr }}" string values into live (await expr)
+      // so dynamic config values are evaluated at request time, not compile time.
       let configStr = JSON.stringify(formConfig)
-      let matchStr = JSON.stringify(match)
-
-      // Unquote dynamic variables to make them live JS expressions in the compiled view
-      // We avoid {{ }} here because View engine would turn them into ${ } which is invalid in naked JS
       configStr = configStr.replace(/"\{\{([\s\S]*?)\}\}"/g, '(await $1)')
-      matchStr = matchStr.replace(/\{\{([\s\S]*?)\}\}/g, '" + (await Odac.Var(await $1).html()) + "')
 
-      return `<script:odac>html += await Odac.View.Form.runtime(Odac, '${type}', ${configStr}, ${matchStr});</script:odac>`
+      return (
+        `<script:odac>html += await Odac.View.Form.openForm(Odac, '${type}', ${configStr});</script:odac>` +
+        innerContent +
+        `<script:odac>html += await Odac.View.Form.closeForm();</script:odac>`
+      )
     })
   }
 
-  /**
-   * Generates the form at runtime to ensure a fresh token is created and stored
-   * in the current session for every request. This prevents "session expired"
-   * errors caused by caching the form token in the compiled view.
-   */
-  static async runtime(Odac, type, config, originalHtml) {
+  // - RUNTIME: emits the opening <form ...> + hidden token input.
+  //   Generates a fresh CSRF token per render and persists the resolved
+  //   config in the session under the type-specific key.
+  static async openForm(Odac, type, config) {
+    const meta = this.FORM_META[type]
     const token = nodeCrypto.randomBytes(32).toString('hex')
     config.token = token
-
     this.storeConfig(token, config, Odac, type)
 
-    return this.generateForm(originalHtml, config, token, type)
+    const method = (config.method || 'POST').toUpperCase()
+    let classes = meta.cssClass
+    if (config.class) classes += ' ' + config.class
+
+    let attrs = `class="${this.escapeHtml(classes)}"`
+    attrs += ` ${meta.dataAttr}="${this.escapeHtml(token)}"`
+    attrs += ` method="${this.escapeHtml(method)}"`
+    attrs += ` action="${this.escapeHtml(meta.action)}"`
+    attrs += ` novalidate`
+    if (config.id) attrs += ` id="${this.escapeHtml(config.id)}"`
+    if (type === 'form' && config.clear !== undefined) attrs += ` clear="${config.clear}"`
+
+    let html = `<form ${attrs}>\n`
+    html += `  <input type="hidden" name="${meta.tokenInputName}" value="${this.escapeHtml(token)}">\n`
+    return html
   }
 
-  static extractConfig(html, formToken, type) {
-    if (type === 'register') {
-      return this.extractRegisterConfig(html, formToken)
-    } else if (type === 'login') {
-      return this.extractLoginConfig(html, formToken)
-    } else if (type === 'magic-login') {
-      return this.extractMagicLoginConfig(html, formToken)
-    } else if (type === 'form') {
-      return this.extractFormConfig(html, formToken)
-    }
+  // - RUNTIME: emits the trailing success span + </form>.
+  static async closeForm() {
+    return `\n  <span class="odac-form-success" style="display:none;"></span>\n</form>`
   }
 
   static storeConfig(token, config, Odac, type) {
-    if (type === 'register') {
-      this.storeRegisterConfig(token, config, Odac)
-    } else if (type === 'login') {
-      this.storeLoginConfig(token, config, Odac)
-    } else if (type === 'magic-login') {
-      this.storeMagicLoginConfig(token, config, Odac)
-    } else if (type === 'form') {
-      this.storeFormConfig(token, config, Odac)
+    const meta = this.FORM_META[type]
+    if (!Odac.View) Odac.View = {}
+    if (!Odac.View[meta.storageKey]) Odac.View[meta.storageKey] = {}
+
+    const formData = {
+      config: config,
+      created: Date.now(),
+      expires: Date.now() + 30 * 60 * 1000,
+      sessionId: Odac.Request.session('_client'),
+      userAgent: Odac.Request.header('user-agent'),
+      ip: Odac.Request.ip
     }
+
+    Odac.View[meta.storageKey][token] = formData
+    Odac.Request.session(meta.sessionKeyPrefix + token, formData)
   }
 
-  static generateForm(originalHtml, config, formToken, type) {
-    if (type === 'register') {
-      return this.generateRegisterForm(originalHtml, config, formToken)
-    } else if (type === 'login') {
-      return this.generateLoginForm(originalHtml, config, formToken)
-    } else if (type === 'magic-login') {
-      return this.generateMagicLoginForm(originalHtml, config, formToken)
-    } else if (type === 'form') {
-      return this.generateCustomForm(originalHtml, config, formToken)
-    }
+  static extractConfig(html, formToken, type) {
+    if (type === 'register') return this.extractRegisterConfig(html, formToken)
+    if (type === 'login') return this.extractLoginConfig(html, formToken)
+    if (type === 'magic-login') return this.extractMagicLoginConfig(html, formToken)
+    if (type === 'form') return this.extractFormConfig(html, formToken)
+  }
+
+  static generateSubmitButton(config, meta) {
+    const submitText = config.submitText || meta.defaultSubmitText
+    const submitLoading = config.submitLoading || meta.defaultSubmitLoading
+
+    let attrs = `type="submit"`
+    attrs += ` data-submit-text="${this.escapeHtml(submitText)}"`
+    attrs += ` data-loading-text="${this.escapeHtml(submitLoading)}"`
+    if (config.submitClass) attrs += ` class="${this.escapeHtml(config.submitClass)}"`
+    if (config.submitStyle) attrs += ` style="${this.escapeHtml(config.submitStyle)}"`
+    if (config.submitId) attrs += ` id="${this.escapeHtml(config.submitId)}"`
+    return `<button ${attrs}>${this.escapeHtml(submitText)}</button>`
   }
 
   static extractRegisterConfig(html, formToken) {
@@ -109,23 +219,50 @@ class Form {
     if (redirectMatch) config.redirect = redirectMatch[1]
     if (autologinMatch) config.autologin = autologinMatch[1] !== 'false'
 
-    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
-    if (submitMatch) {
-      const submitTag = submitMatch[1]
-      const textMatch = submitTag.match(/text=["']([^"']+)["']/)
-      const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
-      const classMatch = submitTag.match(/class=["']([^"']+)["']/)
-      const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
-      const idMatch = submitTag.match(/id=["']([^"']+)["']/)
+    this.applySubmitConfig(html, config)
+    this.collectFields(html, config)
+    this.collectSets(html, config)
 
-      if (textMatch) config.submitText = textMatch[1]
-      else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
+    return config
+  }
 
-      if (loadingMatch) config.submitLoading = loadingMatch[1]
-      if (classMatch) config.submitClass = classMatch[1]
-      if (styleMatch) config.submitStyle = styleMatch[1]
-      if (idMatch) config.submitId = idMatch[1]
+  static extractLoginConfig(html, formToken) {
+    const config = {
+      token: formToken,
+      redirect: null,
+      submitText: 'Login',
+      submitLoading: 'Logging in...',
+      fields: []
     }
+
+    const loginMatch = html.match(/<odac:login([^>]*)>/)
+    if (!loginMatch) return config
+
+    const redirectMatch = loginMatch[0].match(/redirect=["']([^"']+)["']/)
+    if (redirectMatch) config.redirect = redirectMatch[1]
+
+    this.applySubmitConfig(html, config)
+    this.collectFields(html, config)
+
+    return config
+  }
+
+  static extractMagicLoginConfig(html, formToken) {
+    const config = {
+      token: formToken,
+      redirect: null,
+      submitText: 'Send Magic Link',
+      submitLoading: 'Sending...',
+      fields: []
+    }
+
+    const tagMatch = html.match(/<odac:magic-login([^>]*)>/)
+    if (!tagMatch) return config
+
+    const tag = tagMatch[0]
+    const redirectMatch = tag.match(/redirect=["']([^"']+)["']/)
+    const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
+    if (redirectMatch) config.redirect = redirectMatch[1]
 
     const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {
@@ -133,17 +270,121 @@ class Form {
         const field = this.parseInput(fieldHtml)
         if (field) config.fields.push(field)
       }
+    } else {
+      config.fields.push({
+        name: 'email',
+        type: 'email',
+        placeholder: 'e.g. user@example.com',
+        label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
+        class: '',
+        id: null,
+        unique: false,
+        skip: false,
+        value: null,
+        validations: [
+          {rule: 'required', message: 'Email is required'},
+          {rule: 'email', message: 'Invalid email format'}
+        ]
+      })
     }
 
-    const setMatches = html.match(/<odac:set[^>]*\/?>/g)
-    if (setMatches) {
-      for (const setTag of setMatches) {
-        const set = this.parseSet(setTag)
-        if (set) config.sets.push(set)
-      }
+    const applied = this.applySubmitConfig(html, config)
+    if (!applied) {
+      const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
+      if (submitTextAttr) config.submitText = submitTextAttr[1]
     }
 
     return config
+  }
+
+  static extractFormConfig(html, formToken) {
+    const config = {
+      token: formToken,
+      action: null,
+      method: 'POST',
+      submitText: 'Submit',
+      submitLoading: 'Processing...',
+      fields: [],
+      sets: [],
+      class: '',
+      id: null,
+      table: null,
+      redirect: null,
+      successMessage: null
+    }
+
+    const formMatch = html.match(/<odac:form([^>]*)>/)
+    if (!formMatch) return config
+
+    const formTag = formMatch[0]
+    const extractAttr = name => {
+      const m = formTag.match(new RegExp(`${name}=(['"])((?:(?!\\1).)*)\\1`))
+      return m ? m[2] : null
+    }
+
+    const actionMatch = extractAttr('action')
+    const methodMatch = extractAttr('method')
+    const classMatch = extractAttr('class')
+    const idMatch = extractAttr('id')
+    const tableMatch = extractAttr('table')
+    const redirectMatch = extractAttr('redirect')
+    const successMatch = extractAttr('success')
+    const clearMatch = extractAttr('clear')
+
+    if (actionMatch) config.action = actionMatch
+    if (methodMatch) config.method = methodMatch.toUpperCase()
+    if (classMatch) config.class = classMatch
+    if (idMatch) config.id = idMatch
+    if (tableMatch) config.table = tableMatch
+    if (redirectMatch) config.redirect = redirectMatch
+    if (successMatch) config.successMessage = successMatch
+    if (clearMatch !== null) config.clear = clearMatch === 'true' || clearMatch === ''
+
+    this.applySubmitConfig(html, config)
+    this.collectFields(html, config)
+    this.collectSets(html, config)
+
+    return config
+  }
+
+  static applySubmitConfig(html, config) {
+    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    if (!submitMatch) return false
+
+    const submitTag = submitMatch[1]
+    const textMatch = submitTag.match(/text=["']([^"']+)["']/)
+    const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
+    const classMatch = submitTag.match(/class=["']([^"']+)["']/)
+    const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
+    const idMatch = submitTag.match(/id=["']([^"']+)["']/)
+
+    if (textMatch) config.submitText = textMatch[1]
+    else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
+
+    if (loadingMatch) config.submitLoading = loadingMatch[1]
+    if (classMatch) config.submitClass = classMatch[1]
+    if (styleMatch) config.submitStyle = styleMatch[1]
+    if (idMatch) config.submitId = idMatch[1]
+
+    return true
+  }
+
+  static collectFields(html, config) {
+    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
+    if (!fieldMatches) return
+    for (const fieldHtml of fieldMatches) {
+      const field = this.parseInput(fieldHtml)
+      if (field) config.fields.push(field)
+    }
+  }
+
+  static collectSets(html, config) {
+    const setMatches = html.match(/<odac:set[^>]*\/?>/g)
+    if (!setMatches) return
+    for (const setTag of setMatches) {
+      const set = this.parseSet(setTag)
+      if (set) config.sets.push(set)
+    }
   }
 
   static parseInput(html) {
@@ -190,7 +431,6 @@ class Form {
       for (const validateTag of validateMatches) {
         const ruleMatch = validateTag.match(/rule=["']([^"']+)["']/)
         const messageMatch = validateTag.match(/message=(["'])(.*?)\1/)
-
         if (ruleMatch) {
           field.validations.push({
             rule: ruleMatch[1],
@@ -200,23 +440,15 @@ class Form {
       }
     }
 
-    // Capture generic attributes
     const extraAttrs = {}
     const knownAttrs = ['name', 'type', 'placeholder', 'label', 'class', 'id', 'unique', 'skip', 'value']
     const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-    let attrMatch
-    // Clean tag to just attributes part for safer regex matching if needed,
-    // or just run on fieldTag from start
     const attributesString = fieldTag.replace(/^<odac:input/, '').replace(/\/?>$/, '')
-
+    let attrMatch
     while ((attrMatch = attrRegex.exec(attributesString))) {
       const key = attrMatch[1]
-      // If value is undefined, it's a boolean attribute (e.g. required, autofocus) -> set as true (or empty string)
       const value = attrMatch[3] !== undefined ? attrMatch[3] : attrMatch[4] !== undefined ? attrMatch[4] : ''
-
-      if (!knownAttrs.includes(key)) {
-        extraAttrs[key] = value
-      }
+      if (!knownAttrs.includes(key)) extraAttrs[key] = value
     }
     field.extraAttributes = extraAttrs
 
@@ -246,59 +478,6 @@ class Form {
     if (ifEmptyMatch) set.ifEmpty = ifEmptyMatch[2] !== 'false'
 
     return set
-  }
-
-  static storeRegisterConfig(token, config, Odac) {
-    if (!Odac.View) Odac.View = {}
-    if (!Odac.View.registerForms) Odac.View.registerForms = {}
-
-    const formData = {
-      config: config,
-      created: Date.now(),
-      expires: Date.now() + 30 * 60 * 1000,
-      sessionId: Odac.Request.session('_client'),
-      userAgent: Odac.Request.header('user-agent'),
-      ip: Odac.Request.ip
-    }
-
-    Odac.View.registerForms[token] = formData
-    Odac.Request.session(`_register_form_${token}`, formData)
-  }
-
-  static generateRegisterForm(originalHtml, config, formToken) {
-    const submitText = config.submitText || 'Register'
-    const submitLoading = config.submitLoading || 'Processing...'
-
-    let innerContent = originalHtml.replace(/<odac:register[^>]*>/, '').replace(/<\/odac:register>/, '')
-
-    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
-      const field = this.parseInput(fieldMatch)
-      if (!field) return fieldMatch
-      // Sync with resolved config value if available
-      const configField = config.fields.find(f => f.name === field.name)
-      if (configField) field.value = configField.value
-      return this.generateFieldHtml(field)
-    })
-
-    const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
-    if (submitMatch) {
-      let submitAttrs = `type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}"`
-      if (config.submitClass) submitAttrs += ` class="${config.submitClass}"`
-      if (config.submitStyle) submitAttrs += ` style="${config.submitStyle}"`
-      if (config.submitId) submitAttrs += ` id="${config.submitId}"`
-      const submitButton = `<button ${submitAttrs}>${submitText}</button>`
-      innerContent = innerContent.replace(submitMatch[0], submitButton)
-    }
-
-    innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
-
-    let html = `<form class="odac-register-form" data-odac-register="${formToken}" method="POST" action="/_odac/register" novalidate>\n`
-    html += `  <input type="hidden" name="_odac_register_token" value="${formToken}">\n`
-    html += innerContent
-    html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
-    html += `</form>`
-
-    return html
   }
 
   static generateFieldHtml(field) {
@@ -341,18 +520,11 @@ class Form {
   }
 
   static appendExtraAttributes(attrs, field) {
-    if (field.extraAttributes) {
-      for (const key in field.extraAttributes) {
-        const val = field.extraAttributes[key]
-        // If val is empty string, render as boolean attribute if typical, or key=""
-        // For HTML5 boolean attrs like autofocus, required, checked, readonly, disabled, multiple, selected
-        // presence is enough.
-        if (val === '') {
-          attrs += ` ${key}`
-        } else {
-          attrs += ` ${key}="${this.escapeHtml(val)}"`
-        }
-      }
+    if (!field.extraAttributes) return attrs
+    for (const key in field.extraAttributes) {
+      const val = field.extraAttributes[key]
+      if (val === '') attrs += ` ${key}`
+      else attrs += ` ${key}="${this.escapeHtml(val)}"`
     }
     return attrs
   }
@@ -443,379 +615,7 @@ class Form {
     if (errorMessages.pattern) attrs += ` data-error-pattern="${this.escapeHtml(errorMessages.pattern)}"`
     if (errorMessages.email) attrs += ` data-error-email="${this.escapeHtml(errorMessages.email)}"`
 
-    attrs = this.appendExtraAttributes(attrs, field)
-
-    return attrs
-  }
-
-  static extractLoginConfig(html, formToken) {
-    const config = {
-      token: formToken,
-      redirect: null,
-      submitText: 'Login',
-      submitLoading: 'Logging in...',
-      fields: []
-    }
-
-    const loginMatch = html.match(/<odac:login([^>]*)>/)
-    if (!loginMatch) return config
-
-    const loginTag = loginMatch[0]
-    const redirectMatch = loginTag.match(/redirect=["']([^"']+)["']/)
-
-    if (redirectMatch) config.redirect = redirectMatch[1]
-
-    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
-    if (submitMatch) {
-      const submitTag = submitMatch[1]
-      const textMatch = submitTag.match(/text=["']([^"']+)["']/)
-      const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
-      const classMatch = submitTag.match(/class=["']([^"']+)["']/)
-      const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
-      const idMatch = submitTag.match(/id=["']([^"']+)["']/)
-
-      if (textMatch) config.submitText = textMatch[1]
-      else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
-
-      if (loadingMatch) config.submitLoading = loadingMatch[1]
-      if (classMatch) config.submitClass = classMatch[1]
-      if (styleMatch) config.submitStyle = styleMatch[1]
-      if (idMatch) config.submitId = idMatch[1]
-    }
-
-    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
-    if (fieldMatches) {
-      for (const fieldHtml of fieldMatches) {
-        const field = this.parseInput(fieldHtml)
-        if (field) config.fields.push(field)
-      }
-    }
-
-    return config
-  }
-
-  static storeLoginConfig(token, config, Odac) {
-    if (!Odac.View) Odac.View = {}
-    if (!Odac.View.loginForms) Odac.View.loginForms = {}
-
-    const formData = {
-      config: config,
-      created: Date.now(),
-      expires: Date.now() + 30 * 60 * 1000,
-      sessionId: Odac.Request.session('_client'),
-      userAgent: Odac.Request.header('user-agent'),
-      ip: Odac.Request.ip
-    }
-
-    Odac.View.loginForms[token] = formData
-    Odac.Request.session(`_login_form_${token}`, formData)
-  }
-
-  static generateLoginForm(originalHtml, config, formToken) {
-    const submitText = config.submitText || 'Login'
-    const submitLoading = config.submitLoading || 'Logging in...'
-
-    let innerContent = originalHtml.replace(/<odac:login[^>]*>/, '').replace(/<\/odac:login>/, '')
-
-    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
-      const field = this.parseInput(fieldMatch)
-      if (!field) return fieldMatch
-      // Sync with resolved config value if available
-      const configField = config.fields.find(f => f.name === field.name)
-      if (configField) field.value = configField.value
-      return this.generateFieldHtml(field)
-    })
-
-    const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
-    if (submitMatch) {
-      let submitAttrs = `type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}"`
-      if (config.submitClass) submitAttrs += ` class="${config.submitClass}"`
-      if (config.submitStyle) submitAttrs += ` style="${config.submitStyle}"`
-      if (config.submitId) submitAttrs += ` id="${config.submitId}"`
-      const submitButton = `<button ${submitAttrs}>${submitText}</button>`
-      innerContent = innerContent.replace(submitMatch[0], submitButton)
-    }
-
-    let html = `<form class="odac-login-form" data-odac-login="${formToken}" method="POST" action="/_odac/login" novalidate>\n`
-    html += `  <input type="hidden" name="_odac_login_token" value="${formToken}">\n`
-    html += innerContent
-    html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
-    html += `</form>`
-
-    return html
-  }
-
-  static extractFormConfig(html, formToken) {
-    const config = {
-      token: formToken,
-      action: null,
-      method: 'POST',
-      submitText: 'Submit',
-      submitLoading: 'Processing...',
-      fields: [],
-      sets: [],
-      class: '',
-      id: null,
-      table: null,
-      redirect: null,
-      successMessage: null
-    }
-
-    const formMatch = html.match(/<odac:form([^>]*)>/)
-    if (!formMatch) return config
-
-    const formTag = formMatch[0]
-    const extractAttr = name => {
-      const match = formTag.match(new RegExp(`${name}=(['"])((?:(?!\\1).)*)\\1`))
-      return match ? match[2] : null
-    }
-
-    const actionMatch = extractAttr('action')
-    const methodMatch = extractAttr('method')
-    const classMatch = extractAttr('class')
-    const idMatch = extractAttr('id')
-    const tableMatch = extractAttr('table')
-    const redirectMatch = extractAttr('redirect')
-    const successMatch = extractAttr('success')
-
-    if (actionMatch) config.action = actionMatch
-    if (methodMatch) config.method = methodMatch.toUpperCase()
-    if (classMatch) config.class = classMatch
-    if (idMatch) config.id = idMatch
-    if (tableMatch) config.table = tableMatch
-    if (redirectMatch) config.redirect = redirectMatch
-    if (successMatch) config.successMessage = successMatch
-    const clearMatch = extractAttr('clear')
-    if (clearMatch !== null) config.clear = clearMatch === 'true' || clearMatch === ''
-
-    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
-    if (submitMatch) {
-      const submitTag = submitMatch[1]
-      const textMatch = submitTag.match(/text=["']([^"']+)["']/)
-      const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
-      const classMatch = submitTag.match(/class=["']([^"']+)["']/)
-      const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
-      const idMatch = submitTag.match(/id=["']([^"']+)["']/)
-
-      if (textMatch) config.submitText = textMatch[1]
-      else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
-
-      if (loadingMatch) config.submitLoading = loadingMatch[1]
-      if (classMatch) config.submitClass = classMatch[1]
-      if (styleMatch) config.submitStyle = styleMatch[1]
-      if (idMatch) config.submitId = idMatch[1]
-    }
-
-    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
-    if (fieldMatches) {
-      for (const fieldHtml of fieldMatches) {
-        const field = this.parseInput(fieldHtml)
-        if (field) config.fields.push(field)
-      }
-    }
-
-    const setMatches = html.match(/<odac:set[^>]*\/?>/g)
-    if (setMatches) {
-      for (const setTag of setMatches) {
-        const set = this.parseSet(setTag)
-        if (set) config.sets.push(set)
-      }
-    }
-
-    return config
-  }
-
-  static storeFormConfig(token, config, Odac) {
-    if (!Odac.View) Odac.View = {}
-    if (!Odac.View.customForms) Odac.View.customForms = {}
-
-    const formData = {
-      config: config,
-      created: Date.now(),
-      expires: Date.now() + 30 * 60 * 1000,
-      sessionId: Odac.Request.session('_client'),
-      userAgent: Odac.Request.header('user-agent'),
-      ip: Odac.Request.ip
-    }
-
-    Odac.View.customForms[token] = formData
-    Odac.Request.session(`_custom_form_${token}`, formData)
-  }
-
-  static generateCustomForm(originalHtml, config, formToken) {
-    const submitText = config.submitText || 'Submit'
-    const submitLoading = config.submitLoading || 'Processing...'
-    // Always post to internal handler, real action is in session config
-    const formAction = '/_odac/form'
-    const method = config.method || 'POST'
-
-    let innerContent = originalHtml.replace(/<odac:form[^>]*>/, '').replace(/<\/odac:form>/, '')
-
-    innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
-      const field = this.parseInput(fieldMatch)
-      if (!field) return fieldMatch
-      // Sync with resolved config value if available
-      const configField = config.fields.find(f => f.name === field.name)
-      if (configField) field.value = configField.value
-      return this.generateFieldHtml(field)
-    })
-
-    const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
-    if (submitMatch) {
-      let submitAttrs = `type="submit" data-submit-text="${this.escapeHtml(submitText)}" data-loading-text="${this.escapeHtml(submitLoading)}"`
-      if (config.submitClass) submitAttrs += ` class="${this.escapeHtml(config.submitClass)}"`
-      if (config.submitStyle) submitAttrs += ` style="${this.escapeHtml(config.submitStyle)}"`
-      if (config.submitId) submitAttrs += ` id="${this.escapeHtml(config.submitId)}"`
-      const submitButton = `<button ${submitAttrs}>${this.escapeHtml(submitText)}</button>`
-      innerContent = innerContent.replace(submitMatch[0], submitButton)
-    }
-
-    innerContent = innerContent.replace(/<odac:set[^>]*\/?>/g, '')
-
-    let formAttrs = `class="odac-custom-form${config.class ? ' ' + this.escapeHtml(config.class) : ''}" data-odac-form="${this.escapeHtml(formToken)}" method="${this.escapeHtml(method)}" action="${this.escapeHtml(formAction)}" novalidate`
-    if (config.id) formAttrs += ` id="${this.escapeHtml(config.id)}"`
-    if (config.clear !== undefined) formAttrs += ` clear="${config.clear}"`
-
-    let html = `<form ${formAttrs}>\n`
-    html += `  <input type="hidden" name="_odac_form_token" value="${this.escapeHtml(formToken)}">\n`
-    html += innerContent
-    html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
-    html += `</form>`
-
-    return html
-  }
-
-  static extractMagicLoginConfig(html, formToken) {
-    const config = {
-      token: formToken,
-      redirect: null,
-      submitText: 'Send Magic Link',
-      submitLoading: 'Sending...',
-      fields: []
-    }
-
-    const tagMatch = html.match(/<odac:magic-login([^>]*)>/)
-    if (!tagMatch) return config
-
-    const tag = tagMatch[0]
-    const redirectMatch = tag.match(/redirect=["']([^"']+)["']/)
-    const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
-
-    if (redirectMatch) config.redirect = redirectMatch[1]
-
-    // Auto-add email field if not manually specified (simplified usage)
-    const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
-
-    if (fieldMatches) {
-      // Custom fields included
-      for (const fieldHtml of fieldMatches) {
-        const field = this.parseInput(fieldHtml)
-        if (field) config.fields.push(field)
-      }
-    } else {
-      // Default Email Field
-      config.fields.push({
-        name: 'email',
-        type: 'email',
-        placeholder: 'e.g. user@example.com',
-        label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
-        class: '',
-        id: null,
-        unique: false,
-        skip: false,
-        validations: [
-          {rule: 'required', message: 'Email is required'},
-          {rule: 'email', message: 'Invalid email format'}
-        ]
-      })
-    }
-
-    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
-    if (submitMatch) {
-      const submitTag = submitMatch[1]
-      const textMatch = submitTag.match(/text=["']([^"']+)["']/)
-      const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
-      const classMatch = submitTag.match(/class=["']([^"']+)["']/)
-      const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
-      const idMatch = submitTag.match(/id=["']([^"']+)["']/)
-
-      if (textMatch) config.submitText = textMatch[1]
-      else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
-
-      if (loadingMatch) config.submitLoading = loadingMatch[1]
-      if (classMatch) config.submitClass = classMatch[1]
-      if (styleMatch) config.submitStyle = styleMatch[1]
-      if (idMatch) config.submitId = idMatch[1]
-    } else {
-      // Check for submit-text attribute on main tag if no submit tag
-      const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
-      if (submitTextAttr) config.submitText = submitTextAttr[1]
-    }
-
-    return config
-  }
-
-  static storeMagicLoginConfig(token, config, Odac) {
-    if (!Odac.View) Odac.View = {}
-    if (!Odac.View.magicLoginForms) Odac.View.magicLoginForms = {}
-
-    const formData = {
-      config: config,
-      created: Date.now(),
-      expires: Date.now() + 30 * 60 * 1000,
-      sessionId: Odac.Request.session('_client'),
-      userAgent: Odac.Request.header('user-agent'),
-      ip: Odac.Request.ip
-    }
-
-    Odac.View.magicLoginForms[token] = formData
-    Odac.Request.session(`_magic_login_form_${token}`, formData)
-  }
-
-  static generateMagicLoginForm(originalHtml, config, formToken) {
-    const submitText = config.submitText || 'Send Magic Link'
-    const submitLoading = config.submitLoading || 'Sending...'
-
-    let innerContent = originalHtml.replace(/<odac:magic-login[^>]*>/, '').replace(/<\/odac:magic-login>/, '')
-
-    // If no custom fields were present in HTML but we added default email in config
-    if (!originalHtml.includes('<odac:input')) {
-      const emailField = config.fields.find(f => f.name === 'email')
-      if (emailField) {
-        innerContent += this.generateFieldHtml(emailField)
-      }
-    } else {
-      innerContent = innerContent.replace(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g, fieldMatch => {
-        const field = this.parseInput(fieldMatch)
-        if (!field) return fieldMatch
-        // Sync with resolved config value if available
-        const configField = config.fields.find(f => f.name === field.name)
-        if (configField) field.value = configField.value
-        return this.generateFieldHtml(field)
-      })
-    }
-
-    const submitMatch = innerContent.match(/<odac:submit[\s\S]*?(?:<\/odac:submit>|\/?>)/)
-    if (submitMatch) {
-      let submitAttrs = `type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}"`
-      if (config.submitClass) submitAttrs += ` class="${config.submitClass}"`
-      if (config.submitStyle) submitAttrs += ` style="${config.submitStyle}"`
-      if (config.submitId) submitAttrs += ` id="${config.submitId}"`
-      const submitButton = `<button ${submitAttrs}>${submitText}</button>`
-      innerContent = innerContent.replace(submitMatch[0], submitButton)
-    } else if (!innerContent.includes('type="submit"')) {
-      // Auto add submit button if missing
-      const submitButton = `<button type="submit" data-submit-text="${submitText}" data-loading-text="${submitLoading}">${submitText}</button>`
-      innerContent += `\n${submitButton}`
-    }
-
-    let html = `<form class="odac-magic-login-form" data-odac-magic-login="${formToken}" method="POST" action="/_odac/magic-login" novalidate>\n`
-    html += `  <input type="hidden" name="_odac_magic_login_token" value="${formToken}">\n`
-    html += innerContent
-    html += `\n  <span class="odac-form-success" style="display:none;"></span>\n`
-    html += `</form>`
-
-    return html
+    return this.appendExtraAttributes(attrs, field)
   }
 }
 
