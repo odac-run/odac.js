@@ -118,8 +118,8 @@ class Form {
 
       // Serialize config; turn "{{ expr }}" string values into live (await expr)
       // so dynamic config values are evaluated at request time, not compile time.
-      let configStr = JSON.stringify(formConfig)
-      configStr = configStr.replace(/"\{\{([\s\S]*?)\}\}"/g, '(await $1)')
+      let configStr = JSON.stringify(formConfig).replace(/<\/script:odac/gi, '<\\/script:odac')
+      configStr = configStr.replace(/"\{\{([\s\S]*?)\}\}"/g, (_, expr) => `(await ${expr.replace(/\\"/g, '"')})`)
 
       return (
         `<script:odac>html += await Odac.View.Form.openForm(Odac, '${type}', ${configStr});</script:odac>` +
