@@ -541,6 +541,28 @@ if (typeof window !== 'undefined') {
           cache: cache,
           success: data => {
             if (!data.result) return false
+
+            // Token rotation must always apply on success, independent of messages config.
+            // Server has already cleared the old session entry; if we skip this update
+            // the next submit sends a stale token and gets "Form session expired".
+            if (data.result.success && data.result._token) {
+              const tokenInput = formElement.querySelector('input[name="_odac_form_token"]')
+              if (tokenInput) tokenInput.value = data.result._token
+
+              const formTokenAttr = formElement.getAttribute('data-odac-form')
+              if (formTokenAttr) {
+                formElement.setAttribute('data-odac-form', data.result._token)
+                if (!formElement.matches(formSelector)) {
+                  if (this.#formSubmitHandlers.has(formSelector)) {
+                    document.removeEventListener('submit', this.#formSubmitHandlers.get(formSelector))
+                    this.#formSubmitHandlers.delete(formSelector)
+                  }
+                  const newObj = {...obj, form: `form[data-odac-form="${data.result._token}"]`}
+                  this.form(newObj, callback)
+                }
+              }
+            }
+
             if (obj.messages == undefined || obj.messages) {
               if (data.result.success && (obj.messages == undefined || obj.messages.includes('success') || obj.messages == true)) {
                 const successEl = formElement.querySelector('*[odac-form-success]')
@@ -552,24 +574,6 @@ if (typeof window !== 'undefined') {
                   span.setAttribute('odac-form-success', obj.form)
                   span.innerHTML = this.textToHtml(data.result.message)
                   formElement.appendChild(span)
-                }
-
-                if (data.result._token) {
-                  const tokenInput = formElement.querySelector('input[name="_odac_form_token"]')
-                  if (tokenInput) tokenInput.value = data.result._token
-
-                  const formTokenAttr = formElement.getAttribute('data-odac-form')
-                  if (formTokenAttr) {
-                    formElement.setAttribute('data-odac-form', data.result._token)
-                    if (!formElement.matches(formSelector)) {
-                      if (this.#formSubmitHandlers.has(formSelector)) {
-                        document.removeEventListener('submit', this.#formSubmitHandlers.get(formSelector))
-                        this.#formSubmitHandlers.delete(formSelector)
-                      }
-                      const newObj = {...obj, form: `form[data-odac-form="${data.result._token}"]`}
-                      this.form(newObj, callback)
-                    }
-                  }
                 }
 
                 if (obj.clear !== false && formElement.getAttribute('clear') !== 'false' && !data.result.redirect) {

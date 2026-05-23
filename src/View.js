@@ -443,12 +443,7 @@ class View {
       content = this.#parseOdacTag(content)
       content = content.replace(/`/g, '\\\\`').replace(/\$\{/g, '\\\\${')
 
-      jsBlocks.forEach((jsContent, index) => {
-        content = content.replace(`___ODAC_JS_BLOCK_${index}___`, jsContent)
-      })
-
       let result = 'html += `\n' + content + '\n`'
-      content = content.split('\n')
       for (let key in this.#functions) {
         let att = ''
         let func = this.#functions[key]
@@ -517,6 +512,14 @@ class View {
           }
         }
       }
+
+      // Restore <script:odac> JS bodies after function processing so the regex
+      // pipeline above never sees user JS as template syntax. Use a function
+      // replacer to keep $-sequences in the JS literal (e.g. $$, $&) intact.
+      jsBlocks.forEach((jsContent, index) => {
+        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent)
+      })
+
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
       await fsPromises.mkdir(CACHE_DIR, {recursive: true})
       await fsPromises.writeFile(
