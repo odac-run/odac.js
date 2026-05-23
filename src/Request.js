@@ -50,12 +50,14 @@ class OdacRequest {
   async abort(code) {
     this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
-    if (
-      this.#odac.Route?.routes?.[this.route]?.error &&
-      this.#odac.Route.routes[this.route].error[code] &&
-      typeof this.#odac.Route.routes[this.route].error[code].cache === 'function'
-    )
-      result = await this.#odac.Route.routes[this.route].error[code].cache(this.#odac)
+    const errorRoute = this.#odac.Route?.routes?.[this.route]?.error?.[code]
+    if (errorRoute && typeof errorRoute.cache === 'function') {
+      const handlerResult = await errorRoute.cache(this.#odac)
+      // If the handler returned nothing, assume it configured the view via Odac.View.set()
+      // and let Route.request() continue to View.print() like normal pages.
+      if (handlerResult === undefined) return
+      result = handlerResult
+    }
     this.end(result)
   }
 
