@@ -58,6 +58,30 @@ class Form {
     return String(value).replace(/[&<>"']/g, ch => map[ch])
   }
 
+  // Like escapeHtml but leaves {{ ... }} / {!! ... !!} template tokens intact
+  // so they survive into the view engine's {{ }} pass. Escaping inside the
+  // tokens would corrupt the JS expression (e.g. ' -> &#39;) and produce
+  // "Unexpected token '&'" at render time.
+  static escapeHtmlPreservingTemplates(value) {
+    if (value === null || value === undefined) return ''
+    const str = String(value)
+    const regex = /\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g
+    let result = ''
+    let lastIndex = 0
+    let match
+    while ((match = regex.exec(str)) !== null) {
+      if (match.index > lastIndex) {
+        result += this.escapeHtml(str.substring(lastIndex, match.index))
+      }
+      result += match[0]
+      lastIndex = regex.lastIndex
+    }
+    if (lastIndex < str.length) {
+      result += this.escapeHtml(str.substring(lastIndex))
+    }
+    return result
+  }
+
   static parse(content, Odac) {
     for (const type of this.FORM_TYPES) {
       content = this.parseFormType(content, Odac, type)
@@ -484,16 +508,16 @@ class Form {
     let html = ''
     const escapedName = this.escapeHtml(field.name)
     const escapedType = this.escapeHtml(field.type)
-    const escapedPlaceholder = this.escapeHtml(field.placeholder)
+    const escapedPlaceholder = this.escapeHtmlPreservingTemplates(field.placeholder)
 
     if (field.label && field.type !== 'checkbox') {
       const fieldId = this.escapeHtml(field.id || `odac-${field.name}`)
-      html += `<label for="${fieldId}">${this.escapeHtml(field.label)}</label>\n`
+      html += `<label for="${fieldId}">${this.escapeHtmlPreservingTemplates(field.label)}</label>\n`
     }
 
     const classAttr = field.class ? ` class="${this.escapeHtml(field.class)}"` : ''
     const idAttr = field.id ? ` id="${this.escapeHtml(field.id)}"` : ` id="${this.escapeHtml(`odac-${field.name}`)}"`
-    const valueAttr = field.value !== null ? ` value="${this.escapeHtml(field.value)}"` : ''
+    const valueAttr = field.value !== null ? ` value="${this.escapeHtmlPreservingTemplates(field.value)}"` : ''
 
     if (field.type === 'checkbox') {
       const attrs = this.buildHtml5Attributes(field)
@@ -501,14 +525,14 @@ class Form {
       if (field.label) {
         html += `<label>\n`
         html += `  <input type="checkbox"${idAttr} name="${escapedName}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
-        html += `  ${this.escapeHtml(field.label)}\n`
+        html += `  ${this.escapeHtmlPreservingTemplates(field.label)}\n`
         html += `</label>\n`
       } else {
         html += `<input type="checkbox"${idAttr} name="${escapedName}" value="1"${classAttr}${checkedAttr}${attrs}>\n`
       }
     } else if (field.type === 'textarea') {
       const attrs = this.buildHtml5Attributes(field)
-      html += `<textarea${idAttr} name="${escapedName}" placeholder="${escapedPlaceholder}"${classAttr}${attrs}>${this.escapeHtml(
+      html += `<textarea${idAttr} name="${escapedName}" placeholder="${escapedPlaceholder}"${classAttr}${attrs}>${this.escapeHtmlPreservingTemplates(
         field.value || ''
       )}</textarea>\n`
     } else {
@@ -524,7 +548,7 @@ class Form {
     for (const key in field.extraAttributes) {
       const val = field.extraAttributes[key]
       if (val === '') attrs += ` ${key}`
-      else attrs += ` ${key}="${this.escapeHtml(val)}"`
+      else attrs += ` ${key}="${this.escapeHtmlPreservingTemplates(val)}"`
     }
     return attrs
   }
