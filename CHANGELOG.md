@@ -1,3 +1,15 @@
+### 🛠️ Fixes & Improvements
+
+- **form:** enhance form handling with metadata and improved parsing logic
+- **form:** implement token rotation on successful form submissions
+- **view:** prevent script injection and handle escaped quotes in form configs
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 📚 Documentation
 
 - refactor database configuration to a unified structure and document multi-connection support
