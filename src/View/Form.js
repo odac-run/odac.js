@@ -511,12 +511,14 @@ class Form {
     const escapedPlaceholder = this.escapeHtmlPreservingTemplates(field.placeholder)
 
     if (field.label && field.type !== 'checkbox') {
-      const fieldId = this.escapeHtml(field.id || `odac-${field.name}`)
+      const fieldId = this.escapeHtmlPreservingTemplates(field.id || `odac-${field.name}`)
       html += `<label for="${fieldId}">${this.escapeHtmlPreservingTemplates(field.label)}</label>\n`
     }
 
-    const classAttr = field.class ? ` class="${this.escapeHtml(field.class)}"` : ''
-    const idAttr = field.id ? ` id="${this.escapeHtml(field.id)}"` : ` id="${this.escapeHtml(`odac-${field.name}`)}"`
+    const classAttr = field.class ? ` class="${this.escapeHtmlPreservingTemplates(field.class)}"` : ''
+    const idAttr = field.id
+      ? ` id="${this.escapeHtmlPreservingTemplates(field.id)}"`
+      : ` id="${this.escapeHtmlPreservingTemplates(`odac-${field.name}`)}"`
     const valueAttr = field.value !== null ? ` value="${this.escapeHtmlPreservingTemplates(field.value)}"` : ''
 
     if (field.type === 'checkbox') {
