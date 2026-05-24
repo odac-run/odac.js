@@ -1,5 +1,18 @@
 ### 🛠️ Fixes & Improvements
 
+- **docs:** update frontend scripts documentation to include code obfuscation details and enhance clarity
+- **form:** add escapeHtmlPreservingTemplates method to handle template tokens
+- **route:** enhance error handling to support object responses in error method
+- **view:** use escapeHtmlPreservingTemplates consistently for form attributes
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### 🛠️ Fixes & Improvements
+
 - **form:** enhance form handling with metadata and improved parsing logic
 - **form:** implement token rotation on successful form submissions
 - **view:** prevent script injection and handle escaped quotes in form configs
