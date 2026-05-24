@@ -858,6 +858,13 @@ class Route {
   }
 
   error(code, file) {
+    if (typeof file === 'object' && file !== null && !Array.isArray(file)) {
+      this.set('error', code, _odac => {
+        _odac.set(file)
+        _odac.View.set(file)
+      })
+      return
+    }
     this.set('error', code, file)
   }
 
