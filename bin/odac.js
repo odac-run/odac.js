@@ -532,6 +532,7 @@ async function runMigration(cmd, cliArgs) {
     }
   } catch (err) {
     console.error('❌ Migration error:', err.message)
+    if (err.cause) console.error('   Cause:', err.cause.message || err.cause)
     process.exit(1)
   } finally {
     for (const conn of Object.values(connections)) {
