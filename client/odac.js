@@ -409,23 +409,23 @@ if (typeof window !== 'undefined') {
         document.removeEventListener('submit', oldHandler)
       }
 
-      // Element-level dedup: if this selector matches a form that is already
-      // bound under a *different* selector — e.g. an <odac:form> auto-registered
-      // by #initForms under its data-odac-form token, now being re-bound by the
-      // app via Odac.form('#id', cb) to attach a callback — tear down that prior
-      // handler so the form ends up with exactly one submit handler, not two
-      // (which would fire 2x submit).
-      document.querySelectorAll(formSelector).forEach(formEl => {
-        const prevSelector = this.#formElementSelectors.get(formEl)
-        if (prevSelector && prevSelector !== formSelector && this.#formSubmitHandlers.has(prevSelector)) {
-          document.removeEventListener('submit', this.#formSubmitHandlers.get(prevSelector))
-          this.#formSubmitHandlers.delete(prevSelector)
-        }
-      })
-
       const handler = e => {
         const formElement = e.target.closest(formSelector)
         if (!formElement) return
+
+        // Ownership guard: a single form can be matched by more than one
+        // registered selector — e.g. an <odac:form> auto-bound by #initForms
+        // under its data-odac-form token, then re-bound by the app via
+        // Odac.form('#id', cb) to attach a callback. The form is tagged with the
+        // selector it was last registered under; only that handler may process
+        // the submit, so the form fires exactly once instead of 2x. We don't
+        // tear down the other selector's listener (it may still serve *other*
+        // forms — e.g. a shared '.ajax-form' selector), we just let those
+        // handlers ignore this form. Forms never explicitly (re-)bound aren't
+        // tracked and fall through normally, preserving delegation for forms
+        // added to the DOM after registration.
+        const owner = this.#formElementSelectors.get(formElement)
+        if (owner && owner !== formSelector) return
 
         e.preventDefault()
 
