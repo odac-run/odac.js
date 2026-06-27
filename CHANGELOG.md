@@ -1,5 +1,18 @@
 ### 🛠️ Fixes & Improvements
 
+- **docs:** update references from 'odac' to 'Odac' for consistency
+- **form:** improve form submission handler ownership to prevent duplicate submissions
+- **form:** prevent multiple submit handlers on re-bound forms
+- **startup:** surface init/migration errors instead of swallowing them
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### 🛠️ Fixes & Improvements
+
 - **docs:** update frontend scripts documentation to include code obfuscation details and enhance clarity
 - **form:** add escapeHtmlPreservingTemplates method to handle template tokens
 - **route:** enhance error handling to support object responses in error method
