@@ -6,7 +6,7 @@ Odac provides a simple client-side API for consuming Server-Sent Events (SSE) st
 
 ```javascript
 // Simple callback
-odac.listen('/events', (data) => {
+Odac.listen('/events', (data) => {
   console.log('Received:', data)
 })
 ```
@@ -14,7 +14,7 @@ odac.listen('/events', (data) => {
 ### With Options
 
 ```javascript
-const stream = odac.listen('/events', 
+const stream = Odac.listen('/events', 
   (data) => {
     console.log('Message:', data)
   },
@@ -34,7 +34,7 @@ stream.close()
 
 ```javascript
 // Server sends: data: {"message": "Hello"}\n\n
-odac.listen('/events', (data) => {
+Odac.listen('/events', (data) => {
   console.log(data.message) // "Hello"
 })
 ```
@@ -47,8 +47,8 @@ odac.listen('/events', (data) => {
 
 ```javascript
 // Server
-odac.Route.get('/dashboard/stats', async (Odac) => {
-  odac.stream((send) => {
+Odac.Route.get('/dashboard/stats', async (Odac) => {
+  Odac.stream((send) => {
     const interval = setInterval(async () => {
       const stats = await getServerStats()
       send(stats)
@@ -62,7 +62,7 @@ odac.Route.get('/dashboard/stats', async (Odac) => {
 })
 
 // Client
-odac.listen('/dashboard/stats', (stats) => {
+Odac.listen('/dashboard/stats', (stats) => {
   document.getElementById('cpu').textContent = stats.cpu + '%'
   document.getElementById('memory').textContent = stats.memory + 'MB'
 })
@@ -72,16 +72,16 @@ odac.listen('/dashboard/stats', (stats) => {
 
 ```javascript
 // Server
-odac.Route.get('/notifications', async (Odac) => {
-  const userId = await odac.request('userId')
+Odac.Route.get('/notifications', async (Odac) => {
+  const userId = await Odac.request('userId')
   
-  odac.stream((send) => {
+  Odac.stream((send) => {
     global.notificationStreams[userId] = { send }
   })
 })
 
 // Client
-odac.listen('/notifications', (notification) => {
+Odac.listen('/notifications', (notification) => {
   showToast(notification.message)
 })
 ```
@@ -90,8 +90,8 @@ odac.listen('/notifications', (notification) => {
 
 ```javascript
 // Server
-odac.Route.get('/build/logs', async (Odac) => {
-  odac.stream(async function* () {
+Odac.Route.get('/build/logs', async (Odac) => {
+  Odac.stream(async function* () {
     for await (const log of getBuildLogs()) {
       yield { timestamp: Date.now(), message: log }
     }
@@ -100,7 +100,7 @@ odac.Route.get('/build/logs', async (Odac) => {
 
 // Client
 const logs = []
-odac.listen('/build/logs', (log) => {
+Odac.listen('/build/logs', (log) => {
   logs.push(log)
   updateLogsUI(logs)
 })
@@ -108,7 +108,7 @@ odac.listen('/build/logs', (log) => {
 
 ## API Reference
 
-### odac.listen(url, onMessage, options)
+### Odac.listen(url, onMessage, options)
 
 **Parameters:**
 - `url` (string): Stream endpoint URL

@@ -119,6 +119,7 @@ if (typeof window !== 'undefined') {
     #page = null
     #token = {hash: [], data: false}
     #formSubmitHandlers = new Map()
+    #formElementSelectors = new WeakMap()
     #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
 
@@ -412,6 +413,20 @@ if (typeof window !== 'undefined') {
         const formElement = e.target.closest(formSelector)
         if (!formElement) return
 
+        // Ownership guard: a single form can be matched by more than one
+        // registered selector — e.g. an <odac:form> auto-bound by #initForms
+        // under its data-odac-form token, then re-bound by the app via
+        // Odac.form('#id', cb) to attach a callback. The form is tagged with the
+        // selector it was last registered under; only that handler may process
+        // the submit, so the form fires exactly once instead of 2x. We don't
+        // tear down the other selector's listener (it may still serve *other*
+        // forms — e.g. a shared '.ajax-form' selector), we just let those
+        // handlers ignore this form. Forms never explicitly (re-)bound aren't
+        // tracked and fall through normally, preserving delegation for forms
+        // added to the DOM after registration.
+        const owner = this.#formElementSelectors.get(formElement)
+        if (owner && owner !== formSelector) return
+
         e.preventDefault()
 
         if (obj.messages !== false) {
@@ -680,6 +695,7 @@ if (typeof window !== 'undefined') {
 
       document.addEventListener('submit', handler)
       this.#formSubmitHandlers.set(formSelector, handler)
+      document.querySelectorAll(formSelector).forEach(formEl => this.#formElementSelectors.set(formEl, formSelector))
     }
 
     get(url, callback) {
@@ -997,6 +1013,9 @@ if (typeof window !== 'undefined') {
 
       for (const {cls, attr} of formTypes) {
         document.querySelectorAll(`form.${cls}[${attr}]`).forEach(form => {
+          // Skip forms the app already bound via Odac.form(...) — re-registering
+          // here would attach a second handler and cause 2x submit.
+          if (this.#formElementSelectors.has(form)) return
           const token = form.getAttribute(attr)
           const selector = `form[${attr}="${token}"]`
           if (!this.#formSubmitHandlers.has(selector)) {

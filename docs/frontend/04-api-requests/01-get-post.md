@@ -7,7 +7,7 @@ Learn how to make GET and POST requests to your API endpoints using odac.js.
 ### Basic GET Request
 
 ```javascript
-odac.get('/api/data', function(response) {
+Odac.get('/api/data', function(response) {
   console.log('Data:', response)
 })
 ```
@@ -16,7 +16,7 @@ odac.get('/api/data', function(response) {
 
 ```javascript
 const userId = 123
-odac.get(`/api/users/${userId}`, function(user) {
+Odac.get(`/api/users/${userId}`, function(user) {
   console.log('User:', user.name)
   console.log('Email:', user.email)
 })
@@ -25,7 +25,7 @@ odac.get(`/api/users/${userId}`, function(user) {
 ### Error Handling
 
 ```javascript
-odac.get('/api/data', function(response) {
+Odac.get('/api/data', function(response) {
   if (response.error) {
     console.error('Error:', response.error)
     return
@@ -43,7 +43,7 @@ odac.get('/api/data', function(response) {
 The recommended way to make POST requests is using `Odac.form()`:
 
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   if (data.result.success) {
     console.log('Success!')
   }
@@ -58,12 +58,12 @@ For custom POST requests without forms, use the internal AJAX method:
 
 ```javascript
 // Note: This is an advanced pattern
-// For most cases, use odac.form() instead
+// For most cases, use Odac.form() instead
 
 const formData = new FormData()
 formData.append('name', 'John')
 formData.append('email', 'john@example.com')
-formData.append('_token', odac.token())
+formData.append('_token', Odac.token())
 
 fetch('/api/submit', {
   method: 'POST',
@@ -83,12 +83,12 @@ odac.js automatically handles CSRF tokens:
 
 ```javascript
 // Token is automatically included
-odac.get('/api/data', function(response) {
+Odac.get('/api/data', function(response) {
   // ...
 })
 
 // Token is automatically included in forms
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   // ...
 })
 ```
@@ -98,7 +98,7 @@ odac.form('#my-form', function(data) {
 If you need the token manually:
 
 ```javascript
-const token = odac.token()
+const token = Odac.token()
 console.log('Current token:', token)
 ```
 
@@ -108,7 +108,7 @@ console.log('Current token:', token)
 
 ```javascript
 // Get user profile
-odac.get('/api/profile', function(profile) {
+Odac.get('/api/profile', function(profile) {
   document.querySelector('#username').textContent = profile.name
   document.querySelector('#email').textContent = profile.email
 })
@@ -118,7 +118,7 @@ odac.get('/api/profile', function(profile) {
 
 ```javascript
 // Get products
-odac.get('/api/products', function(products) {
+Odac.get('/api/products', function(products) {
   const container = document.querySelector('#products')
   
   products.forEach(product => {
@@ -143,7 +143,7 @@ searchInput.addEventListener('input', function() {
   
   if (query.length < 3) return
   
-  odac.get(`/api/search?q=${encodeURIComponent(query)}`, function(results) {
+  Odac.get(`/api/search?q=${encodeURIComponent(query)}`, function(results) {
     displayResults(results)
   })
 })
@@ -172,7 +172,7 @@ document.querySelector('#autocomplete').addEventListener('input', function() {
   debounceTimer = setTimeout(() => {
     if (value.length < 2) return
     
-    odac.get(`/api/autocomplete?q=${value}`, function(suggestions) {
+    Odac.get(`/api/autocomplete?q=${value}`, function(suggestions) {
       showSuggestions(suggestions)
     })
   }, 300)
@@ -200,7 +200,7 @@ function loadMore() {
   loading = true
   page++
   
-  odac.get(`/api/posts?page=${page}`, function(posts) {
+  Odac.get(`/api/posts?page=${page}`, function(posts) {
     posts.forEach(post => {
       appendPost(post)
     })
@@ -214,7 +214,7 @@ function loadMore() {
 ```javascript
 // Poll for updates every 30 seconds
 setInterval(function() {
-  odac.get('/api/notifications', function(notifications) {
+  Odac.get('/api/notifications', function(notifications) {
     updateNotificationBadge(notifications.count)
   })
 }, 30000)
@@ -239,7 +239,7 @@ module.exports = function(Odac) {
 
 ```javascript
 // route/www.js
-odac.Route.get('/api/users', 'users')
+Odac.Route.get('/api/users', 'users')
 ```
 
 ### GET with Parameters
@@ -247,13 +247,13 @@ odac.Route.get('/api/users', 'users')
 ```javascript
 // controller/get/user.js
 module.exports = async function(Odac) {
-  const userId = odac.Request.data.url.id
+  const userId = Odac.Request.data.url.id
   
   // Fetch user from database
   const user = await getUserById(userId)
   
   if (!user) {
-    odac.Request.status(404)
+    Odac.Request.status(404)
     return {error: 'User not found'}
   }
   
@@ -263,7 +263,7 @@ module.exports = async function(Odac) {
 
 ```javascript
 // route/www.js
-odac.Route.get('/api/users/{id}', 'user')
+Odac.Route.get('/api/users/{id}', 'user')
 ```
 
 ### POST Endpoint
@@ -271,8 +271,8 @@ odac.Route.get('/api/users/{id}', 'user')
 ```javascript
 // controller/post/create.js
 module.exports = async function(Odac) {
-  const name = await odac.Request.request('name')
-  const email = await odac.Request.request('email')
+  const name = await Odac.Request.request('name')
+  const email = await Odac.Request.request('email')
   
   // Validation
   if (!name || !email) {
@@ -300,7 +300,7 @@ module.exports = async function(Odac) {
 
 ```javascript
 // route/www.js
-odac.Route.post('/api/users/create', 'create')
+Odac.Route.post('/api/users/create', 'create')
 ```
 
 ## Response Format
@@ -357,7 +357,7 @@ function getCached(url, callback) {
     return
   }
   
-  odac.get(url, function(data) {
+  Odac.get(url, function(data) {
     cache[url] = data
     callback(data)
   })
@@ -386,7 +386,7 @@ function processQueue() {
   processing = true
   const {url, callback} = requestQueue.shift()
   
-  odac.get(url, function(data) {
+  Odac.get(url, function(data) {
     callback(data)
     processing = false
     processQueue()
@@ -403,7 +403,7 @@ function getWithRetry(url, callback, maxRetries = 3) {
   function attempt() {
     attempts++
     
-    odac.get(url, function(data) {
+    Odac.get(url, function(data) {
       if (data.error && attempts < maxRetries) {
         setTimeout(attempt, 1000 * attempts)
       } else {

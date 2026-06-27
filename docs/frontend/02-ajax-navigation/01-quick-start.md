@@ -126,17 +126,17 @@ Controllers automatically support AJAX loading. Use `Odac.View.skeleton()` to sp
 ```javascript
 module.exports = function (Odac) {
   // Define the skeleton template
-  odac.View.skeleton('main')
+  Odac.View.skeleton('main')
   
   // Set view parts - lowercase keys map to UPPERCASE placeholders
-  odac.View.set({
+  Odac.View.set({
     header: 'main',      // Loads view/header/main.html into {{ HEADER }}
     content: 'about',    // Loads view/content/about.html into {{ CONTENT }}
     footer: 'main'       // Loads view/footer/main.html into {{ FOOTER }}
   })
   
   // Optional: Send variables to frontend (AJAX only)
-  odac.set({
+  Odac.set({
     pageTitle: 'About',
     data: {foo: 'bar'}
   }, true) // true = include in AJAX responses
@@ -318,13 +318,13 @@ Both methods work automatically - no additional configuration needed!
   }
   ```
 
-### odac.loader(selector, elements, callback)
+### Odac.loader(selector, elements, callback)
 
 Low-level method for direct initialization (not recommended for new code).
 
 **Parameters:** Same as navigate configuration, but as separate arguments.
 
-### odac.load(url, callback, push)
+### Odac.load(url, callback, push)
 
 Programmatically load a page via AJAX.
 
@@ -335,7 +335,7 @@ Programmatically load a page via AJAX.
 
 **Example:**
 ```javascript
-odac.load('/about', function(page, variables) {
+Odac.load('/about', function(page, variables) {
   console.log('Loaded:', page)
 })
 ```
@@ -377,7 +377,7 @@ Send data from server to client in AJAX responses:
 
 ```javascript
 // In controller
-odac.set({
+Odac.set({
   user: {name: 'John', role: 'admin'},
   stats: {views: 1234}
 }, true) // true = include in AJAX
@@ -423,12 +423,12 @@ Odac.action({
   navigate: {
     update: 'main',
     on: function(page, variables) {
-      odac.fn.updateActiveNav(window.location.pathname)
+      Odac.fn.updateActiveNav(window.location.pathname)
       console.log('Navigated to:', page)
     }
   },
   
-  // Custom functions (accessible as odac.fn.functionName)
+  // Custom functions (accessible as Odac.fn.functionName)
   function: {
     updateActiveNav: function(url) {
       document.querySelectorAll('nav a').forEach(link => {
@@ -440,14 +440,14 @@ Odac.action({
   // App initialization
   load: function() {
     console.log('App initialized')
-    odac.fn.updateActiveNav(window.location.pathname)
+    Odac.fn.updateActiveNav(window.location.pathname)
   },
   
   // Page-specific code
   page: {
     index: function(variables) {
       // Home page specific code
-      odac.form('#contact-form', function(data) {
+      Odac.form('#contact-form', function(data) {
         if (data.result.success) {
           alert('Message sent!')
         }
@@ -463,7 +463,7 @@ Odac.action({
   // Event handlers
   click: {
     '#refresh-btn': function() {
-      odac.load(window.location.pathname)
+      Odac.load(window.location.pathname)
     }
   }
 })
@@ -595,8 +595,8 @@ This is usually caused by mismatched keys between your skeleton, controller, and
 
 2. **Controller** (`controller/page/about.js`):
    ```javascript
-   odac.View.skeleton('main')
-   odac.View.set({
+   Odac.View.skeleton('main')
+   Odac.View.set({
      header: 'main',    // Lowercase → {{ HEADER }}
      content: 'about'   // Lowercase → {{ CONTENT }}
    })

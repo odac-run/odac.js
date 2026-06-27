@@ -6,31 +6,31 @@ Advanced techniques and patterns for AJAX navigation in Odac.
 
 ## Programmatic Navigation
 
-### Using odac.load()
+### Using Odac.load()
 
 Navigate programmatically from your code:
 
 ```javascript
 // Basic usage
-odac.load('/about')
+Odac.load('/about')
 
 // With callback
-odac.load('/about', function(page, variables) {
+Odac.load('/about', function(page, variables) {
   console.log('Loaded:', page)
   console.log('Data:', variables)
 })
 
 // Without updating history
-odac.load('/about', callback, false)
+Odac.load('/about', callback, false)
 ```
 
 ### Use Cases
 
 **Redirect after form submission:**
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   if (data.result.success) {
-    odac.load('/success')
+    Odac.load('/success')
   }
 })
 ```
@@ -38,16 +38,16 @@ odac.form('#my-form', function(data) {
 **Conditional navigation:**
 ```javascript
 if (user.isLoggedIn) {
-  odac.load('/dashboard')
+  Odac.load('/dashboard')
 } else {
-  odac.load('/login')
+  Odac.load('/login')
 }
 ```
 
 **Timed navigation:**
 ```javascript
 setTimeout(() => {
-  odac.load('/next-page')
+  Odac.load('/next-page')
 }, 3000)
 ```
 
@@ -76,8 +76,8 @@ Define all parts in your controller:
 
 ```javascript
 module.exports = function(Odac) {
-  odac.View.skeleton('main')
-  odac.View.set({
+  Odac.View.skeleton('main')
+  Odac.View.set({
     header: 'main',
     content: 'dashboard',
     sidebar: 'dashboard',
@@ -333,10 +333,10 @@ Odac.action({
 Gracefully handle navigation errors:
 
 ```javascript
-// Override odac.load to add error handling
-const originalLoad = odac.load.bind(Odac)
+// Override Odac.load to add error handling
+const originalLoad = Odac.load.bind(Odac)
 
-odac.load = function(url, callback, push) {
+Odac.load = function(url, callback, push) {
   try {
     originalLoad(url, function(page, variables) {
       if (callback) callback(page, variables)
@@ -359,7 +359,7 @@ function loadWithRetry(url, maxRetries = 3) {
   
   function attempt() {
     attempts++
-    odac.load(url, 
+    Odac.load(url, 
       (page, vars) => {
         console.log('Success after', attempts, 'attempts')
       },
@@ -491,7 +491,7 @@ describe('Navigation', () => {
     })
     
     // Simulate navigation
-    odac.load('/about')
+    Odac.load('/about')
     
     // Assert
     expect(document.querySelector('.nav-link.active').href)
