@@ -18,7 +18,7 @@ Frontend logic is organized into **Actions** using `Odac.action()`. This method 
     -   `start`: Fires once when the script initializes.
     -   `load`: Fires after every page load (including AJAX navigations).
 3.  **Page Scoping**: Use the `page: { name: fn }` object to isolate code to specific routes.
-4.  **Persistent Storage**: Use `odac.storage(key, value)` for a secure LocalStorage wrapper.
+4.  **Persistent Storage**: Use `Odac.storage(key, value)` for a secure LocalStorage wrapper.
 
 ## Reference Patterns
 
@@ -60,11 +60,11 @@ Odac.action({
 ### 3. Data Utilities
 ```javascript
 // Accessing data shared from backend (Odac.share)
-const user = odac.data('user')
+const user = Odac.data('user')
 
 // Using Storage wrapper
-odac.storage('theme', 'dark')
-const theme = odac.storage('theme')
+Odac.storage('theme', 'dark')
+const theme = Odac.storage('theme')
 ```
 
 ### 4. Programmatic Navigation
@@ -84,4 +84,4 @@ Odac.load('/dashboard', function(page, vars) {
 ## Best Practices
 -   **Clean Selectors**: Use ID or specific data-attributes for event listeners to avoid conflicts.
 -   **No Inline JS**: Move all logic from HTML attributes (onclick, etc.) into `Odac.action()`.
--   **Shared State**: Use `odac.data()` to pass complex objects from the backend once per request.
+-   **Shared State**: Use `Odac.data()` to pass complex objects from the backend once per request.

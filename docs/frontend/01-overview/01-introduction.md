@@ -88,13 +88,13 @@ Odac.action({
 
 ```javascript
 // Basic usage
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
     // This callback is executed on success
     console.log('Form submitted successfully!', data);
 });
 
 // With options
-odac.form({
+Odac.form({
     form: '#my-form',
     messages: ['success', 'error'], // Show both success and error messages
     loading: function(percent) {
@@ -119,7 +119,7 @@ To display validation errors, you can add elements with the `odac-form-error` at
 For simple GET requests, you can use the `Odac.get()` method.
 
 ```javascript
-odac.get('/api/users', function(data) {
+Odac.get('/api/users', function(data) {
     console.log('Users:', data);
 });
 ```
@@ -133,18 +133,18 @@ odac.get('/api/users', function(data) {
 -   **`Odac.client()`**: Returns a unique client identifier from a cookie.
 -   **`Odac.data(key)`**: Returns shared data passed from the backend via `Odac.share`. You can get the full data object or a specific key:
     ```javascript
-    let allData = odac.data();
-    let user = odac.data('user'); // Returns null if not exists
+    let allData = Odac.data();
+    let user = Odac.data('user'); // Returns null if not exists
     ```
 -   **`Odac.page()`**: Returns the identifier of the current page. This is the controller name (e.g., `'user'`) or view name (e.g., `'dashboard'`) set by the backend. Use this to conditionally run code for specific pages.
 -   **`Odac.storage()`**: A wrapper for `localStorage`.
     ```javascript
     // Set a value
-    odac.storage('my-key', 'my-value');
+    Odac.storage('my-key', 'my-value');
 
     // Get a value
-    let value = odac.storage('my-key');
+    let value = Odac.storage('my-key');
 
     // Remove a value
-    odac.storage('my-key', null);
+    Odac.storage('my-key', null);
     ```

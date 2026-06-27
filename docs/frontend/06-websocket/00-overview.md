@@ -6,7 +6,7 @@ Odac provides built-in WebSocket support with automatic reconnection and cross-t
 
 **Backend (route/main.js):**
 ```javascript
-odac.Route.ws('/chat', (ws, Odac) => {
+Odac.Route.ws('/chat', (ws, Odac) => {
   ws.on('message', data => {
     ws.broadcast(data)
   })
