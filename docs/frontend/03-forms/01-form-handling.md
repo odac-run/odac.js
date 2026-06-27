@@ -14,7 +14,7 @@ Learn how to handle forms with automatic AJAX submission, CSRF protection, and v
 ```
 
 ```javascript
-odac.form('#contact-form', function(data) {
+Odac.form('#contact-form', function(data) {
   if (data.result.success) {
     alert('Form submitted successfully!')
   }
@@ -35,7 +35,7 @@ That's it! odac.js handles:
 ### Basic Usage
 
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   console.log('Response:', data)
 })
 ```
@@ -43,7 +43,7 @@ odac.form('#my-form', function(data) {
 ### With Options
 
 ```javascript
-odac.form({
+Odac.form({
   form: '#my-form',
   messages: true,  // Show error/success messages
   loading: function(percent) {
@@ -59,9 +59,36 @@ odac.form({
 ### Redirect After Submit
 
 ```javascript
-odac.form('#my-form', '/success-page')
+Odac.form('#my-form', '/success-page')
 // Redirects to /success-page on success
 ```
+
+## Using with `<odac:form>` Components
+
+`Odac.form()` works with both plain `<form>` elements and server-rendered
+[`<odac:form>` components](../../backend/05-forms/01-custom-forms.md).
+
+An `<odac:form>` already registers itself automatically, so you only call
+`Odac.form()` when you want to add your own callback. Give the component an `id`
+and bind to it:
+
+```html
+<odac:form action="Contact.submit" id="contact-form">
+  <!-- fields -->
+  <odac:submit text="Send"/>
+</odac:form>
+```
+
+```javascript
+Odac.form('#contact-form', function(data) {
+  if (data.result.success) {
+    closeModal()
+  }
+})
+```
+
+Calling `Odac.form()` on an already-registered `<odac:form>` **re-binds** the
+same form instead of adding a second handler, so it still submits only once.
 
 ## Error Handling
 
@@ -85,7 +112,7 @@ If you want to control where errors appear, add error elements manually:
 ### Custom Error Display
 
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   if (!data.result.success) {
     // Custom error handling
     Object.entries(data.errors).forEach(([field, message]) => {
@@ -137,7 +164,7 @@ If you want to control where success messages appear, add a success element manu
 ### Custom Success Message
 
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   if (data.result.success) {
     document.querySelector('#custom-message').innerHTML = 
       'Thank you! Your form has been submitted.'
@@ -157,7 +184,7 @@ odac.form('#my-form', function(data) {
 ```
 
 ```javascript
-odac.form('#upload-form', function(data) {
+Odac.form('#upload-form', function(data) {
   if (data.result.success) {
     console.log('File uploaded:', data.result.filename)
   }
@@ -167,7 +194,7 @@ odac.form('#upload-form', function(data) {
 ### Upload Progress
 
 ```javascript
-odac.form({
+Odac.form({
   form: '#upload-form',
   loading: function(percent) {
     document.querySelector('#progress').style.width = percent + '%'
@@ -189,7 +216,7 @@ odac.form({
 ### Disable Messages
 
 ```javascript
-odac.form({
+Odac.form({
   form: '#my-form',
   messages: false  // Don't show automatic messages
 }, function(data) {
@@ -201,7 +228,7 @@ odac.form({
 
 ```javascript
 // Only show error messages, suppress success messages
-odac.form({
+Odac.form({
   form: '#my-form',
   messages: ['error']
 }, function(data) {
@@ -211,7 +238,7 @@ odac.form({
 })
 
 // Only show success messages, suppress error messages
-odac.form({
+Odac.form({
   form: '#my-form',
   messages: ['success']
 }, function(data) {
@@ -224,7 +251,7 @@ odac.form({
 ### Form Reset
 
 ```javascript
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   if (data.result.success) {
     // Reset the form
     document.querySelector('#my-form').reset()
@@ -242,7 +269,7 @@ document.querySelector('#my-form').addEventListener('submit', function(e) {
   }
 })
 
-odac.form('#my-form', function(data) {
+Odac.form('#my-form', function(data) {
   console.log('Submitted!')
 })
 ```
@@ -254,8 +281,8 @@ odac.form('#my-form', function(data) {
 ```javascript
 // controller/post/contact.js
 module.exports = async function(Odac) {
-  const email = await odac.Request.request('email')
-  const message = await odac.Request.request('message')
+  const email = await Odac.Request.request('email')
+  const message = await Odac.Request.request('message')
   
   // Validation
   const errors = {}
@@ -285,7 +312,7 @@ module.exports = async function(Odac) {
 
 ```javascript
 // route/www.js
-odac.Route.post('/api/contact', 'contact')
+Odac.Route.post('/api/contact', 'contact')
 ```
 
 ## Validation
@@ -306,7 +333,7 @@ Always validate on the server:
 
 ```javascript
 module.exports = async function(Odac) {
-  const email = await odac.Request.request('email')
+  const email = await Odac.Request.request('email')
   
   const errors = {}
   
@@ -349,7 +376,7 @@ module.exports = async function(Odac) {
 **Note:** Error and success elements are auto-generated. Add them manually only if you need custom positioning or styling.
 
 ```javascript
-odac.form('#contact-form', function(data) {
+Odac.form('#contact-form', function(data) {
   if (data.result.success) {
     document.querySelector('#contact-form').reset()
   }
@@ -367,7 +394,7 @@ odac.form('#contact-form', function(data) {
 ```
 
 ```javascript
-odac.form('#login-form', function(data) {
+Odac.form('#login-form', function(data) {
   if (data.result.success) {
     // Redirect to dashboard
     window.location.href = '/dashboard'
@@ -419,6 +446,15 @@ odac.form('#login-form', function(data) {
 - Check that server returns errors in correct format: `{result: {success: false}, errors: {fieldName: 'message'}}`
 - Verify `messages` option is not set to `false`
 - If using custom error elements, ensure `odac-form-error` attributes match field names exactly
+
+### Form Submits Twice
+
+- Make sure you don't register the **same form under two different selectors**
+  (e.g. `Odac.form('#my-form')` and `Odac.form('form#my-form')`) — use one
+  consistent selector.
+- Binding `Odac.form()` to an `<odac:form>` is safe and will **not** double up;
+  it re-binds the existing handler. If you still see two submits, check that you
+  bind **after** the form is in the DOM, not before it renders.
 
 ### CSRF Token Errors
 

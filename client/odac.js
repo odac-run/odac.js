@@ -119,6 +119,7 @@ if (typeof window !== 'undefined') {
     #page = null
     #token = {hash: [], data: false}
     #formSubmitHandlers = new Map()
+    #formElementSelectors = new WeakMap()
     #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
 
@@ -408,6 +409,20 @@ if (typeof window !== 'undefined') {
         document.removeEventListener('submit', oldHandler)
       }
 
+      // Element-level dedup: if this selector matches a form that is already
+      // bound under a *different* selector — e.g. an <odac:form> auto-registered
+      // by #initForms under its data-odac-form token, now being re-bound by the
+      // app via Odac.form('#id', cb) to attach a callback — tear down that prior
+      // handler so the form ends up with exactly one submit handler, not two
+      // (which would fire 2x submit).
+      document.querySelectorAll(formSelector).forEach(formEl => {
+        const prevSelector = this.#formElementSelectors.get(formEl)
+        if (prevSelector && prevSelector !== formSelector && this.#formSubmitHandlers.has(prevSelector)) {
+          document.removeEventListener('submit', this.#formSubmitHandlers.get(prevSelector))
+          this.#formSubmitHandlers.delete(prevSelector)
+        }
+      })
+
       const handler = e => {
         const formElement = e.target.closest(formSelector)
         if (!formElement) return
@@ -680,6 +695,7 @@ if (typeof window !== 'undefined') {
 
       document.addEventListener('submit', handler)
       this.#formSubmitHandlers.set(formSelector, handler)
+      document.querySelectorAll(formSelector).forEach(formEl => this.#formElementSelectors.set(formEl, formSelector))
     }
 
     get(url, callback) {
@@ -997,6 +1013,9 @@ if (typeof window !== 'undefined') {
 
       for (const {cls, attr} of formTypes) {
         document.querySelectorAll(`form.${cls}[${attr}]`).forEach(form => {
+          // Skip forms the app already bound via Odac.form(...) — re-registering
+          // here would attach a second handler and cause 2x submit.
+          if (this.#formElementSelectors.has(form)) return
           const token = form.getAttribute(attr)
           const selector = `form[${attr}="${token}"]`
           if (!this.#formSubmitHandlers.has(selector)) {

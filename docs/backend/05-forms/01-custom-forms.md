@@ -204,6 +204,50 @@ Automatically set field values without user input:
 <odac:submit text="Save" loading="Saving..." class="btn btn-primary" id="save-btn"/>
 ```
 
+## Client-Side Callbacks (Optional)
+
+`<odac:form>` works fully on its own — submission, CSRF, validation, loading
+states, success/error messages and redirects are all wired up automatically,
+**no JavaScript required.**
+
+If you also need to run your own code after a submit (analytics, closing a
+modal, updating the UI, etc.), give the form an `id` and attach a callback with
+`Odac.form()`:
+
+```html
+<odac:form action="Account.unlink" id="server-unlink">
+  <!-- fields -->
+  <odac:submit text="Unlink"/>
+</odac:form>
+```
+
+```javascript
+Odac.form('#server-unlink', function(data) {
+  if (data.result.success) {
+    closeModal()
+  }
+})
+```
+
+This is **safe to combine** with the automatic registration — calling
+`Odac.form()` on an `<odac:form>` re-binds the same form rather than adding a
+second handler, so the form still submits only once. (Internally the dedup is
+keyed by the form element, not the selector string.)
+
+> **Note:** Call `Odac.form()` after the form exists in the DOM (e.g. on
+> `DOMContentLoaded` or after AJAX navigation). Binding before the element is
+> rendered can leave the automatic registration in place as a second handler.
+
+You can trigger submission programmatically with the native API:
+
+```javascript
+document.getElementById('server-unlink').requestSubmit()
+```
+
+For the full callback/options API (`messages`, `loading`, redirect strings,
+file-upload progress) see
+[Form Handling with odac.js](../../frontend/03-forms/01-form-handling.md).
+
 ## Controller Handler (Server Actions)
  
 Handle form submission directly in your controller. The action is defined as `ControllerName.methodName`.
