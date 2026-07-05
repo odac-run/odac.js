@@ -2,6 +2,7 @@ const Odac = require('../../src/Odac')
 
 describe('Odac.image()', () => {
   let mockOdac
+  let ctx
 
   beforeEach(() => {
     mockOdac = {
@@ -19,12 +20,14 @@ describe('Odac.image()', () => {
   })
 
   afterEach(() => {
+    ctx?.Request?.clearTimeout()
+    ctx = null
     delete global.Odac
     delete global.__dir
   })
 
   test('should be available on instance without req/res (cron context)', () => {
-    const ctx = Odac.instance(null, 'cron')
+    ctx = Odac.instance(null, 'cron')
     expect(typeof ctx.image).toBe('function')
   })
 
@@ -37,25 +40,25 @@ describe('Odac.image()', () => {
       on: jest.fn()
     }
     const mockRes = {on: jest.fn()}
-    const ctx = Odac.instance('id', mockReq, mockRes)
+    ctx = Odac.instance('id', mockReq, mockRes)
     expect(typeof ctx.image).toBe('function')
   })
 
   test('should return a promise', () => {
-    const ctx = Odac.instance(null, 'cron')
+    ctx = Odac.instance(null, 'cron')
     const result = ctx.image('/images/test.jpg', {width: 300})
     expect(result).toBeInstanceOf(Promise)
   })
 
   test('should return original src when sharp is unavailable', async () => {
-    const ctx = Odac.instance(null, 'cron')
+    ctx = Odac.instance(null, 'cron')
     const result = await ctx.image('/images/test.jpg')
     // sharp not installed in test env → returns original src
     expect(result).toBe('/images/test.jpg')
   })
 
   test('should return empty string for empty src', async () => {
-    const ctx = Odac.instance(null, 'cron')
+    ctx = Odac.instance(null, 'cron')
     expect(await ctx.image('')).toBe('')
   })
 })

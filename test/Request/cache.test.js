@@ -29,6 +29,7 @@ describe('Request.cache()', () => {
   })
 
   afterEach(() => {
+    request.clearTimeout()
     delete global.Odac
     delete global.__dir
   })

@@ -1,20 +1,26 @@
 const fs = require('fs')
 const fsPromises = fs.promises
+const os = require('os')
 const path = require('path')
 const Image = require('../../../src/View/Image')
 
 describe('Image.url()', () => {
-  const publicDir = path.join(process.cwd(), 'public')
-  const testImageDir = path.join(publicDir, 'images')
-  const testImagePath = path.join(testImageDir, 'url-test.jpg')
+  let tmpDir, testImagePath
 
   beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-image-url-'))
+    global.__dir = tmpDir
+
+    const testImageDir = path.join(tmpDir, 'public', 'images')
+    testImagePath = path.join(testImageDir, 'url-test.jpg')
+
     await fsPromises.mkdir(testImageDir, {recursive: true})
     await fsPromises.writeFile(testImagePath, Buffer.from('fake-jpg-data'))
   })
 
   afterAll(async () => {
-    await fsPromises.unlink(testImagePath).catch(() => {})
+    delete global.__dir
+    await fsPromises.rm(tmpDir, {recursive: true, force: true})
   })
 
   test('should return empty string for empty src', async () => {

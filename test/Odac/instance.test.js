@@ -2,6 +2,7 @@ const Odac = require('../../src/Odac')
 
 describe('Odac.instance()', () => {
   let mockOdac
+  let ctx
 
   beforeEach(() => {
     mockOdac = {
@@ -20,6 +21,8 @@ describe('Odac.instance()', () => {
   })
 
   afterEach(() => {
+    ctx?.Request.clearTimeout()
+    ctx = null
     delete global.Odac
     delete global.__dir
   })
@@ -34,7 +37,7 @@ describe('Odac.instance()', () => {
     }
     const mockRes = {on: jest.fn(), writeHead: jest.fn(), end: jest.fn()}
 
-    const ctx = Odac.instance('id', mockReq, mockRes)
+    ctx = Odac.instance('id', mockReq, mockRes)
 
     expect(ctx.Request).toBeDefined()
     expect(ctx.Request.id).toBe('id')
@@ -49,7 +52,7 @@ describe('Odac.instance()', () => {
       on: jest.fn()
     }
     const mockRes = {on: jest.fn()}
-    const ctx = Odac.instance('id', mockReq, mockRes)
+    ctx = Odac.instance('id', mockReq, mockRes)
 
     expect(typeof ctx.abort).toBe('function')
     expect(typeof ctx.cookie).toBe('function')

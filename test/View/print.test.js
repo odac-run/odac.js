@@ -1,13 +1,20 @@
 const fs = require('fs').promises
+const fsSync = require('fs')
+const os = require('os')
 const path = require('path')
 const View = require('../../src/View')
 
 describe('View.print()', () => {
   let view
   let mockOdac
+  let tmpDir
+  let originalCwd
 
   beforeEach(() => {
-    global.__dir = path.resolve(__dirname, '../../')
+    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), 'odac-view-print-'))
+    global.__dir = tmpDir
+    originalCwd = process.cwd()
+    process.chdir(tmpDir)
     mockOdac = {
       Config: {view: {earlyHints: {enabled: false}}},
       View: {},
@@ -28,6 +35,8 @@ describe('View.print()', () => {
   afterEach(() => {
     jest.restoreAllMocks()
     delete global.__dir
+    process.chdir(originalCwd)
+    fsSync.rmSync(tmpDir, {recursive: true, force: true})
   })
 
   it('should be a function', () => {

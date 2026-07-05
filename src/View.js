@@ -521,9 +521,9 @@ class View {
       })
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
-      await fsPromises.mkdir(CACHE_DIR, {recursive: true})
+      await fsPromises.mkdir(`${__dir}/${CACHE_DIR}`, {recursive: true})
       await fsPromises.writeFile(
-        `${CACHE_DIR}/${cache}`,
+        `${__dir}/${CACHE_DIR}/${cache}`,
         `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
       )
       delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
