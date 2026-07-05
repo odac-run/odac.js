@@ -138,6 +138,9 @@ module.exports = {
         _odac.request = function (key) {
           return _odac.Request.request(key)
         }
+        _odac.file = function (key) {
+          return _odac.Request.file(key)
+        }
         _odac.set = function (key, value) {
           return _odac.Request.set(key, value)
         }

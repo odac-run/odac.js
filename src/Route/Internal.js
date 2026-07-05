@@ -4,7 +4,7 @@ class Internal {
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
     for (const rule of rules) {
-      const validatorChain = validator.post(field.name).check(rule)
+      const validatorChain = (field.type === 'file' ? validator.file(field.name) : validator.post(field.name)).check(rule)
       if (validation.message) {
         const message = this.replacePlaceholders(validation.message, {
           value: value,
@@ -71,6 +71,8 @@ class Internal {
     const uniqueFields = []
 
     for (const field of config.fields) {
+      if (field.type === 'file') continue
+
       const value = await Odac.request(field.name)
 
       for (const validation of field.validations) {
@@ -408,7 +410,7 @@ class Internal {
     const uniqueFields = []
 
     for (const field of config.fields) {
-      const value = await Odac.request(field.name)
+      const value = field.type === 'file' ? await Odac.file(field.name) : await Odac.request(field.name)
 
       for (const validation of field.validations) {
         this.#validateField(validator, field, validation, value)
@@ -420,7 +422,8 @@ class Internal {
         }
       }
 
-      if (!field.skip) {
+      // File fields excluded from data bag; controllers access via formHelper.file()
+      if (!field.skip && field.type !== 'file') {
         data[field.name] = value
       }
     }
@@ -498,6 +501,8 @@ class Internal {
     if (Odac.formConfig.table) {
       try {
         const table = Odac.DB[Odac.formConfig.table]
+        const path = require('path')
+        const os = require('os')
 
         for (const field of Odac.formUniqueFields) {
           if (Odac.formData[field.name] == null) continue
@@ -511,6 +516,26 @@ class Internal {
               errors: {[field.name]: errorMessage}
             })
           }
+        }
+
+        // Auto-store file fields for table forms. Skipped fields are validated
+        // but excluded from persistence (mirrors `skip` for text fields); their
+        // temp files are cleaned up by Request when the response is sent.
+        const uploadDir = global.Odac.Config.request.uploadDir || path.join(os.tmpdir(), 'odac-uploads')
+        for (const field of Odac.formConfig.fields) {
+          if (field.type !== 'file' || field.skip) continue
+
+          const file = await Odac.file(field.name)
+          if (!file) continue
+
+          const files = Array.isArray(file) ? file : [file]
+          const storedPaths = []
+          for (const f of files) {
+            const rel = path.join(Odac.formConfig.table, `${nodeCrypto.randomBytes(8).toString('hex')}.${f.ext}`)
+            await f.move(path.join(uploadDir, rel))
+            storedPaths.push(rel)
+          }
+          Odac.formData[field.name] = Array.isArray(file) ? JSON.stringify(storedPaths) : storedPaths[0]
         }
 
         await table.insert(Odac.formData)
@@ -555,6 +580,10 @@ class Internal {
             // Create Form Helper Object
             const formHelper = {
               data: Odac.formData,
+
+              file: name => {
+                return Odac.file(name)
+              },
 
               error: (field, message) => {
                 return Odac.return({

@@ -72,6 +72,15 @@ if (await validator.error()) {
 - `regex:pattern` - Must match regex pattern
 - `!disposable` - Block disposable/temporary email providers (List is automatically updated daily)
 
+**File Upload Validation:**
+- `required` - File must be uploaded
+- `maxsize:2MB` - Maximum file size (B, KB, MB, GB)
+- `minsize:10KB` - Minimum file size
+- `mimetype:image/png,image/jpeg` - Allowed MIME types (comma-separated; wildcards like `image/*` supported)
+- `accept:...` - Alias for `mimetype:`
+- `ext:jpg,png` - Allowed file extensions (case-insensitive)
+- `maxfiles:5` - Max files for multi-upload
+
 **Security:**
 - `xss` - Check for HTML tags (XSS protection)
 - `usercheck` - User must be authenticated
@@ -355,6 +364,37 @@ module.exports = async function (Odac) {
   }
 
   return validator.success('Action completed')
+}
+```
+
+#### Example: File Upload Validation
+
+```javascript
+module.exports = async function (Odac) {
+  const validator = Odac.Validator
+
+  validator
+    .file('avatar')
+    .check('required').message('Avatar is required')
+    .check('maxsize:2MB').message('Avatar must not exceed 2MB')
+    .check('mimetype:image/png,image/jpeg').message('Avatar must be PNG or JPEG')
+
+  validator
+    .file('documents')
+    .check('maxfiles:5').message('Maximum 5 documents allowed')
+    .check('ext:pdf,docx').message('Only PDF and Word documents allowed')
+
+  if (await validator.error()) {
+    return validator.result('Upload validation failed')
+  }
+
+  // Access and store the files
+  const avatar = await Odac.file('avatar')
+  const userId = Odac.Auth.user('id')
+  
+  await avatar.move(`${__dir}/../storage/avatars/${userId}.${avatar.ext}`)
+
+  return validator.success('Files uploaded successfully')
 }
 ```
 

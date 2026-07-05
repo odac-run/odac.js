@@ -37,7 +37,7 @@ module.exports = async Odac => {
 - `post(key)`: Validate POST payload field.
 - `get(key)`: Validate querystring field.
 - `var(name, value)`: Validate computed/custom value.
-- `file(name)`: Validate uploaded file object.
+- `file(name)`: Validate uploaded file(s) object.
 - `check(rules | boolean)`: Apply pipe rules or direct boolean validation.
 - `message(text)`: Set message for the latest check on current field.
 - `error()`: Runs validation and returns `true` if any error exists.
@@ -64,6 +64,14 @@ module.exports = async Odac => {
 - `in:substring`, `notin:substring`
 - `regex:pattern`
 - `mindate:YYYY-MM-DD`, `maxdate:YYYY-MM-DD`
+
+### File upload rules (for `file()` fields)
+- `required`: file must be present.
+- `maxsize:2MB` / `minsize:10KB`: size limits (B, KB, MB, GB suffixes).
+- `mimetype:image/png,image/jpeg`: MIME type whitelist; wildcards like `image/*` supported. Validated via claimed MIME, extension map, and (for images) magic-byte sniffing to detect spoofing.
+- `accept:...`: alias for `mimetype:`.
+- `ext:jpg,png`: file extension whitelist (case-insensitive, comma-separated).
+- `maxfiles:N`: max file count for `multiple` file inputs.
 
 ### Auth/security rules
 - `usercheck`: Must be authenticated.
@@ -125,7 +133,27 @@ module.exports = async Odac => {
 }
 ```
 
-### 4) Brute-force on auth endpoint
+### 4) File upload validation
+```javascript
+module.exports = async Odac => {
+  const validator = Odac.validator()
+
+  validator.file('avatar').check('required|maxsize:2MB|mimetype:image/png,image/jpeg')
+    .message('Avatar required (PNG/JPEG, max 2MB)')
+  validator.file('documents').check('maxfiles:5|ext:pdf,docx')
+    .message('Max 5 PDFs/Word docs allowed')
+
+  if (await validator.error()) return await validator.result('Upload validation failed')
+  
+  // Access files in controller
+  const avatar = await Odac.file('avatar')
+  await avatar.move(`${__dir}/storage/avatars/${user.id}.${avatar.ext}`)
+  
+  return await validator.success('Files uploaded')
+}
+```
+
+### 5) Brute-force on auth endpoint
 ```javascript
 module.exports = async Odac => {
   const validator = Odac.validator()

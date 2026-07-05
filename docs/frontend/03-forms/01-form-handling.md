@@ -174,42 +174,59 @@ Odac.form('#my-form', function(data) {
 
 ## File Uploads
 
-### Basic File Upload
+### Basic File Upload with `<odac:form>`
+
+File upload in Odac forms is seamless — just add a `type="file"` input and validation rules:
 
 ```html
-<form id="upload-form" action="/api/upload" method="POST">
-  <input name="file" type="file" required>
-  <button type="submit">Upload</button>
-</form>
+<odac:form action="Profile.saveAvatar" id="avatar-form">
+  <odac:input type="file" name="avatar" label="Profile Picture">
+    <odac:validate rule="required|maxsize:2MB|mimetype:image/png,image/jpeg" message="PNG/JPEG, max 2MB"/>
+  </odac:input>
+  <odac:submit text="Upload"/>
+</odac:form>
 ```
 
 ```javascript
-Odac.form('#upload-form', function(data) {
+Odac.form('#avatar-form', function(data) {
   if (data.result.success) {
-    console.log('File uploaded:', data.result.filename)
+    alert('Avatar uploaded!')
   }
 })
 ```
 
-### Upload Progress
+**Features:**
+- ✅ Client-side validation (size, MIME type, extension)
+- ✅ Server-side validation with magic-byte sniffing for images
+- ✅ Automatic multipart/form-data handling
+- ✅ File size progress tracking
+
+### Upload Progress Tracking
 
 ```javascript
 Odac.form({
-  form: '#upload-form',
+  form: '#avatar-form',
   loading: function(percent) {
     document.querySelector('#progress').style.width = percent + '%'
-    document.querySelector('#progress-text').textContent = percent + '%'
   }
 }, function(data) {
-  console.log('Upload complete!')
+  if (data.result.success) {
+    console.log('Upload complete!')
+  }
 })
 ```
 
-### Multiple Files
+### Multiple File Upload
+
+For multiple file selection, add the `multiple` attribute and use `maxfiles` validation:
 
 ```html
-<input name="files[]" type="file" multiple>
+<odac:input type="file" name="documents" label="Documents" multiple>
+  <odac:validate rule="maxfiles:5|ext:pdf,docx" message="Max 5 PDFs/Word docs"/>
+</odac:input>
 ```
+
+**Note:** File inputs are never repopulated on validation error (for security). Users must re-select files after an error.
 
 ## Advanced Features
 

@@ -479,6 +479,43 @@ if (typeof window !== 'undefined') {
             errorSpan.textContent = ''
           }
 
+          if (input.type === 'file') {
+            const files = input.files
+            if (input.hasAttribute('required') && files.length === 0) {
+              showError(input, 'required')
+              break
+            }
+            const maxFiles = parseInt(input.getAttribute('data-maxfiles'))
+            if (maxFiles && files.length > maxFiles) {
+              showError(input, 'maxfiles')
+              break
+            }
+            const maxSize = parseInt(input.getAttribute('data-maxsize'))
+            if (maxSize && [...files].some(f => f.size > maxSize)) {
+              showError(input, 'maxsize')
+              break
+            }
+            const minSize = parseInt(input.getAttribute('data-minsize'))
+            if (minSize && [...files].some(f => f.size < minSize)) {
+              showError(input, 'minsize')
+              break
+            }
+            const accept = input.getAttribute('accept')
+            if (accept && files.length) {
+              const tokens = accept.split(',').map(t => t.trim().toLowerCase())
+              const ok = [...files].every(f =>
+                tokens.some(t =>
+                  t.startsWith('.') ? f.name.toLowerCase().endsWith(t) : t.endsWith('/*') ? f.type.startsWith(t.slice(0, -1)) : f.type === t
+                )
+              )
+              if (!ok) {
+                showError(input, 'accept')
+                break
+              }
+            }
+            continue
+          }
+
           if (input.hasAttribute('required')) {
             const isEmpty = input.type === 'checkbox' || input.type === 'radio' ? !input.checked : !input.value.trim()
             if (isEmpty) {
@@ -523,7 +560,7 @@ if (typeof window !== 'undefined') {
         let datastring, cache, contentType, processData
         if (formElement.querySelector('input[type=file]')) {
           datastring = new FormData(formElement)
-          datastring.append('token', this.token())
+          datastring.append('_token', this.token())
           cache = false
           contentType = false
           processData = false

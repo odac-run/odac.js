@@ -8,7 +8,11 @@ module.exports = {
     token: 'odac_auth' // This is the TABLE NAME for tokens, not a secret token.
   },
   request: {
-    timeout: 10000
+    timeout: 10000,
+    maxBodySize: 1e6,
+    maxFileSize: 10 * 1024 * 1024,
+    maxFiles: 10,
+    uploadDir: null
   },
   encrypt: {
     key: 'odac' // Default encryption key. MUST be overridden in production.

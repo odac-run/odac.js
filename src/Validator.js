@@ -173,11 +173,27 @@ class Validator {
           let error = false
           let rules = checkItem.rules
 
+          // Normalize file value to array
+          let files = []
+          if (method === 'FILES') {
+            if (Array.isArray(value)) {
+              files = value
+            } else if (value) {
+              files = [value]
+            }
+            // Implicit server-limit guard: truncated files always fail
+            if (files.some(f => f.truncated)) {
+              error = true
+              this.#message[key] = checkItem.message
+              continue
+            }
+          }
+
           if (typeof rules === 'boolean') {
             error = rules === false
           } else {
             for (const rule of rules.includes('|') ? rules.split('|') : [rules]) {
-              let vars = rule.split(':')
+              let vars = rule.split(/:(.+)/)
               let ruleName = vars[0].trim()
               let inverse = ruleName.startsWith('!')
               if (inverse) ruleName = ruleName.substr(1)
@@ -185,7 +201,11 @@ class Validator {
               if (!error) {
                 switch (ruleName) {
                   case 'required':
-                    error = value === undefined || value === '' || value === null
+                    if (method === 'FILES') {
+                      error = files.length === 0
+                    } else {
+                      error = value === undefined || value === '' || value === null
+                    }
                     break
                   case 'accepted':
                     error = !value || (value !== 1 && value !== '1' && value !== 'on' && value !== 'yes' && value !== true)
@@ -300,6 +320,35 @@ class Validator {
                   case 'disposable':
                     error = value && value !== '' && !(await Validator.isDisposable(value))
                     break
+                  case 'maxsize':
+                    if (method === 'FILES' && vars[1]) {
+                      const maxBytes = this.#parseSize(vars[1])
+                      error = files.some(f => f.size > maxBytes)
+                    }
+                    break
+                  case 'minsize':
+                    if (method === 'FILES' && vars[1]) {
+                      const minBytes = this.#parseSize(vars[1])
+                      error = files.some(f => f.size < minBytes)
+                    }
+                    break
+                  case 'mimetype':
+                  case 'accept':
+                    if (method === 'FILES' && vars[1] && files.length > 0) {
+                      error = !(await this.#validateMimetype(files, vars[1]))
+                    }
+                    break
+                  case 'ext':
+                    if (method === 'FILES' && vars[1] && files.length > 0) {
+                      const allowedExts = vars[1].split(',').map(e => e.trim().toLowerCase())
+                      error = !files.every(f => allowedExts.includes(f.ext))
+                    }
+                    break
+                  case 'maxfiles':
+                    if (method === 'FILES' && vars[1]) {
+                      error = files.length > parseInt(vars[1])
+                    }
+                    break
                 }
                 if (inverse) error = !error
               }
@@ -314,6 +363,96 @@ class Validator {
       }
     }
     this.#completed = true
+  }
+
+  #parseSize(sizeStr) {
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?$/i)
+    if (!match) return 0
+    let bytes = parseFloat(match[1])
+    const unit = (match[2] || 'B').toUpperCase()
+    const multipliers = {B: 1, KB: 1024, MB: 1024 * 1024, GB: 1024 * 1024 * 1024}
+    return Math.floor(bytes * (multipliers[unit] || 1))
+  }
+
+  async #validateMimetype(files, mimeStr) {
+    const allowedTypes = mimeStr.split(',').map(m => m.trim().toLowerCase())
+    const extToMimeMap = {
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      png: 'image/png',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      svg: 'image/svg+xml',
+      pdf: 'application/pdf',
+      txt: 'text/plain',
+      csv: 'text/csv',
+      zip: 'application/zip',
+      mp4: 'video/mp4',
+      mp3: 'audio/mpeg',
+      doc: 'application/msword',
+      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      xls: 'application/vnd.ms-excel',
+      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+    for (const file of files) {
+      const claimed = file.mimetype.toLowerCase()
+      const extMime = extToMimeMap[file.ext] || 'application/octet-stream'
+      let allowed = false
+      for (const type of allowedTypes) {
+        if (type === claimed || type === extMime) {
+          allowed = true
+          break
+        }
+        if (type.endsWith('/*')) {
+          const prefix = type.slice(0, -2)
+          if (claimed.startsWith(prefix) || extMime.startsWith(prefix)) {
+            allowed = true
+            break
+          }
+        }
+      }
+      if (!allowed) return false
+
+      // Content sniffing: if the file's own extension is a raster format we have
+      // a signature for, verify the bytes match to catch a renamed/spoofed file
+      // (e.g. a script uploaded as photo.png). Formats without a known signature
+      // (svg, pdf, office docs, ...) fall back to extension + claimed MIME.
+      if (file.path) {
+        const sniff = await this.#sniffImage(file.path, file.ext)
+        if (sniff === false) return false
+      }
+    }
+    return true
+  }
+
+  // Returns true if the file's leading bytes match the expected signature for
+  // its extension, false if it's a known raster type but the bytes don't match,
+  // and null if the extension has no signature we sniff (caller should skip).
+  async #sniffImage(filePath, ext) {
+    const format = ext === 'jpg' ? 'jpeg' : ext
+    if (!['jpeg', 'png', 'gif', 'webp'].includes(format)) return null
+
+    let buf
+    try {
+      const fd = await require('fs').promises.open(filePath, 'r')
+      buf = Buffer.alloc(12)
+      await fd.read(buf, 0, 12, 0)
+      await fd.close()
+    } catch {
+      return null // unreadable: don't fail validation on a sniff error
+    }
+
+    switch (format) {
+      case 'jpeg':
+        return buf.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
+      case 'png':
+        return buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
+      case 'gif':
+        return buf.subarray(0, 4).equals(Buffer.from([0x47, 0x49, 0x46, 0x38]))
+      case 'webp':
+        // RIFF container + "WEBP" fourCC at offset 8 (distinguishes from AVI/WAV)
+        return buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP'
+    }
   }
 
   static async isDisposable(email) {
