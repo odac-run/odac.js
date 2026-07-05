@@ -1,3 +1,20 @@
+### ✨ What's New
+
+- add multipart file upload support with validation
+
+### 🛠️ Fixes & Improvements
+
+- **auth:** enhance token validation and anomaly detection mechanisms
+- patch file descriptor leak, polling anti-pattern, mimetype guard and duplicate move check
+- **test:** improve temp file cleanup logic in multipart tests for reliability
+- update cache directory handling to use global.__dir for consistency
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - **docs:** update references from 'odac' to 'Odac' for consistency
