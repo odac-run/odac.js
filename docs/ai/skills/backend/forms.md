@@ -101,11 +101,62 @@ module.exports = class Contact {
 ```
 
 ## Field-Level Variants
-- **Input types**: `text`, `email`, `password`, `number`, `url`, `textarea`, `checkbox`.
-- **Validation mapping**: `required|minlen|maxlen|min|max|alpha|alphanumeric|numeric|email|url|accepted`.
-- **Pass-through attrs**: Unrecognized `<odac:input ...>` attributes are preserved into generated HTML input/textarea.
+- **Input types**: `text`, `email`, `password`, `number`, `url`, `textarea`, `checkbox`, `file`.
+- **Validation mapping**: `required|minlen|maxlen|min|max|alpha|alphanumeric|numeric|email|url|accepted|maxsize|minsize|mimetype|ext|maxfiles`.
+- **Pass-through attrs**: Unrecognized `<odac:input ...>` attributes are preserved into generated HTML input/textarea/input[type=file].
 - **Skip persistence**: Use `skip` on `<odac:input>` to validate a field but exclude it from final payload.
 - **Unique shorthand**: `unique` attribute on `<odac:input>` enables auth-register uniqueness list.
+
+## File Upload Fields
+
+File inputs work end-to-end with zero-config validation, like all other input types:
+
+```html
+<odac:form action="Profile.saveAvatar" enctype="multipart/form-data">
+  <odac:input type="file" name="avatar" label="Avatar">
+    <odac:validate rule="required|maxsize:2MB|mimetype:image/png,image/jpeg" message="PNG/JPEG, max 2MB"/>
+  </odac:input>
+  <odac:submit text="Save"/>
+</odac:form>
+```
+
+### File Rules
+- **`required`**: file must be present (at least one file for `multiple`).
+- **`maxsize:2MB`** / **`minsize:10KB`**: size constraints (supports B, KB, MB, GB suffixes); enforced server-side via busboy limits + client-side byte checks.
+- **`mimetype:image/png,image/jpeg`** (alias **`accept:`**): comma-separated MIME list; wildcards like `image/*` supported. Validated via claimed MIME, extension map, and (for images) magic-byte sniffing.
+- **`ext:jpg,png`**: file extension whitelist (case-insensitive).
+- **`maxfiles:3`**: max file count for `multiple` inputs.
+
+### Controller Access
+In action forms, access uploaded files via `form.file(name)`:
+```javascript
+async saveAvatar(form) {
+  const avatar = await form.file('avatar')
+  if (!avatar) return form.error('avatar', 'No file uploaded')
+  
+  const dest = await avatar.move(`${__dir}/storage/avatars/${user.id}.${avatar.ext}`)
+  user.avatar = dest
+  return form.success('Avatar saved')
+}
+```
+
+### Table Forms
+For `table="..."` forms, file fields are auto-stored relative to `uploadDir` (configured in `odac.json` or `$ODAC_UPLOAD_DIR`) and the path string is persisted in the column.
+
+### File Object Shape
+```javascript
+{
+  field: 'avatar',
+  name: 'photo.jpg',       // original filename
+  ext: 'jpg',              // extension (lowercase)
+  mimetype: 'image/jpeg',  // client-claimed
+  size: 123456,            // bytes
+  path: '/tmp/odac-...',   // temp path (null if truncated)
+  truncated: false,        // true if size > maxFileSize
+  stored: false,           // true after move()
+  async move(dest) {...}   // move to permanent location
+}
+```
 
 ## Patterns
 ```javascript

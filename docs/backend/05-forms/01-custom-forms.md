@@ -105,6 +105,16 @@ Supports all standard HTML input types:
   <odac:validate rule="minlen:2" message="Name must be at least 2 characters"/>
   <odac:validate rule="maxlen:50" message="Name is too long"/>
 </odac:input>
+
+<!-- File upload -->
+<odac:input name="avatar" type="file" label="Profile Picture">
+  <odac:validate rule="required|maxsize:2MB|mimetype:image/png,image/jpeg" message="PNG or JPEG, max 2MB"/>
+</odac:input>
+
+<!-- Multiple file upload -->
+<odac:input name="documents" type="file" label="Documents" multiple>
+  <odac:validate rule="maxfiles:5|ext:pdf,docx" message="Max 5 PDFs or Word docs"/>
+</odac:input>
 ```
 
 ### Field Attributes
@@ -130,6 +140,7 @@ Add validation rules to fields:
 
 ### Available Rules
 
+#### Text/Input Rules
 - `required` - Field is required
 - `email` - Must be valid email
 - `url` - Must be valid URL
@@ -141,6 +152,15 @@ Add validation rules to fields:
 - `alpha` - Only letters
 - `alphanumeric` - Letters and numbers only
 - `accepted` - Checkbox must be checked
+
+#### File Upload Rules
+- `required` - File must be provided
+- `maxsize:2MB` - Maximum file size (supports B, KB, MB, GB)
+- `minsize:10KB` - Minimum file size
+- `mimetype:image/png,image/jpeg` - Allowed MIME types (comma-separated; wildcards like `image/*` supported)
+- `accept:...` - Alias for `mimetype:`
+- `ext:jpg,png` - Allowed file extensions (case-insensitive)
+- `maxfiles:5` - Maximum number of files for `multiple` uploads
 
 ### Multiple Rules
 
@@ -305,6 +325,38 @@ module.exports = class Contact {
 ```
 
 **Note:** No route definition is needed for the action! The form system handles the routing securely.
+
+## File Upload Handling
+
+Access uploaded files in your controller via `form.file(name)`:
+
+```javascript
+module.exports = class Profile {
+  constructor(Odac) {
+    this.Odac = Odac
+  }
+
+  async updateAvatar(form) {
+    const avatar = await form.file('avatar')
+    if (!avatar) {
+      return form.error('avatar', 'No file uploaded')
+    }
+
+    // Store the file permanently
+    const userId = this.Odac.Auth.user('id')
+    const dest = await avatar.move(`${__dir}/../storage/avatars/${userId}.${avatar.ext}`)
+    
+    // Update user record with file path
+    // await this.Odac.DB.users.where('id', userId).update({avatar: dest})
+    
+    return form.success('Avatar updated!', '/profile')
+  }
+}
+```
+
+For `table="..."` forms with file fields, files are automatically stored in the configured `uploadDir` and the file path is saved to the database column.
+
+> **Security:** `move(dest)` writes to whatever path you pass, just like `fs` — the file object's own `.name` is already stripped to a bare filename, but if you build `dest` from raw user input, sanitize it yourself to avoid path traversal. Server-generated names (as in the example above) are always safe. Uploads are validated for size/type before your handler runs, but content sniffing only covers raster images (JPEG/PNG/GIF/WebP); other types are trusted by extension + declared MIME, and `image/*` also permits SVG (an XSS vector) — list explicit types like `mimetype:image/png,image/jpeg` when you need to exclude it.
 
 ## Automatic Database Insert
 

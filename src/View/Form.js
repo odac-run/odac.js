@@ -173,6 +173,7 @@ class Form {
     attrs += ` novalidate`
     if (config.id) attrs += ` id="${this.escapeHtml(config.id)}"`
     if (type === 'form' && config.clear !== undefined) attrs += ` clear="${config.clear}"`
+    if (config.fields && config.fields.some(f => f.type === 'file')) attrs += ` enctype="multipart/form-data"`
 
     let html = `<form ${attrs}>\n`
     html += `  <input type="hidden" name="${meta.tokenInputName}" value="${this.escapeHtml(token)}">\n`
@@ -537,12 +538,24 @@ class Form {
       html += `<textarea${idAttr} name="${escapedName}" placeholder="${escapedPlaceholder}"${classAttr}${attrs}>${this.escapeHtmlPreservingTemplates(
         field.value || ''
       )}</textarea>\n`
+    } else if (field.type === 'file') {
+      const attrs = this.buildHtml5Attributes(field)
+      html += `<input type="file"${idAttr} name="${escapedName}"${classAttr}${attrs}>\n`
     } else {
       const attrs = this.buildHtml5Attributes(field)
       html += `<input type="${escapedType}"${idAttr} name="${escapedName}"${valueAttr} placeholder="${escapedPlaceholder}"${classAttr}${attrs}>\n`
     }
 
     return html
+  }
+
+  static #parseSizeStatic(sizeStr) {
+    const match = sizeStr.match(/^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB)?$/i)
+    if (!match) return 0
+    let bytes = parseFloat(match[1])
+    const unit = (match[2] || 'B').toUpperCase()
+    const multipliers = {B: 1, KB: 1024, MB: 1024 * 1024, GB: 1024 * 1024 * 1024}
+    return Math.floor(bytes * (multipliers[unit] || 1))
   }
 
   static appendExtraAttributes(attrs, field) {
@@ -624,6 +637,45 @@ class Form {
               if (validation.message) errorMessages.required = validation.message
             }
             break
+          case 'maxsize':
+            if (field.type === 'file') {
+              const maxBytes = this.#parseSizeStatic(ruleValue)
+              attrs += ` data-maxsize="${maxBytes}"`
+              if (validation.message) errorMessages.maxsize = validation.message
+            }
+            break
+          case 'minsize':
+            if (field.type === 'file') {
+              const minBytes = this.#parseSizeStatic(ruleValue)
+              attrs += ` data-minsize="${minBytes}"`
+              if (validation.message) errorMessages.minsize = validation.message
+            }
+            break
+          case 'mimetype':
+          case 'accept':
+            if (field.type === 'file') {
+              attrs += ` accept="${this.escapeHtml(ruleValue)}"`
+              if (validation.message) errorMessages.accept = validation.message
+            }
+            break
+          case 'ext':
+            if (field.type === 'file') {
+              const exts = ruleValue
+                .split(',')
+                .map(e => e.trim())
+                .map(e => (e.startsWith('.') ? e : '.' + e))
+                .join(',')
+              attrs += ` accept="${this.escapeHtml(exts)}"`
+              if (validation.message) errorMessages.accept = validation.message
+            }
+            break
+          case 'maxfiles':
+            if (field.type === 'file' && parseInt(ruleValue) > 1) {
+              attrs += ` multiple`
+              attrs += ` data-maxfiles="${this.escapeHtml(ruleValue)}"`
+              if (validation.message) errorMessages.maxfiles = validation.message
+            }
+            break
         }
       }
     }
@@ -640,6 +692,10 @@ class Form {
     if (errorMessages.maxlength) attrs += ` data-error-maxlength="${this.escapeHtml(errorMessages.maxlength)}"`
     if (errorMessages.pattern) attrs += ` data-error-pattern="${this.escapeHtml(errorMessages.pattern)}"`
     if (errorMessages.email) attrs += ` data-error-email="${this.escapeHtml(errorMessages.email)}"`
+    if (errorMessages.maxsize) attrs += ` data-error-maxsize="${this.escapeHtml(errorMessages.maxsize)}"`
+    if (errorMessages.minsize) attrs += ` data-error-minsize="${this.escapeHtml(errorMessages.minsize)}"`
+    if (errorMessages.accept) attrs += ` data-error-accept="${this.escapeHtml(errorMessages.accept)}"`
+    if (errorMessages.maxfiles) attrs += ` data-error-maxfiles="${this.escapeHtml(errorMessages.maxfiles)}"`
 
     return this.appendExtraAttributes(attrs, field)
   }

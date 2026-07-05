@@ -1,12 +1,22 @@
 const nodeCrypto = require('crypto')
 const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
-const TOKEN_ROTATION_GRACE_PERIOD_MS = 60 * 1000
+// Window after rotation during which the old token can still recover a lost
+// rotation response (one-shot). Shorter = smaller replay surface; too short
+// breaks legitimate retries on flaky mobile networks (stall + retry ≈ 10-20s).
+const TOKEN_ROTATION_GRACE_PERIOD_MS = 30 * 1000
+const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000
+const TOKEN_SWEEP_BOOT_DELAY_MS = 5 * 60 * 1000
 class Auth {
   #request = null
   #table = null
   #token = null
   #user = null
   static #migrationCache = new Set()
+  // First sweep fires ~5 minutes after boot, then once per interval, driven by
+  // live traffic. The boot delay keeps short-lived processes (tests, scripts)
+  // from sweeping, while frequently-restarted servers (dev sync) still get a
+  // sweep instead of resetting a full interval on every restart.
+  static #lastTokenSweep = Date.now() - TOKEN_SWEEP_INTERVAL_MS + TOKEN_SWEEP_BOOT_DELAY_MS
 
   constructor(request) {
     this.#request = request
@@ -110,16 +120,54 @@ class Auth {
         console.error('Odac Auth Error: Failed to ensure token table exists:', e.message)
       }
 
-      // Query token
-      let sql_token = await Odac.DB[tokenTable].where('token_x', odac_x).where('browser', browser)
+      // Query token by its unique public identifier only.
+      // User-Agent is validated as a heuristic signal below (see #detectAnomaly),
+      // not as a hard WHERE key, so that a legitimate browser update doesn't
+      // silently orphan the row.
+      let sql_token = await Odac.DB[tokenTable].where('token_x', odac_x)
 
       if (!sql_token || sql_token.length !== 1) return false
 
-      if (!Odac.Var(sql_token[0].token_y).hashCheck(odac_y)) return false
+      // Verify the secret. New tokens are SHA-256 (fast, high-entropy);
+      // legacy scrypt tokens are still accepted and upgraded on next rotation.
+      if (!this.#verifyToken(sql_token[0].token_y, odac_y)) return false
+
+      // Session hijack / stale-session heuristics.
+      // On a strong anomaly (OS/browser change, version downgrade or implausible
+      // jump, or a moved IP paired with a UA/language mismatch) drop the token.
+      const acceptLanguage = this.#request.header('accept-language')
+      const anomaly = this.#detectAnomaly(sql_token[0], browser, this.#request.ip, acceptLanguage)
+      if (anomaly) {
+        await Odac.DB[tokenTable].where('id', sql_token[0].id).delete()
+        return false
+      }
+
+      // In-place hash upgrade: once a legacy scrypt token verifies, rehash the
+      // same secret with SHA-256 so every subsequent request skips the
+      // expensive scrypt path — including setups where rotation never fires
+      // (rotation disabled, WebSocket-only clients). The cookie value is
+      // unchanged, so no new cookies are needed.
+      if (sql_token[0].token_y.startsWith('$scrypt$')) {
+        Odac.DB[tokenTable]
+          .where('id', sql_token[0].id)
+          .update({token_y: this.#hashToken(odac_y)})
+          .catch(() => {})
+      }
+
+      // One-time backfill for rows created before the accept_language column
+      // existed, so the IP+language rule gains its baseline without waiting
+      // for a rotation or activity update.
+      if (sql_token[0].accept_language == null && acceptLanguage) {
+        Odac.DB[tokenTable]
+          .where('id', sql_token[0].id)
+          .update({accept_language: acceptLanguage})
+          .catch(() => {})
+      }
 
       const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
       const updateAge = Odac.Config.auth?.updateAge || 24 * 60 * 60 * 1000
       const rotationAge = Odac.Config.auth?.rotationAge || 15 * 60 * 1000 // Default 15 mins for rotation
+      const rotationGrace = Odac.Config.auth?.rotationGrace || TOKEN_ROTATION_GRACE_PERIOD_MS
       const shouldRotate = Odac.Config.auth?.rotation !== false // Allow disabling rotation
       const now = Date.now()
 
@@ -143,6 +191,16 @@ class Auth {
 
       this.#token = sql_token[0]
 
+      // Periodic sweep of expired tokens and rotated (grace-elapsed) epoch-marker
+      // rows, driven by live traffic. Why: cleanup used to run only on login(),
+      // but token-based sessions rarely log in again, so rotation leftovers
+      // accumulated indefinitely.
+      const sweepInterval = Odac.Config.auth?.sweepInterval || TOKEN_SWEEP_INTERVAL_MS
+      if (now - Auth.#lastTokenSweep > sweepInterval) {
+        Auth.#lastTokenSweep = now
+        this.#cleanupExpiredTokens(tokenTable)
+      }
+
       let triggerRotation = false
       let isRecoveryRotation = false
 
@@ -159,21 +217,22 @@ class Auth {
             // WebSocket: Can't deliver rotated cookies, refresh active timestamp instead
             Odac.DB[tokenTable]
               .where('id', sql_token[0].id)
-              .update({active: new Date()})
+              .update(this.#activityRefresh(sql_token[0], browser, acceptLanguage))
               .catch(() => {})
           }
         } else if (inactiveAge > updateAge) {
-          // Fallback simple active update if rotation is not triggered
+          // Fallback active update if rotation is not triggered; also refreshes
+          // the client baseline (see #activityRefresh)
           Odac.DB[tokenTable]
             .where('id', sql_token[0].id)
-            .update({active: new Date()})
+            .update(this.#activityRefresh(sql_token[0], browser, acceptLanguage))
             .catch(() => {})
         }
       } else {
         // Client still presenting a rotated (grace period) token.
         // This means the previous rotation response was lost (network hiccup, page navigation, etc.)
         // Give the client one more chance by re-issuing new credentials.
-        const timeSinceRotation = inactiveAge - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS
+        const timeSinceRotation = inactiveAge - maxAge + rotationGrace
         if (timeSinceRotation > 5000 && canDeliverCookies) {
           triggerRotation = true
           isRecoveryRotation = true
@@ -188,8 +247,12 @@ class Auth {
           id: Odac.DB.nanoid(),
           user: sql_token[0].user,
           token_x: newTokenX,
-          token_y: Odac.Var(newTokenY).hash(),
-          browser: sql_token[0].browser,
+          token_y: this.#hashToken(newTokenY),
+          // Refresh the client fingerprint baseline on each rotation so that
+          // legitimate gradual drift (e.g. version bumps) stays tracked and
+          // doesn't accumulate into a false "version jump" later.
+          browser: this.#request.header('user-agent') || sql_token[0].browser,
+          accept_language: this.#request.header('accept-language') || sql_token[0].accept_language,
           ip: this.#request.ip,
           date: new Date(),
           active: new Date()
@@ -205,7 +268,7 @@ class Auth {
           if (!isRecoveryRotation) {
             // 2a. Normal rotation: Mark old token as rotated with 60s grace period
             // Non-blocking I/O (Fire & Forget) -> High Throughput
-            const rotatedActiveDate = new Date(now - maxAge + TOKEN_ROTATION_GRACE_PERIOD_MS)
+            const rotatedActiveDate = new Date(now - maxAge + rotationGrace)
             const epochDate = new Date(0)
 
             Odac.DB[tokenTable]
@@ -269,8 +332,9 @@ class Auth {
       id: Odac.DB.nanoid(),
       user: user[key],
       token_x: nodeCrypto.randomBytes(32).toString('hex'),
-      token_y: Odac.Var(token_y).hash(),
+      token_y: this.#hashToken(token_y),
       browser: this.#request.header('user-agent'),
+      accept_language: this.#request.header('accept-language'),
       ip: this.#request.ip
     }
 
@@ -429,7 +493,7 @@ class Auth {
 
     if (odacX && browser) {
       // Delete current token AND any rotated grace-period tokens for this user+browser
-      // Why: After rotation, the old token stays alive for ~60s. Explicit logout must kill it too.
+      // Why: After rotation, the old token stays alive for the grace period. Explicit logout must kill it too.
       const userId = this.#user[primaryKey]
       await Odac.DB[tokenTable].where('user', userId).where('browser', browser).delete()
     }
@@ -673,17 +737,55 @@ class Auth {
   // --- MIGRATION HELPERS (Code-First) ---
 
   async #ensureTokenTableV2(tableName) {
-    // Using .schema helper
-    await Odac.DB[tableName].schema(t => {
-      t.string('id', 21).primary()
-      t.string('user', 21).notNullable()
-      t.string('token_x').notNullable()
-      t.string('token_y').notNullable()
-      t.string('browser').notNullable()
-      t.string('ip').notNullable()
-      t.timestamp('date').defaultTo(Odac.DB.fn.now())
-      t.timestamp('active').defaultTo(Odac.DB.fn.now())
-    })
+    const exists = await Odac.DB.schema.hasTable(tableName)
+
+    if (!exists) {
+      await Odac.DB.schema.createTable(tableName, t => {
+        t.string('id', 21).primary()
+        t.string('user', 21).notNullable()
+        t.string('token_x').notNullable().index() // hot-path lookup key
+        t.string('token_y').notNullable()
+        t.string('browser').notNullable()
+        t.string('accept_language')
+        t.string('ip').notNullable()
+        t.timestamp('date').defaultTo(Odac.DB.fn.now())
+        t.timestamp('active').defaultTo(Odac.DB.fn.now()).index() // sweep range scans
+      })
+      return
+    }
+
+    // Migrate existing token tables. .schema()/createTable are no-ops once the
+    // table exists, so column and index additions must be applied explicitly.
+    try {
+      if (!(await Odac.DB.schema.hasColumn(tableName, 'accept_language'))) {
+        await Odac.DB.schema.alterTable(tableName, t => {
+          t.string('accept_language')
+        })
+      }
+    } catch (e) {
+      console.error('Odac Auth Error: Failed to add accept_language column:', e.message)
+    }
+
+    // Ensure token_x is indexed for the per-request lookup. Adding a duplicate
+    // index throws on most drivers, so a failure here means it already exists.
+    try {
+      await Odac.DB.schema.alterTable(tableName, t => {
+        t.index('token_x')
+      })
+    } catch {
+      /* index already present */
+    }
+
+    // Ensure active is indexed for the periodic expired-token sweep, which
+    // range-scans on it. Applied separately so one existing index doesn't
+    // block the other from being created.
+    try {
+      await Odac.DB.schema.alterTable(tableName, t => {
+        t.index('active')
+      })
+    } catch {
+      /* index already present */
+    }
   }
 
   async #ensureUserTableV2(tableName, primaryKey, passwordField, uniqueFields, sampleData) {
@@ -715,6 +817,132 @@ class Auth {
 
       t.timestamps(true, true) // created_at, updated_at
     })
+  }
+
+  // --- TOKEN HASHING ---
+
+  // token_x/token_y are 256-bit CSPRNG values, so they are infeasible to brute-force.
+  // A slow password hash (scrypt/bcrypt) is therefore unnecessary here, and its
+  // per-request cost is significant at scale — a plain SHA-256 is cryptographically
+  // sufficient for high-entropy secrets and ~1000x cheaper on the hot auth path.
+  #hashToken(value) {
+    return '$sha256$' + nodeCrypto.createHash('sha256').update(String(value)).digest('hex')
+  }
+
+  #verifyToken(stored, provided) {
+    if (typeof stored !== 'string' || !provided) return false
+
+    if (stored.startsWith('$sha256$')) {
+      const expected = Buffer.from(stored.slice(8), 'hex')
+      const actual = nodeCrypto.createHash('sha256').update(String(provided)).digest()
+      if (expected.length !== actual.length) return false
+      return nodeCrypto.timingSafeEqual(expected, actual)
+    }
+
+    // Backward compatibility: legacy scrypt tokens. Rehashed in place to
+    // SHA-256 immediately after the first successful verification (see check()).
+    if (stored.startsWith('$scrypt$')) {
+      return Odac.Var(stored).hashCheck(provided)
+    }
+
+    return false
+  }
+
+  // --- SESSION ANOMALY DETECTION ---
+
+  // Extracts a coarse, version-agnostic fingerprint from a User-Agent string:
+  // browser family, OS family and *major* browser version only, so that routine
+  // minor updates don't churn the stored baseline.
+  #parseUA(ua) {
+    ua = ua || ''
+
+    // iOS variants (CriOS/FxiOS/EdgiOS) identify the same browser families.
+    const browser = /Edg(iOS)?\//.test(ua)
+      ? 'Edge'
+      : /OPR\/|Opera/.test(ua)
+        ? 'Opera'
+        : /(Firefox|FxiOS)\//.test(ua)
+          ? 'Firefox'
+          : /(Chrome|CriOS)\//.test(ua)
+            ? 'Chrome'
+            : /Safari\//.test(ua)
+              ? 'Safari'
+              : 'Other'
+
+    const os = /Windows/.test(ua)
+      ? 'Windows'
+      : /Mac OS X|Macintosh/.test(ua)
+        ? 'macOS'
+        : /Android/.test(ua)
+          ? 'Android'
+          : /iPhone|iPad|iPod/.test(ua)
+            ? 'iOS'
+            : /Linux|X11/.test(ua)
+              ? 'Linux'
+              : 'Other'
+
+    const pattern =
+      browser === 'Edge'
+        ? /Edg(?:iOS)?\/(\d+)/
+        : browser === 'Opera'
+          ? /OPR\/(\d+)/
+          : browser === 'Firefox'
+            ? /(?:Firefox|FxiOS)\/(\d+)/
+            : browser === 'Chrome'
+              ? /(?:Chrome|CriOS)\/(\d+)/
+              : browser === 'Safari'
+                ? /Version\/(\d+)/
+                : null
+
+    const match = pattern ? ua.match(pattern) : null
+    const version = match ? parseInt(match[1], 10) || 0 : 0
+
+    return {browser, os, version}
+  }
+
+  // Returns a short reason string when the presented request is anomalous enough
+  // to invalidate the token, or null when it should be accepted.
+  #detectAnomaly(token, currentUA, currentIP, currentLang) {
+    const storedUA = token.browser || ''
+    const prev = this.#parseUA(storedUA)
+    const cur = this.#parseUA(currentUA)
+
+    // Under the same cookie jar the OS and browser family cannot legitimately change.
+    if (prev.os !== cur.os) return 'os_change'
+    if (prev.browser !== cur.browser) return 'browser_change'
+
+    // A browser version downgrade, or an implausibly large jump for the elapsed
+    // idle time (a long absence justifies proportionally larger jumps).
+    if (cur.version < prev.version) return 'version_downgrade'
+
+    const lastActive = new Date(token.active).getTime()
+    const monthsInactive = Number.isFinite(lastActive) ? Math.max(0, (Date.now() - lastActive) / 2592000000) : 0
+    const allowedJump = 3 + monthsInactive * 2
+    if (cur.version - prev.version > allowedJump) return 'version_jump'
+
+    // IP-change-gated signals: a moved network paired with any other client
+    // change is treated as suspicious.
+    const ipChanged = !!token.ip && !!currentIP && token.ip !== currentIP
+    if (ipChanged) {
+      if (storedUA !== currentUA) return 'ip_ua_mismatch'
+      // Rows from before the accept_language column existed have no baseline;
+      // the rule activates once it is backfilled.
+      if (token.accept_language != null && (currentLang || '') !== token.accept_language) return 'ip_lang_mismatch'
+    }
+
+    return null
+  }
+
+  // Builds the payload for activity-timestamp updates, refreshing the stored
+  // client baseline (UA / language) alongside it. Without this, tokens that
+  // never rotate (rotation disabled, WebSocket-only clients) keep their
+  // login-day fingerprint forever and legitimate gradual drift eventually
+  // accumulates into a false version_jump.
+  #activityRefresh(token, currentUA, currentLang) {
+    const payload = {active: new Date()}
+    if (currentUA && currentUA !== token.browser) payload.browser = currentUA
+    if (currentLang && currentLang !== token.accept_language) payload.accept_language = currentLang
+    return payload
   }
 
   /**

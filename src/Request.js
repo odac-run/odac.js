@@ -1,10 +1,17 @@
 const nodeCrypto = require('crypto')
+const fs = require('fs')
+const fsPromises = fs.promises
+const path = require('path')
+const os = require('os')
 
 class OdacRequest {
   #odac
   #complete = false
   #cookies = {data: {}, sent: []}
   data = {post: {}, get: {}, url: {}}
+  #files = {}
+  #activeWrites = new Set()
+  #cleanedUp = false
   #event = {data: [], end: []}
   #headers = {Server: 'Odac'}
   #status = 200
@@ -36,14 +43,23 @@ class OdacRequest {
     if (!global.Odac.Route.routes[route]) route = 'www'
     this.route = route
     if (this.res) {
-      if (typeof this.#odac.setTimeout === 'function') {
-        this.#timeout = this.#odac.setTimeout(() => !this.res.finished && this.abort(408), global.Odac.Config.request.timeout)
-      } else {
-        this.#timeout = setTimeout(() => !this.res.finished && this.abort(408), global.Odac.Config.request.timeout)
-      }
+      this.#armTimeout()
+      // Client disconnected before we responded (e.g. aborted upload): drop temp files.
+      if (typeof this.res.on === 'function') this.res.on('close', () => this.#cleanupFiles())
     }
     this.#data()
     if (!global.Odac.Request) global.Odac.Request = {}
+  }
+
+  // (Re)arm the idle timeout. Called once at construction and again on every
+  // upload data chunk so a slow-but-progressing upload isn't killed at the
+  // fixed timeout; the timer now measures idle time, not total request time.
+  #armTimeout() {
+    if (!this.res || this.res.finished) return
+    clearTimeout(this.#timeout)
+    const fn = () => !this.res.finished && this.abort(408)
+    const ms = global.Odac.Config.request.timeout
+    this.#timeout = typeof this.#odac.setTimeout === 'function' ? this.#odac.setTimeout(fn, ms) : setTimeout(fn, ms)
   }
 
   // - ABORT REQUEST
@@ -100,50 +116,41 @@ class OdacRequest {
         this.data.get[key] = val
       }
     }
+
+    const contentType = this.req.headers['content-type'] || ''
+    if (contentType.startsWith('multipart/form-data')) {
+      return this.#multipart()
+    }
+
+    // Non-multipart: urlencoded or JSON (buffered path)
     let body = ''
     this.req.on('data', chunk => {
       body += chunk.toString()
-      if (body.length > 1e6) {
+      const maxBodySize = global.Odac.Config.request.maxBodySize
+      if (body.length > maxBodySize) {
         body = ''
         this.status(413)
         this.end()
-      } else {
-        if (body.length > 0 && body.indexOf('Content-Disposition') === -1) return
-        if (body.indexOf('Content-Disposition') > -1) {
-          let boundary = body.split('\r\n')[0]
-          if (boundary.includes('boundary=')) {
-            try {
-              boundary = boundary.split('boundary=')[1].split(';')[0].trim()
-            } catch {
-              // ignore
-            }
-          }
-          let data = body.split(boundary)
-          for (let i = 0; i < data.length; i++) {
-            if (data[i].indexOf('Content-Disposition') === -1) continue
-            let key = data[i].split('name="')[1].split('"')[0]
-            let val = data[i].split('\r\n\r\n')[1].split('\r\n')[0]
-            this.data.post[key] = val
-          }
-        } else {
-          let data = body.split('&')
-          for (let i = 0; i < data.length; i++) {
-            if (data[i].indexOf('=') === -1) continue
-            let key = decodeURIComponent(data[i].split('=')[0])
-            let val = decodeURIComponent(data[i].split('=')[1] || '')
-            this.data.post[key] = val
-          }
-        }
+        this.req.removeAllListeners('data')
+        this.req.resume()
+        this.#complete = true
+        return
       }
+
       for (const event of this.#event.data) {
         event.callback(event.active ? chunk : body)
         event.active = true
       }
     })
+
     this.req.on('end', () => {
       if (!body) return (this.#complete = true)
       if (body.startsWith('{') && body.endsWith('}')) {
-        this.data.post = JSON.parse(body)
+        try {
+          this.data.post = JSON.parse(body)
+        } catch {
+          // invalid JSON, ignore
+        }
       } else {
         let data = body.split('&')
         for (let i = 0; i < data.length; i++) {
@@ -156,6 +163,161 @@ class OdacRequest {
       this.#complete = true
       for (const event of this.#event.end) event.callback()
     })
+  }
+
+  async #multipart() {
+    const cfg = global.Odac.Config.request
+    const busboy = require('busboy')
+
+    const uploadDir = cfg.uploadDir || path.join(os.tmpdir(), 'odac-uploads')
+    try {
+      await fsPromises.mkdir(uploadDir, {recursive: true})
+    } catch (err) {
+      console.error('Failed to create upload directory:', err.message)
+      this.status(500)
+      this.end()
+      this.#complete = true
+      return
+    }
+
+    const bb = busboy({
+      headers: this.req.headers,
+      defParamCharset: 'utf8',
+      limits: {fileSize: cfg.maxFileSize, files: cfg.maxFiles, fieldSize: cfg.maxBodySize, fields: 200}
+    })
+
+    // busboy 'close' can fire before our writeStreams flush to disk, so a file
+    // isn't complete until BOTH the parser closed and every pending write ended.
+    // Otherwise req.file() could resolve before #files is populated.
+    let bbClosed = false
+    const finalize = () => {
+      if (this.#complete || !bbClosed || this.#activeWrites.size > 0) return
+      this.#complete = true
+      for (const event of this.#event.end) event.callback()
+    }
+
+    bb.on('field', (name, val) => {
+      this.data.post[name] = val
+    })
+
+    bb.on('file', (fieldname, stream, info) => {
+      // Empty optional file input: browsers send filename === '' for untouched input
+      if (!info.filename) {
+        stream.resume()
+        return
+      }
+
+      const fileExt = path.extname(info.filename).toLowerCase().slice(1) || 'bin'
+      const tmpPath = path.join(uploadDir, `odac-${nodeCrypto.randomBytes(16).toString('hex')}`)
+      const writeStream = fs.createWriteStream(tmpPath)
+
+      const active = {writeStream, tmpPath}
+      this.#activeWrites.add(active)
+
+      let fileSize = 0
+      let truncated = false
+
+      stream.on('data', chunk => {
+        fileSize += chunk.length
+      })
+
+      // busboy stops feeding data once fileSize limit is hit and lets the
+      // stream end naturally; just flag it so the writeStream 'finish' handler
+      // can drop the partial file and record a truncated metadata object.
+      stream.on('limit', () => {
+        truncated = true
+      })
+
+      stream.pipe(writeStream)
+
+      writeStream.on('finish', () => {
+        this.#activeWrites.delete(active)
+
+        // Oversize file: remove the partial write but still surface metadata so
+        // the validator reports a per-field "too large" error instead of hanging.
+        if (truncated) fs.unlink(tmpPath, () => {})
+
+        const fileObj = {
+          field: fieldname,
+          name: path.basename(info.filename),
+          ext: fileExt,
+          mimetype: info.mimeType,
+          size: fileSize,
+          path: truncated ? null : tmpPath,
+          truncated: truncated,
+          stored: false,
+          move: async dest => this.#moveFile(fileObj, dest)
+        }
+
+        if (!Array.isArray(this.#files[fieldname])) {
+          this.#files[fieldname] = []
+        }
+        this.#files[fieldname].push(fileObj)
+        finalize()
+      })
+
+      writeStream.on('error', () => {
+        this.#activeWrites.delete(active)
+        stream.resume()
+        fs.unlink(tmpPath, () => {})
+        finalize()
+      })
+    })
+
+    bb.on('close', () => {
+      bbClosed = true
+      finalize()
+    })
+
+    bb.on('error', err => {
+      if (this.#complete) return
+      console.error('Busboy error:', err.message)
+      this.#complete = true
+      for (const event of this.#event.end) event.callback()
+      // Malformed multipart body: send 400 instead of letting the handler run on
+      // partial data. #complete is already set so any pending req.file()/request()
+      // pollers resolve, and res.finished blocks any later controller response.
+      this.abort(400)
+    })
+
+    // Keep the timeout as an *idle* deadline: reset it while upload data keeps
+    // arriving so large-but-progressing uploads aren't aborted at 408.
+    this.req.on('data', () => this.#armTimeout())
+    this.req.pipe(bb)
+  }
+
+  // Move the uploaded temp file to a permanent, caller-chosen location. The
+  // destination is developer-controlled (like any fs call): if you build it from
+  // raw user input, sanitize it yourself — the file object's own `.name` is
+  // already basename-only. Handles cross-device moves via copy+unlink fallback.
+  async #moveFile(fileObj, dest) {
+    if (!fileObj.path || fileObj.stored) {
+      throw new Error('Cannot move a truncated or already-moved file')
+    }
+
+    const resolved = path.resolve(dest)
+
+    try {
+      await fsPromises.mkdir(path.dirname(resolved), {recursive: true})
+    } catch {
+      // directory may already exist
+    }
+
+    try {
+      await fsPromises.rename(fileObj.path, resolved)
+    } catch (err) {
+      if (err.code === 'EXDEV') {
+        // Source and destination are on different filesystems: copy then remove.
+        await fsPromises.copyFile(fileObj.path, resolved)
+        await fsPromises.unlink(fileObj.path)
+      } else {
+        throw err
+      }
+    }
+
+    fileObj.path = resolved
+    fileObj.stored = true
+    return resolved
   }
 
   // - RETURN REQUEST
@@ -172,7 +334,30 @@ class OdacRequest {
     clearTimeout(this.#timeout)
     this.print()
     this.res.end(data)
+    this.#cleanupFiles()
     this.req.connection.destroy()
+  }
+
+  // Remove temp files that were never moved to permanent storage. Runs after a
+  // normal response (end) and on early client disconnect (res 'close'), covering
+  // both in-progress writes (aborted mid-upload) and finished-but-unstored files.
+  #cleanupFiles() {
+    if (this.#cleanedUp) return
+    this.#cleanedUp = true
+
+    for (const active of this.#activeWrites) {
+      active.writeStream.destroy()
+      fs.unlink(active.tmpPath, () => {})
+    }
+    this.#activeWrites.clear()
+
+    for (const fieldFiles of Object.values(this.#files)) {
+      for (const file of fieldFiles) {
+        if (!file.stored && file.path) {
+          fs.unlink(file.path, () => {})
+        }
+      }
+    }
   }
 
   // - GET
@@ -239,6 +424,22 @@ class OdacRequest {
           else resolve()
         }
       }, 10)
+    })
+  }
+
+  // - GET FILE
+  async file(name) {
+    const resolveFiles = () => {
+      if (!name) return this.#files
+      const arr = this.#files[name]
+      if (!arr || arr.length === 0) return null
+      return arr.length === 1 ? arr[0] : arr
+    }
+    if (this.#complete) return resolveFiles()
+    return new Promise(resolve => {
+      this.#event.end.push({
+        callback: () => resolve(resolveFiles())
+      })
     })
   }
 

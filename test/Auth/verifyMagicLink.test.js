@@ -102,7 +102,14 @@ describe('Auth.verifyMagicLink()', () => {
       },
       DB: {
         fn: {now: () => new Date()},
-        nanoid: () => 'nano_' + Date.now()
+        nanoid: () => 'nano_' + Date.now(),
+        // schema: used by #ensureTokenTableV2 migration (hasTable/hasColumn/alterTable)
+        schema: {
+          alterTable: jest.fn(() => Promise.resolve()),
+          createTable: jest.fn(() => Promise.resolve()),
+          hasColumn: jest.fn(() => Promise.resolve(true)),
+          hasTable: jest.fn(() => Promise.resolve(true))
+        }
       },
       Var: jest.fn(() => ({
         hash: jest.fn(() => 'hashed_value'),

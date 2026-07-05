@@ -3,8 +3,6 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
 
-const IMG_CACHE_DIR = './storage/.cache/img'
-
 /**
  * Handles on-demand image processing (resize + format conversion) for the
  * ODAC template engine's `<odac:img>` tag. Uses sharp as an optional dependency
@@ -59,6 +57,17 @@ class Image {
     }
 
     return this.#sharpAvailable
+  }
+
+  /**
+   * Resolves the on-disk image cache directory relative to global.__dir,
+   * consistent with how the public/ source directory is resolved elsewhere
+   * in this file. Read lazily (not cached at module scope) so it stays in
+   * sync if __dir changes, e.g. across test suites.
+   * @returns {string}
+   */
+  static #cacheDir() {
+    return path.join(global.__dir || process.cwd(), 'storage/.cache/img')
   }
 
   /**
@@ -186,7 +195,7 @@ class Image {
    * @returns {Promise<{path: string, type: string}|null>}
    */
   static async #processInternal(src, cacheKey, format, options, sourceVerified = false) {
-    const cachePath = path.join(IMG_CACHE_DIR, cacheKey)
+    const cachePath = path.join(this.#cacheDir(), cacheKey)
 
     // Disk cache hit — populate in-memory index without reprocessing
     try {
@@ -242,7 +251,7 @@ class Image {
       // Format conversion with quality setting
       pipeline = pipeline.toFormat(format, {quality})
 
-      await fsPromises.mkdir(IMG_CACHE_DIR, {recursive: true})
+      await fsPromises.mkdir(this.#cacheDir(), {recursive: true})
       await pipeline.toFile(cachePath)
 
       const result = {path: cachePath, type: `image/${format}`, cacheKey}
@@ -280,11 +289,11 @@ class Image {
    * @returns {Promise<{stream: ReadableStream, type: string, size: number}|null>}
    */
   static async serve(filename) {
-    const cachePath = path.join(IMG_CACHE_DIR, filename)
+    const cachePath = path.join(this.#cacheDir(), filename)
 
     // Prevent directory traversal in the filename
     const resolvedCache = path.resolve(cachePath)
-    const cacheDir = path.resolve(IMG_CACHE_DIR)
+    const cacheDir = path.resolve(this.#cacheDir())
     if (!resolvedCache.startsWith(cacheDir + path.sep) && resolvedCache !== cacheDir) {
       return null
     }

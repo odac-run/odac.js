@@ -1,21 +1,26 @@
 const fs = require('fs')
 const fsPromises = fs.promises
+const os = require('os')
 const path = require('path')
 const Image = require('../../../src/View/Image')
 
-const IMG_CACHE_DIR = './storage/.cache/img'
-
 describe('Image.serve()', () => {
   const testFilename = 'testserve1234567.webp'
-  const testFilePath = path.join(IMG_CACHE_DIR, testFilename)
+  let tmpDir, IMG_CACHE_DIR, testFilePath
 
   beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-image-serve-'))
+    global.__dir = tmpDir
+    IMG_CACHE_DIR = path.join(tmpDir, 'storage/.cache/img')
+    testFilePath = path.join(IMG_CACHE_DIR, testFilename)
+
     await fsPromises.mkdir(IMG_CACHE_DIR, {recursive: true})
     await fsPromises.writeFile(testFilePath, Buffer.from('fake-image-data'))
   })
 
   afterAll(async () => {
-    await fsPromises.unlink(testFilePath).catch(() => {})
+    delete global.__dir
+    await fsPromises.rm(tmpDir, {recursive: true, force: true})
   })
 
   test('should return stream, type, and size for a cached file', async () => {
