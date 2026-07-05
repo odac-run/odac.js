@@ -43,6 +43,19 @@ function makeRes() {
   return {writeHead: jest.fn(), end: jest.fn(), finished: false, on: jest.fn()}
 }
 
+// Temp-file cleanup in Request.js uses fire-and-forget fs.unlink(), which
+// completes via libuv's thread pool. A single event-loop tick isn't a
+// reliable signal that it finished, especially under CI I/O contention, so
+// poll for the expected end-state instead of assuming a fixed number of ticks.
+async function waitUntil(conditionFn, {timeoutMs = 2000, intervalMs = 10} = {}) {
+  const start = Date.now()
+  while (!conditionFn()) {
+    if (Date.now() - start > timeoutMs) return false
+    await new Promise(resolve => setTimeout(resolve, intervalMs))
+  }
+  return true
+}
+
 describe('Request multipart parsing', () => {
   let tmpDir, request
 
@@ -135,8 +148,8 @@ describe('Request multipart parsing', () => {
     expect(file.truncated).toBe(true)
     expect(file.path).toBeNull()
     // No orphaned odac-* temp file remains in the upload dir.
-    const leftovers = fs.readdirSync(tmpDir).filter(n => n.startsWith('odac-'))
-    expect(leftovers).toHaveLength(0)
+    const noLeftovers = await waitUntil(() => fs.readdirSync(tmpDir).filter(n => n.startsWith('odac-')).length === 0)
+    expect(noLeftovers).toBe(true)
   })
 
   it('cleans up unstored temp files after the response ends', async () => {
@@ -145,8 +158,7 @@ describe('Request multipart parsing', () => {
     expect(fs.existsSync(file.path)).toBe(true)
 
     r.end('ok')
-    // unlink is fire-and-forget; give the event loop a tick to run it.
-    await new Promise(resolve => setImmediate(resolve))
-    expect(fs.existsSync(file.path)).toBe(false)
+    const removed = await waitUntil(() => !fs.existsSync(file.path))
+    expect(removed).toBe(true)
   })
 })
