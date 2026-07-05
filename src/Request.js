@@ -291,7 +291,7 @@ class OdacRequest {
   // raw user input, sanitize it yourself — the file object's own `.name` is
   // already basename-only. Handles cross-device moves via copy+unlink fallback.
   async #moveFile(fileObj, dest) {
-    if (!fileObj.path) {
+    if (!fileObj.path || fileObj.stored) {
       throw new Error('Cannot move a truncated or already-moved file')
     }
 
@@ -437,12 +437,9 @@ class OdacRequest {
     }
     if (this.#complete) return resolveFiles()
     return new Promise(resolve => {
-      const interval = setInterval(() => {
-        if (this.#complete) {
-          clearInterval(interval)
-          resolve(resolveFiles())
-        }
-      }, 10)
+      this.#event.end.push({
+        callback: () => resolve(resolveFiles())
+      })
     })
   }
 

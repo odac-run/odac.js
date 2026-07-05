@@ -395,7 +395,7 @@ class Validator {
       xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     }
     for (const file of files) {
-      const claimed = file.mimetype.toLowerCase()
+      const claimed = (file.mimetype || '').toLowerCase()
       const extMime = extToMimeMap[file.ext] || 'application/octet-stream'
       let allowed = false
       for (const type of allowedTypes) {
@@ -433,13 +433,15 @@ class Validator {
     if (!['jpeg', 'png', 'gif', 'webp'].includes(format)) return null
 
     let buf
+    let fd
     try {
-      const fd = await require('fs').promises.open(filePath, 'r')
+      fd = await require('fs').promises.open(filePath, 'r')
       buf = Buffer.alloc(12)
       await fd.read(buf, 0, 12, 0)
-      await fd.close()
     } catch {
       return null // unreadable: don't fail validation on a sniff error
+    } finally {
+      if (fd) await fd.close().catch(() => {})
     }
 
     switch (format) {
