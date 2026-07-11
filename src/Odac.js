@@ -33,20 +33,36 @@ module.exports = {
     _odac._ipcSubs = []
     const ipcSingleton = require('./Ipc.js')
 
+    const forgetSub = (channel, callback) => {
+      const index = _odac._ipcSubs.findIndex(s => s.channel === channel && s.callback === callback)
+      if (index > -1) _odac._ipcSubs.splice(index, 1)
+    }
+
     _odac.Ipc = new Proxy(ipcSingleton, {
       get(target, prop) {
         if (prop === 'subscribe') {
           return async (channel, callback) => {
-            const res = await target.subscribe(channel, callback)
+            const handle = await target.subscribe(channel, callback)
             _odac._ipcSubs.push({channel, callback})
-            return res
+            // Route the handle's unsubscribe back through this instance so that releasing a
+            // subscription via the handle also drops it from the request-scoped cleanup list.
+            return {
+              ...handle,
+              unsubscribe: () => _odac.Ipc.unsubscribe(channel, callback)
+            }
           }
         }
         if (prop === 'unsubscribe') {
           return async (channel, callback) => {
             const res = await target.unsubscribe(channel, callback)
-            const index = _odac._ipcSubs.findIndex(s => s.channel === channel && s.callback === callback)
-            if (index > -1) _odac._ipcSubs.splice(index, 1)
+            forgetSub(channel, callback)
+            return res
+          }
+        }
+        if (prop === 'unsubscribeAll') {
+          return async channel => {
+            const res = await target.unsubscribeAll(channel)
+            _odac._ipcSubs = _odac._ipcSubs.filter(s => s.channel !== channel)
             return res
           }
         }

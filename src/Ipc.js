@@ -8,6 +8,7 @@ class Ipc extends EventEmitter {
     this.config = {}
     this._requests = new Map() // For memory driver response tracking
     this._subs = new Map() // For memory driver subscriptions
+    this._redisBridges = new Map() // channel -> the single node-redis listener bridging to our EventEmitter
   }
 
   /**
@@ -263,17 +264,36 @@ class Ipc extends EventEmitter {
     }
   }
 
+  /**
+   * A single channel may carry several independent consumers (e.g. a long-lived stats
+   * listener and a short-lived ack listener on the same stream). The callback reference
+   * is what tells them apart, so both drivers key subscriptions on it and both must be
+   * able to remove one without disturbing the others.
+   *
+   * @param {string} channel
+   * @param {function} callback
+   * @returns {Promise<{channel: string, callback: function, unsubscribe: function}>} Handle
+   *   that removes only this subscription, so callers need not retain the callback themselves.
+   */
   async subscribe(channel, callback) {
+    if (typeof callback !== 'function') {
+      throw new TypeError(`Odac.Ipc.subscribe('${channel}') requires a callback function.`)
+    }
+
     if (this.config.driver === 'redis') {
       if (!this.subRedis) {
         this.subRedis = this.redis.duplicate()
         await this.subRedis.connect()
-        this.subRedis.on('message', (chan, msg) => {
-          this.emit(chan, JSON.parse(msg))
-        })
       }
-      // Redis handles duplicate subscriptions gracefully (ignores them)
-      await this.subRedis.subscribe(channel)
+      // node-redis v4+ delivers messages to a per-channel listener passed to subscribe();
+      // it does not emit a client-wide 'message' event. We register exactly one bridge
+      // listener per channel and fan out locally, so removing one consumer never tears
+      // down the Redis subscription the other consumers still depend on.
+      if (!this._redisBridges.has(channel)) {
+        const bridge = raw => this.emit(channel, JSON.parse(raw))
+        this._redisBridges.set(channel, bridge)
+        await this.subRedis.subscribe(channel, bridge)
+      }
       this.on(channel, callback)
     } else {
       // Memory driver subscription
@@ -284,25 +304,66 @@ class Ipc extends EventEmitter {
       }
       this._subs.get(channel).add(callback)
     }
+
+    return {channel, callback, unsubscribe: () => this.unsubscribe(channel, callback)}
   }
 
+  /**
+   * Removes a single subscription. Other consumers of the same channel keep receiving
+   * messages; the underlying Redis/Primary subscription is torn down only once the last
+   * consumer is gone.
+   */
   async unsubscribe(channel, callback) {
+    if (typeof callback !== 'function') {
+      // Without a callback there is no way to know which consumer is leaving, so we
+      // refuse to guess: silently dropping the call leaks the listener, and dropping
+      // every listener would kill co-tenants on the channel.
+      console.warn(
+        `[Odac Ipc] unsubscribe('${channel}') was called without a callback and did nothing. ` +
+          `Pass the callback (or the handle returned by subscribe()) to remove one subscription, ` +
+          `or call unsubscribeAll('${channel}') to remove every subscription on the channel. ` +
+          `This call will throw in the next major version.`
+      )
+      return
+    }
+
     if (this.config.driver === 'redis') {
       this.removeListener(channel, callback)
       // If no more listeners for this channel, unsubscribe from redis to save resources
-      if (this.listenerCount(channel) === 0 && this.subRedis) {
-        await this.subRedis.unsubscribe(channel)
+      if (this.listenerCount(channel) === 0) {
+        await this._teardownRedisChannel(channel)
       }
     } else {
-      if (this._subs.has(channel)) {
-        const callbacks = this._subs.get(channel)
-        callbacks.delete(callback)
-        if (callbacks.size === 0) {
-          this._subs.delete(channel)
-          this._sendMemory('unsubscribe', {channel})
-        }
+      const callbacks = this._subs.get(channel)
+      if (!callbacks) return
+      callbacks.delete(callback)
+      if (callbacks.size === 0) {
+        this._subs.delete(channel)
+        this._sendMemory('unsubscribe', {channel})
       }
     }
+  }
+
+  /**
+   * Removes every subscription on a channel. Kept separate from unsubscribe() so that
+   * tearing down a shared channel is always a deliberate act, never an accident.
+   */
+  async unsubscribeAll(channel) {
+    if (this.config.driver === 'redis') {
+      this.removeAllListeners(channel)
+      await this._teardownRedisChannel(channel)
+    } else {
+      if (this._subs.delete(channel)) {
+        this._sendMemory('unsubscribe', {channel})
+      }
+    }
+  }
+
+  async _teardownRedisChannel(channel) {
+    const bridge = this._redisBridges.get(channel)
+    if (!bridge) return
+    this._redisBridges.delete(channel)
+    if (this.subRedis) await this.subRedis.unsubscribe(channel, bridge)
   }
 
   // --- Drivers ---
@@ -587,6 +648,8 @@ class Ipc extends EventEmitter {
    */
   async close() {
     if (this.config.driver === 'redis') {
+      for (const channel of this._redisBridges.keys()) this.removeAllListeners(channel)
+      this._redisBridges.clear()
       if (this.subRedis) {
         await this.subRedis.quit().catch(() => {})
         this.subRedis = null
