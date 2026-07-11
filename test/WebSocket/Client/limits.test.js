@@ -1,5 +1,24 @@
 const {WebSocketServer, WebSocketClient} = require('../../../src/WebSocket.js')
 
+const openClients = []
+
+/**
+ * Creates a client and registers it for teardown.
+ *
+ * The constructor starts a rate-limit interval that is only cleared on close(),
+ * so a client left open keeps Jest's event loop alive after the run finishes.
+ */
+function createClient(...args) {
+  const client = new WebSocketClient(...args)
+  openClients.push(client)
+  return client
+}
+
+afterEach(() => {
+  for (const client of openClients) client.close()
+  openClients.length = 0
+})
+
 describe('WebSocketClient Limits', () => {
   let server
 
@@ -18,7 +37,7 @@ describe('WebSocketClient Limits', () => {
         removeAllListeners: jest.fn(),
         writable: true
       }
-      const client = new WebSocketClient(socket, server, 'test-id', {maxPayload: 10})
+      const client = createClient(socket, server, 'test-id', {maxPayload: 10})
       client.resume()
 
       const buffer = Buffer.alloc(100)
@@ -42,7 +61,7 @@ describe('WebSocketClient Limits', () => {
         removeAllListeners: jest.fn(),
         writable: true
       }
-      const client = new WebSocketClient(socket, server, 'test-id', {rateLimit: {max: 2, window: 1000}})
+      const client = createClient(socket, server, 'test-id', {rateLimit: {max: 2, window: 1000}})
       client.resume()
 
       const buffer = Buffer.alloc(7)
