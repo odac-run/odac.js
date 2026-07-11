@@ -290,9 +290,20 @@ class Ipc extends EventEmitter {
       // listener per channel and fan out locally, so removing one consumer never tears
       // down the Redis subscription the other consumers still depend on.
       if (!this._redisBridges.has(channel)) {
-        const bridge = raw => this.emit(channel, JSON.parse(raw))
+        const bridge = raw => {
+          try {
+            this.emit(channel, JSON.parse(raw))
+          } catch (err) {
+            console.error('[Odac Ipc] Failed to parse message on channel "' + channel + '":', err)
+          }
+        }
         this._redisBridges.set(channel, bridge)
-        await this.subRedis.subscribe(channel, bridge)
+        try {
+          await this.subRedis.subscribe(channel, bridge)
+        } catch (err) {
+          this._redisBridges.delete(channel)
+          throw err
+        }
       }
       this.on(channel, callback)
     } else {
@@ -335,8 +346,7 @@ class Ipc extends EventEmitter {
       }
     } else {
       const callbacks = this._subs.get(channel)
-      if (!callbacks) return
-      callbacks.delete(callback)
+      if (!callbacks || !callbacks.delete(callback)) return
       if (callbacks.size === 0) {
         this._subs.delete(channel)
         this._sendMemory('unsubscribe', {channel})
