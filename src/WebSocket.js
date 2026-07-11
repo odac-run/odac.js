@@ -25,6 +25,21 @@ const READY_STATE = {
   CLOSED: 3
 }
 
+const isBinary = data => Buffer.isBuffer(data) || ArrayBuffer.isView(data) || data instanceof ArrayBuffer
+
+/**
+ * Views must be wrapped over their backing memory rather than passed to
+ * Buffer.from() directly: for anything wider than a byte (Uint16Array,
+ * Float32Array, DataView) Buffer.from() reads the view as a list of numbers
+ * and truncates each element to a single byte.
+ */
+const toPayload = data => {
+  if (Buffer.isBuffer(data)) return data
+  if (ArrayBuffer.isView(data)) return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+  if (data instanceof ArrayBuffer) return Buffer.from(data)
+  return Buffer.from(data)
+}
+
 class WebSocketClient {
   static CONNECTING = READY_STATE.CONNECTING
   static OPEN = READY_STATE.OPEN
@@ -264,7 +279,7 @@ class WebSocketClient {
     if (this.#readyState === READY_STATE.CLOSING && opcode !== OPCODE.CLOSE) return
     if (!this.#socket.writable) return
 
-    const payload = Buffer.isBuffer(data) ? data : Buffer.from(data)
+    const payload = toPayload(data)
     const length = payload.length
 
     let header
@@ -313,6 +328,10 @@ class WebSocketClient {
 
   send(data) {
     if (this.#readyState !== READY_STATE.OPEN) return this
+    if (isBinary(data)) {
+      this.#sendFrame(OPCODE.BINARY, data)
+      return this
+    }
     const payload = typeof data === 'object' ? JSON.stringify(data) : String(data)
     this.#sendFrame(OPCODE.TEXT, payload)
     return this

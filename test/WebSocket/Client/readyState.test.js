@@ -16,6 +16,25 @@ function createMockSocket() {
   }
 }
 
+const openClients = []
+
+/**
+ * Creates a client and registers it for teardown.
+ *
+ * The constructor starts a rate-limit interval that is only cleared on close(),
+ * so a client left open keeps Jest's event loop alive after the run finishes.
+ */
+function createClient(...args) {
+  const client = new WebSocketClient(...args)
+  openClients.push(client)
+  return client
+}
+
+afterEach(() => {
+  for (const client of openClients) client.close()
+  openClients.length = 0
+})
+
 describe('WebSocketClient readyState', () => {
   let server
 
@@ -41,13 +60,13 @@ describe('WebSocketClient readyState', () => {
 
   it('should start in CONNECTING state', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-1')
+    const client = createClient(socket, server, 'rs-1')
     expect(client.readyState).toBe(READY_STATE.CONNECTING)
   })
 
   it('should transition to OPEN on resume()', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-2')
+    const client = createClient(socket, server, 'rs-2')
 
     client.resume()
 
@@ -57,7 +76,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should transition to CLOSED after close()', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-3')
+    const client = createClient(socket, server, 'rs-3')
     client.resume()
 
     client.close()
@@ -68,7 +87,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should be idempotent — second close() is a no-op', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-4')
+    const client = createClient(socket, server, 'rs-4')
     client.resume()
 
     client.close()
@@ -79,7 +98,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should not send data when in CONNECTING state', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-5')
+    const client = createClient(socket, server, 'rs-5')
 
     client.send('hello')
 
@@ -88,7 +107,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should not send data when in CLOSED state', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-6')
+    const client = createClient(socket, server, 'rs-6')
     client.resume()
     client.close()
 
@@ -103,7 +122,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should not send ping when not OPEN', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-7')
+    const client = createClient(socket, server, 'rs-7')
 
     client.ping()
 
@@ -113,7 +132,7 @@ describe('WebSocketClient readyState', () => {
   it('should not write when socket is not writable', () => {
     const socket = createMockSocket()
     socket.writable = false
-    const client = new WebSocketClient(socket, server, 'rs-8')
+    const client = createClient(socket, server, 'rs-8')
     client.resume()
 
     client.send('hello')
@@ -123,7 +142,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should transition to CLOSED when socket fires close event', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-9')
+    const client = createClient(socket, server, 'rs-9')
     server.clients.set('rs-9', client)
     client.resume()
 
@@ -136,7 +155,7 @@ describe('WebSocketClient readyState', () => {
 
   it('should emit close event only once on double cleanup', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'rs-10')
+    const client = createClient(socket, server, 'rs-10')
     server.clients.set('rs-10', client)
     client.resume()
 

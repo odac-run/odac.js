@@ -72,6 +72,29 @@ await Odac.Ipc.publish('chat:global', { user: 'Emre', text: 'Hello World' });
 > [!TIP]
 > When using `memory` driver, the subscription listener is registered in the current worker. When a message is published, it goes to the Main process and is then broadcasted to all subscribed workers.
 
+#### Unsubscribing
+
+A channel can carry several independent subscribers, so a subscription is identified by its callback — not by the channel name alone. `subscribe()` returns a handle that removes exactly the subscription it created, which saves you from holding on to the callback yourself.
+
+```javascript
+const stats = await Odac.Ipc.subscribe('server:1:stream', onStats); // long-lived
+const ack = await Odac.Ipc.subscribe('server:1:stream', onAck);     // short-lived
+
+await ack.unsubscribe();          // only onAck stops; onStats keeps receiving
+```
+
+`unsubscribe(channel, callback)` does the same thing when you already hold the callback. To drop every subscriber on a channel at once, ask for it explicitly:
+
+```javascript
+await Odac.Ipc.unsubscribeAll('server:1:stream');
+```
+
+> [!WARNING]
+> `unsubscribe(channel)` without a callback cannot tell which subscriber is leaving, so it does nothing and logs a warning. It will throw in the next major version — pass the callback or the handle, or use `unsubscribeAll()`.
+
+> [!TIP]
+> Subscriptions created through the request-scoped `Odac.Ipc` are released automatically when the request ends, so you only need to unsubscribe by hand for subscriptions that should end earlier than the request.
+
 ### Atomic Counters
 
 Use `incrBy` / `decrBy` to atomically increment or decrement a numeric key. These are safe to call from multiple workers simultaneously — no read-then-write race conditions.
@@ -186,5 +209,7 @@ try {
 | `srem(key, ...members)` | Remove members from a set |
 | `lock(key, ttl)` | Acquire a mutex lock |
 | `unlock(key)` | Release a mutex lock |
-| `subscribe(channel, handler)` | Subscribe to a Pub/Sub channel |
+| `subscribe(channel, handler)` | Subscribe to a Pub/Sub channel; returns a handle with `unsubscribe()` |
+| `unsubscribe(channel, handler)` | Remove a single subscription, leaving other subscribers intact |
+| `unsubscribeAll(channel)` | Remove every subscription on a channel |
 | `publish(channel, message)` | Publish a message to a channel |

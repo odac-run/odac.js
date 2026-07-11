@@ -31,6 +31,25 @@ function createMockSocket() {
   }
 }
 
+const openClients = []
+
+/**
+ * Creates a client and registers it for teardown.
+ *
+ * The constructor starts a rate-limit interval that is only cleared on close(),
+ * so a client left open keeps Jest's event loop alive after the run finishes.
+ */
+function createClient(...args) {
+  const client = new WebSocketClient(...args)
+  openClients.push(client)
+  return client
+}
+
+afterEach(() => {
+  for (const client of openClients) client.close()
+  openClients.length = 0
+})
+
 describe('WebSocketClient Fragmentation', () => {
   let server
 
@@ -40,7 +59,7 @@ describe('WebSocketClient Fragmentation', () => {
 
   it('should reassemble fragmented text messages', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'frag-1')
+    const client = createClient(socket, server, 'frag-1')
     client.resume()
 
     const messages = []
@@ -60,7 +79,7 @@ describe('WebSocketClient Fragmentation', () => {
 
   it('should reassemble fragmented binary messages', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'frag-2')
+    const client = createClient(socket, server, 'frag-2')
     client.resume()
 
     const messages = []
@@ -83,7 +102,7 @@ describe('WebSocketClient Fragmentation', () => {
 
   it('should close with 1002 on unexpected continuation frame', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'frag-3')
+    const client = createClient(socket, server, 'frag-3')
     client.resume()
 
     const dataHandler = socket.on.mock.calls.find(c => c[0] === 'data')[1]
@@ -96,7 +115,7 @@ describe('WebSocketClient Fragmentation', () => {
 
   it('should handle single unfragmented message normally', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'frag-4')
+    const client = createClient(socket, server, 'frag-4')
     client.resume()
 
     const messages = []
@@ -112,7 +131,7 @@ describe('WebSocketClient Fragmentation', () => {
 
   it('should discard fragment buffer on close', () => {
     const socket = createMockSocket()
-    const client = new WebSocketClient(socket, server, 'frag-5')
+    const client = createClient(socket, server, 'frag-5')
     client.resume()
 
     const messages = []
