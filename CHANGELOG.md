@@ -1,3 +1,15 @@
+### 🛠️ Fixes & Improvements
+
+- repair broken redis pub/sub delivery and align unsubscribe() across drivers
+- send() no longer JSON-serializes Buffer/TypedArray into TEXT frames
+- **test:** close WebSocketClient instances left open after each test
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - add multipart file upload support with validation
