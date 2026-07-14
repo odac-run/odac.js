@@ -168,14 +168,178 @@ class DatabaseManager {
 
 const manager = new DatabaseManager()
 
+/**
+ * Normalizes a count() result into a plain number.
+ * Postgres returns counts as strings, and Knex wraps them in [{'count(*)': n}].
+ */
+const normalizeCountResult = result => {
+  const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
+  if (!isScalar) return result
+
+  const val = result[0][Object.keys(result[0])[0]]
+  if (val != null && String(val).trim() !== '' && !isNaN(val)) return Number(val)
+  return result
+}
+
+/**
+ * Builds an ODAC-enriched Knex query builder for a table.
+ * Why: Both `Odac.DB.apps` and `Odac.DB.table('apps')` must return the SAME object —
+ * one carrying .cache()/.buffer and the write-invalidation wrappers. Sharing one
+ * factory keeps the two access styles from drifting apart.
+ */
+const buildQueryBuilder = (knexInstance, tableName) => {
+  const prop = tableName
+  const qb = knexInstance(prop)
+  const connectionKey = knexInstance._odacConnectionKey || 'default'
+
+  // Write-Behind Cache: Odac.DB.posts.buffer.where(id).update({...}) / .increment('col') / .get('col')
+  //                     Odac.DB.posts.buffer.insert(row) / .flush()
+  qb.buffer = {
+    where: where => ({
+      update: data => writeBuffer.update(connectionKey, prop, where, data),
+      increment: (column, delta = 1) => writeBuffer.increment(connectionKey, prop, where, column, delta),
+      get: column => writeBuffer.get(connectionKey, prop, where, column)
+    }),
+    insert: row => writeBuffer.insert(connectionKey, prop, row),
+    flush: () => writeBuffer.flush(connectionKey, prop)
+  }
+
+  // Read-Through Cache: Odac.DB.posts.cache(60).where({active: true}).select('id', 'title')
+  //                     Odac.DB.posts.cache().where({id: 5}).first()
+  //                     Odac.DB.posts.cache.clear()
+  // Why: Returns a Proxy that intercepts .then() to inject cache lookup before DB execution.
+  // The ttl parameter on cache() sets per-query TTL; omit for config default.
+  const cacheFactory = ttl => {
+    // clone() — NOT a fresh builder. Anything chained before .cache() (e.g.
+    // .where('status', 'active').cache(60)) must survive; a fresh builder would
+    // silently drop those clauses and cache the results of a different query.
+    // Knex's clone() copies the statements but none of the ODAC overrides below,
+    // so the .then() we install here cannot recurse into itself.
+    const cachedQb = qb.clone()
+    cachedQb._odacCacheTtl = ttl || 0
+
+    const originalCachedCount = cachedQb.count
+    cachedQb.count = function (...args) {
+      this._odacIsCount = true
+      return originalCachedCount.apply(this, args)
+    }
+
+    // Capture the ORIGINAL .then() before overriding — prevents infinite recursion
+    // when ReadCache.get() needs to execute the actual DB query on cache MISS.
+    const originalCacheThen = cachedQb.then.bind(cachedQb)
+    cachedQb.then = function (resolve, reject) {
+      const executeFn = () => new Promise((res, rej) => originalCacheThen(res, rej))
+      return readCache
+        .get(connectionKey, prop, this, executeFn, this._odacCacheTtl)
+        .then(result => (this._odacIsCount ? normalizeCountResult(result) : result))
+        .then(resolve, reject)
+    }
+
+    return cachedQb
+  }
+
+  qb.cache = Object.assign(cacheFactory, {
+    clear: () => readCache.clear(connectionKey, prop)
+  })
+
+  // Automatic cache invalidation on write operations (insert/update/delete/truncate).
+  // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
+  // Write methods are terminal (no further chaining after await), so wrapping the return
+  // as a simple thenable is safe and avoids .then() override conflicts with count/other wraps.
+  const wrapWithInvalidation = original =>
+    function (...args) {
+      const qbResult = original.apply(this, args)
+      const thenable = {
+        then: (resolve, reject) =>
+          qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
+        catch: fn => thenable.then(undefined, fn)
+      }
+      return thenable
+    }
+
+  const originalUpdate = qb.update
+  const originalDelete = qb.delete
+  const originalDel = qb.del
+  const originalTruncate = qb.truncate
+  qb.update = wrapWithInvalidation(originalUpdate)
+  qb.delete = wrapWithInvalidation(originalDelete)
+  qb.del = wrapWithInvalidation(originalDel)
+  qb.truncate = wrapWithInvalidation(originalTruncate)
+
+  // Odac DX Improvement: Wrap count() to return a clean number
+  const originalCount = qb.count
+  qb.count = function (...args) {
+    this._odacIsCount = true
+    return originalCount.apply(this, args)
+  }
+
+  // Odac DX Improvement: Auto-generate NanoID for columns defined as type 'nanoid' in schema.
+  // Why: Zero-config ID generation — no manual Odac.DB.nanoid() calls needed.
+  const nanoidCols = manager._nanoidColumns[connectionKey]?.[prop]
+  if (nanoidCols) {
+    const originalInsert = qb.insert
+    qb.insert = function (data, ...args) {
+      if (Array.isArray(data)) {
+        for (const row of data) {
+          for (const {column, size} of nanoidCols) {
+            if (!row[column]) row[column] = manager.nanoid(size)
+          }
+        }
+      } else if (data && typeof data === 'object') {
+        for (const {column, size} of nanoidCols) {
+          if (!data[column]) data[column] = manager.nanoid(size)
+        }
+      }
+      return originalInsert.call(this, data, ...args)
+    }
+  }
+
+  // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
+  // IMPORTANT: Unlike update/delete/truncate, insert is NOT terminal — it supports
+  // chaining (e.g. .insert().onConflict().merge()). So we cannot use wrapWithInvalidation
+  // which returns a plain thenable. Instead, override .then() on the query builder to
+  // inject invalidation at execution time, preserving the full Knex chain.
+  const insertBeforeInvalidation = qb.insert
+  qb.insert = function (...args) {
+    const result = insertBeforeInvalidation.apply(this, args)
+    const origThen = result.then
+    result.then = function (resolve, reject) {
+      return origThen
+        .call(this)
+        .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
+        .then(resolve, reject)
+    }
+    return result
+  }
+
+  const originalThen = qb.then
+  qb.then = function (resolve, reject) {
+    if (this._odacIsCount) {
+      return originalThen.call(this, result => resolve(normalizeCountResult(result)), reject)
+    }
+    return originalThen.call(this, resolve, reject)
+  }
+
+  // 4. Extend the Query Builder with ODAC specific methods
+
+  // .schema(callback) for "Code-First" migrations
+  // Usage: await Odac.DB.users.schema(t => { t.string('name') })
+  qb.schema = async function (callback) {
+    const exists = await knexInstance.schema.hasTable(prop)
+    if (!exists) {
+      await knexInstance.schema.createTable(prop, callback)
+    }
+    return this
+  }
+
+  return qb
+}
+
 const tableProxyHandler = {
   get(knexInstance, prop) {
     // 1. Check for legacy/alias methods
     if (prop === 'run') return knexInstance.raw.bind(knexInstance)
-    if (prop === 'table')
-      return function (tableName) {
-        return knexInstance(tableName)
-      }
+    if (prop === 'table') return tableName => buildQueryBuilder(knexInstance, tableName)
 
     // 2. Pass through Knex instance methods (raw, schema, fn, destroy, etc.)
     if (typeof knexInstance[prop] === 'function') {
@@ -185,160 +349,8 @@ const tableProxyHandler = {
       return knexInstance[prop]
     }
 
-    // 3. Assume it's a table name and return a Query Builder
-    // But we need to be careful not to intercept Promise methods if they are accessed on the instance (though knex instance isn't a promise)
-
-    // Create the Query Builder
-    const qb = knexInstance(prop)
-    const connectionKey = knexInstance._odacConnectionKey || 'default'
-
-    // Write-Behind Cache: Odac.DB.posts.buffer.where(id).update({...}) / .increment('col') / .get('col')
-    //                     Odac.DB.posts.buffer.insert(row) / .flush()
-    qb.buffer = {
-      where: where => ({
-        update: data => writeBuffer.update(connectionKey, prop, where, data),
-        increment: (column, delta = 1) => writeBuffer.increment(connectionKey, prop, where, column, delta),
-        get: column => writeBuffer.get(connectionKey, prop, where, column)
-      }),
-      insert: row => writeBuffer.insert(connectionKey, prop, row),
-      flush: () => writeBuffer.flush(connectionKey, prop)
-    }
-
-    // Read-Through Cache: Odac.DB.posts.cache(60).where({active: true}).select('id', 'title')
-    //                     Odac.DB.posts.cache().where({id: 5}).first()
-    //                     Odac.DB.posts.cache.clear()
-    // Why: Returns a Proxy that intercepts .then() to inject cache lookup before DB execution.
-    // The ttl parameter on cache() sets per-query TTL; omit for config default.
-    const cacheFactory = ttl => {
-      const cachedQb = knexInstance(prop)
-      cachedQb._odacCacheTtl = ttl || 0
-
-      // Capture the ORIGINAL .then() before overriding — prevents infinite recursion
-      // when ReadCache.get() needs to execute the actual DB query on cache MISS.
-      const originalCacheThen = cachedQb.then.bind(cachedQb)
-      cachedQb.then = function (resolve, reject) {
-        const executeFn = () => new Promise((res, rej) => originalCacheThen(res, rej))
-        return readCache.get(connectionKey, prop, this, executeFn, this._odacCacheTtl).then(resolve, reject)
-      }
-
-      return cachedQb
-    }
-
-    qb.cache = Object.assign(cacheFactory, {
-      clear: () => readCache.clear(connectionKey, prop)
-    })
-
-    // Automatic cache invalidation on write operations (insert/update/delete/truncate).
-    // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
-    // Write methods are terminal (no further chaining after await), so wrapping the return
-    // as a simple thenable is safe and avoids .then() override conflicts with count/other wraps.
-    const wrapWithInvalidation = original =>
-      function (...args) {
-        const qbResult = original.apply(this, args)
-        const thenable = {
-          then: (resolve, reject) =>
-            qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
-          catch: fn => thenable.then(undefined, fn)
-        }
-        return thenable
-      }
-
-    const originalUpdate = qb.update
-    const originalDelete = qb.delete
-    const originalDel = qb.del
-    const originalTruncate = qb.truncate
-    qb.update = wrapWithInvalidation(originalUpdate)
-    qb.delete = wrapWithInvalidation(originalDelete)
-    qb.del = wrapWithInvalidation(originalDel)
-    qb.truncate = wrapWithInvalidation(originalTruncate)
-
-    // Odac DX Improvement: Wrap count() to return a clean number
-    const originalCount = qb.count
-    qb.count = function (...args) {
-      this._odacIsCount = true
-      return originalCount.apply(this, args)
-    }
-
-    // Odac DX Improvement: Auto-generate NanoID for columns defined as type 'nanoid' in schema.
-    // Why: Zero-config ID generation — no manual Odac.DB.nanoid() calls needed.
-    const nanoidCols = manager._nanoidColumns[connectionKey]?.[prop]
-    if (nanoidCols) {
-      const originalInsert = qb.insert
-      qb.insert = function (data, ...args) {
-        if (Array.isArray(data)) {
-          for (const row of data) {
-            for (const {column, size} of nanoidCols) {
-              if (!row[column]) row[column] = manager.nanoid(size)
-            }
-          }
-        } else if (data && typeof data === 'object') {
-          for (const {column, size} of nanoidCols) {
-            if (!data[column]) data[column] = manager.nanoid(size)
-          }
-        }
-        return originalInsert.call(this, data, ...args)
-      }
-    }
-
-    // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
-    // IMPORTANT: Unlike update/delete/truncate, insert is NOT terminal — it supports
-    // chaining (e.g. .insert().onConflict().merge()). So we cannot use wrapWithInvalidation
-    // which returns a plain thenable. Instead, override .then() on the query builder to
-    // inject invalidation at execution time, preserving the full Knex chain.
-    const insertBeforeInvalidation = qb.insert
-    qb.insert = function (...args) {
-      const result = insertBeforeInvalidation.apply(this, args)
-      const origThen = result.then
-      result.then = function (resolve, reject) {
-        return origThen
-          .call(this)
-          .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
-          .then(resolve, reject)
-      }
-      return result
-    }
-
-    const originalThen = qb.then
-    qb.then = function (resolve, reject) {
-      if (this._odacIsCount) {
-        return originalThen.call(
-          this,
-          result => {
-            // If the result is a single row with a single key, treat it as a scalar count usually
-            const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
-
-            if (isScalar) {
-              const keys = Object.keys(result[0])
-              if (keys.length === 1) {
-                const val = result[0][keys[0]]
-                // Parse string numbers (common in Postgres for count)
-                if (val != null && String(val).trim() !== '' && !isNaN(val)) {
-                  resolve(Number(val))
-                  return
-                }
-              }
-            }
-            resolve(result)
-          },
-          reject
-        )
-      }
-      return originalThen.call(this, resolve, reject)
-    }
-
-    // 4. Extend the Query Builder with ODAC specific methods
-
-    // .schema(callback) for "Code-First" migrations
-    // Usage: await Odac.DB.users.schema(t => { t.string('name') })
-    qb.schema = async function (callback) {
-      const exists = await knexInstance.schema.hasTable(prop)
-      if (!exists) {
-        await knexInstance.schema.createTable(prop, callback)
-      }
-      return this
-    }
-
-    return qb
+    // 3. Assume it's a table name and return an ODAC-enriched Query Builder
+    return buildQueryBuilder(knexInstance, prop)
   }
 }
 
@@ -372,10 +384,7 @@ const rootProxy = new Proxy(manager, {
 
     // Direct access to raw/fn/schema/table on default connection
     if (target.connections['default'] && (prop === 'raw' || prop === 'fn' || prop === 'schema' || prop === 'table')) {
-      if (prop === 'table')
-        return function (tableName) {
-          return target.connections['default'](tableName)
-        }
+      if (prop === 'table') return tableName => buildQueryBuilder(target.connections['default'], tableName)
 
       const val = target.connections['default'][prop]
       if (typeof val === 'function') {

@@ -168,6 +168,74 @@ describe('Database.js Proxy - automatic invalidation on write', () => {
   })
 })
 
+describe('Database.js Proxy - cache() via DB.table()', () => {
+  it('should expose cache() on DB.table(name) just like DB.name', async () => {
+    const DB = require('../../../src/Database')
+
+    const result = await DB.table('posts').cache(60).where({active: true}).select('id', 'title')
+
+    expect(result).toHaveLength(2)
+
+    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    expect(keys).toHaveLength(1)
+  })
+
+  it('should expose buffer on DB.table(name) just like DB.name', async () => {
+    const DB = require('../../../src/Database')
+
+    expect(typeof DB.table('posts').buffer.insert).toBe('function')
+  })
+
+  it('should invalidate cache after a write issued through DB.table()', async () => {
+    const DB = require('../../../src/Database')
+
+    await DB.table('posts').cache(60).where({active: true}).select('id', 'title')
+    expect(await Odac.Ipc.smembers('rc:idx:default:posts')).toHaveLength(1)
+
+    await DB.table('posts').where({id: 1}).update({title: 'Updated'})
+
+    expect(await Odac.Ipc.smembers('rc:idx:default:posts')).toHaveLength(0)
+  })
+})
+
+describe('Database.js Proxy - clauses chained before cache()', () => {
+  it('should preserve where() applied before cache()', async () => {
+    const DB = require('../../../src/Database')
+
+    // The WHERE must survive .cache() — a fresh builder would return all 3 rows.
+    const result = await DB.posts.where({active: false}).cache(60).select('id', 'title')
+
+    expect(result).toHaveLength(1)
+    expect(result[0].title).toBe('Draft')
+  })
+
+  it('should not collide cache keys between queries that differ only before cache()', async () => {
+    const DB = require('../../../src/Database')
+
+    const active = await DB.posts.where({active: true}).cache(60).select('id')
+    const drafts = await DB.posts.where({active: false}).cache(60).select('id')
+
+    expect(active).toHaveLength(2)
+    expect(drafts).toHaveLength(1)
+
+    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    expect(keys).toHaveLength(2)
+  })
+})
+
+describe('Database.js Proxy - cache() with count()', () => {
+  it('should return a scalar number for cached counts', async () => {
+    const DB = require('../../../src/Database')
+
+    const first = await DB.posts.cache(60).where({active: true}).count()
+    expect(first).toBe(2)
+
+    // Second call is served from cache — must still be a scalar, not [{...}]
+    const second = await DB.posts.cache(60).where({active: true}).count()
+    expect(second).toBe(2)
+  })
+})
+
 describe('Database.js Proxy - global cache.clear()', () => {
   it('should clear cache via Odac.DB.cache.clear(connection, table)', async () => {
     const DB = require('../../../src/Database')
