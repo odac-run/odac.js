@@ -3,6 +3,8 @@ const {buildConnections} = require('./Database/ConnectionFactory')
 const nanoid = require('./Database/nanoid')
 const readCache = require('./Database/ReadCache')
 const writeBuffer = require('./Database/WriteBuffer')
+const {DIALECT: CLICKHOUSE} = require('./Database/ClickHouse')
+const ClickHouseQuery = require('./Database/ClickHouseQuery')
 
 class DatabaseManager {
   constructor() {
@@ -335,8 +337,65 @@ const buildQueryBuilder = (knexInstance, tableName) => {
   return qb
 }
 
+/**
+ * Builds the table surface for a ClickHouse (OLAP) connection.
+ * Why: ClickHouse has no Knex query builder, no row-level UPDATE/increment, and no read-through
+ * cache invalidation model. Rather than pretend, we expose what ClickHouse does well: batch insert
+ * (direct or buffered) and a fluent SELECT builder (ClickHouseQuery). Row-level update/delete and
+ * .cache() are intentionally absent — they are OLTP-only.
+ *
+ *   Odac.DB.analytics.events.insert(row | [...rows])              — batch insert (single or array)
+ *   Odac.DB.analytics.events.buffer.insert(row)                  — write-behind batched insert
+ *   Odac.DB.analytics.events.select('path','count() AS c').groupBy('path')  — fluent read
+ *   Odac.DB.analytics.events.where({user_id: 42}).first()        — fluent read → single row
+ *   Odac.DB.analytics.events.query('SELECT ...')                 — table-scoped raw read
+ *   Odac.DB.analytics.raw('SELECT ...')                          — connection-level raw
+ * @param {object} adapter - ClickHouseAdapter instance
+ * @param {string} tableName - Target table
+ * @returns {ClickHouseQuery} Fluent read builder augmented with write/raw helpers
+ */
+const buildClickHouseTable = (adapter, tableName) => {
+  const connectionKey = adapter._odacConnectionKey || 'default'
+
+  // A fresh builder per access (like buildQueryBuilder) — no chained-state leakage between calls.
+  const query = new ClickHouseQuery(adapter, tableName)
+
+  // Batch insert accepts a single object or an array for DX parity with the SQL path.
+  query.insert = rows => adapter.insert(tableName, Array.isArray(rows) ? rows : [rows])
+  query.raw = sql => adapter.raw(sql)
+  query.query = sql => adapter.query(sql)
+  query.buffer = {
+    insert: row => writeBuffer.insert(connectionKey, tableName, row),
+    flush: () => writeBuffer.flush(connectionKey, tableName)
+  }
+
+  return query
+}
+
+/**
+ * Proxy handler for a ClickHouse connection — passes through adapter methods (raw/query/exec/
+ * insert/hasTable/columnInfo/destroy) and treats any other property as a table name.
+ * @param {object} adapter - ClickHouseAdapter instance
+ * @param {string|symbol} prop
+ * @returns {*}
+ */
+const clickhouseProxyGet = (adapter, prop) => {
+  if (prop === 'run') return sql => adapter.raw(sql)
+  if (prop === 'table') return tableName => buildClickHouseTable(adapter, tableName)
+
+  if (typeof adapter[prop] === 'function') return adapter[prop].bind(adapter)
+  if (prop in adapter) return adapter[prop]
+
+  return buildClickHouseTable(adapter, prop)
+}
+
 const tableProxyHandler = {
   get(knexInstance, prop) {
+    // ClickHouse connections are adapters, not Knex — route to the restricted OLAP surface.
+    if (knexInstance._odacDialect === CLICKHOUSE) {
+      return clickhouseProxyGet(knexInstance, prop)
+    }
+
     // 1. Check for legacy/alias methods
     if (prop === 'run') return knexInstance.raw.bind(knexInstance)
     if (prop === 'table') return tableName => buildQueryBuilder(knexInstance, tableName)
@@ -384,6 +443,10 @@ const rootProxy = new Proxy(manager, {
 
     // Direct access to raw/fn/schema/table on default connection
     if (target.connections['default'] && (prop === 'raw' || prop === 'fn' || prop === 'schema' || prop === 'table')) {
+      // ClickHouse default connection: route through the adapter's restricted surface.
+      if (target.connections['default']._odacDialect === CLICKHOUSE) {
+        return clickhouseProxyGet(target.connections['default'], prop)
+      }
       if (prop === 'table') return tableName => buildQueryBuilder(target.connections['default'], tableName)
 
       const val = target.connections['default'][prop]

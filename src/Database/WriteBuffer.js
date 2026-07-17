@@ -199,6 +199,10 @@ class WriteBuffer {
       const knex = this._connections[group.connection]
       if (!knex) continue
 
+      // ClickHouse has no cheap row-level UPDATE; counter buffering is an OLTP-only feature.
+      // Such keys should never be created for a CH connection, but skip defensively if seen.
+      if (this._dialect(knex) === 'clickhouse') continue
+
       try {
         // Read all deltas for this group BEFORE the transaction
         const deltas = new Map()
@@ -266,6 +270,9 @@ class WriteBuffer {
       const knex = this._connections[group.connection]
       if (!knex) continue
 
+      // ClickHouse has no cheap row-level UPDATE — update buffering is OLTP-only (see _flushCounters).
+      if (this._dialect(knex) === 'clickhouse') continue
+
       try {
         // Read all pending update hashes
         const updates = new Map()
@@ -313,13 +320,22 @@ class WriteBuffer {
       if (rows.length === 0) continue
 
       try {
-        // Wrap all chunks in a single transaction to prevent partial-insert duplicates
-        await knex.transaction(async trx => {
+        if (this._dialect(knex) === 'clickhouse') {
+          // ClickHouse has no multi-statement transactions; batch inserts are already atomic
+          // per request and the drain above prevents duplicates. Insert chunks directly.
           for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
             const chunk = rows.slice(i, i + this._config.insertBatchSize)
-            await trx(table).insert(chunk)
+            await knex.insert(table, chunk)
           }
-        })
+        } else {
+          // Wrap all chunks in a single transaction to prevent partial-insert duplicates
+          await knex.transaction(async trx => {
+            for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
+              const chunk = rows.slice(i, i + this._config.insertBatchSize)
+              await trx(table).insert(chunk)
+            }
+          })
+        }
 
         // Clean up index after successful insert
         await Odac.Ipc.srem('wb:idx:queues', queueKey)
@@ -578,6 +594,15 @@ class WriteBuffer {
       sorted[key] = obj[key]
     }
     return sorted
+  }
+
+  /**
+   * Resolves a connection's dialect so flush logic can branch OLTP (Knex) vs. OLAP (ClickHouse).
+   * @param {object} conn - Knex instance or ClickHouseAdapter
+   * @returns {string} Dialect identifier
+   */
+  _dialect(conn) {
+    return conn._odacDialect || conn.client?.config?.client || 'unknown'
   }
 
   // ─── Teardown ──────────────────────────────────────────────

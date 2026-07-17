@@ -1,16 +1,20 @@
 'use strict'
 
 const knex = require('knex')
+const ClickHouseAdapter = require('./ClickHouseAdapter')
 
 /**
  * Resolves knex client driver from ODAC database type.
  * Why: Keeps connection driver mapping consistent across runtime and CLI migration paths.
+ * ClickHouse resolves to the sentinel 'clickhouse' — it is NOT a Knex client and is served
+ * by ClickHouseAdapter instead (see buildConnections).
  * @param {string} type Database type from config.
- * @returns {string} Knex client name.
+ * @returns {string} Knex client name, or 'clickhouse' for the ClickHouse adapter.
  */
 function resolveClient(type) {
   if (type === 'postgres' || type === 'pg' || type === 'postgresql') return 'pg'
   if (type === 'sqlite' || type === 'sqlite3') return 'sqlite3'
+  if (type === 'clickhouse' || type === 'ch') return 'clickhouse'
   return 'mysql2'
 }
 
@@ -56,6 +60,14 @@ function buildConnections(databaseConfig) {
   for (const key of Object.keys(dbs)) {
     const db = dbs[key]
     const client = resolveClient(db.type)
+
+    // ClickHouse (OLAP) is not a Knex dialect — serve it with the dedicated adapter.
+    // The adapter lazy-connects, so buildConnections stays side-effect-free until first query.
+    if (client === 'clickhouse') {
+      connections[key] = new ClickHouseAdapter(db, key)
+      continue
+    }
+
     const connection = buildConnectionConfig(db, client)
 
     const pkg = DRIVER_PACKAGES[client]
