@@ -248,20 +248,24 @@ class Internal {
       return validator.result()
     }
 
-    const loginResult = await Odac.Auth.login(credentials)
-
-    if (!loginResult.success) {
-      if (loginResult.error === 'Database connection failed') {
-        return Odac.return({
-          result: {success: false},
-          errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
-        })
-      }
-      const errorField = loginResult.field || '_odac_form'
-      const errors = {[errorField]: loginResult.error}
+    // Auth.login() returns a truthy value on success and a falsy value on
+    // invalid credentials (its documented boolean contract). A thrown error
+    // means the login could not be evaluated at all (e.g. DB unreachable).
+    let loginResult
+    try {
+      loginResult = await Odac.Auth.login(credentials)
+    } catch (e) {
+      console.error(e)
       return Odac.return({
         result: {success: false},
-        errors: errors
+        errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
+      })
+    }
+
+    if (!loginResult) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Invalid credentials'}
       })
     }
 

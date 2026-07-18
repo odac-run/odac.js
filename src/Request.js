@@ -426,21 +426,29 @@ class OdacRequest {
 
   // - GET REQUEST
   async request(key, method) {
-    if (method) method = method.toUpperCase()
-    if ((!method || method === 'post') && (this.data.post[key] ?? null)) return this.data.post[key]
-    if ((!method || method === 'get') && (this.data.get[key] ?? null)) return this.data.get[key]
-    if ((!method || method === 'url') && (this.data.url[key] ?? null)) return this.data.url[key]
+    if (method) method = method.toLowerCase()
+    // Buckets to search, in priority order: a scoped call looks only at its own
+    // bucket; an unscoped call falls back through post → get → url.
+    const buckets = method ? [method] : ['post', 'get', 'url']
+
+    // No key → return the whole bucket (post by default) once available.
+    const lookup = () => {
+      if (!key) return this.data[method || 'post']
+      for (const bucket of buckets) {
+        const value = this.data[bucket]?.[key]
+        if (value !== undefined && value !== null) return value
+      }
+      return undefined
+    }
+
+    const found = lookup()
+    if (found !== undefined && found !== null) return found
+    // Body already parsed: nothing more will arrive, resolve with what we have.
+    if (this.#complete) return lookup()
+
+    // Wait for the body to finish parsing instead of polling every 10ms.
     return new Promise(resolve => {
-      let interval = setInterval(() => {
-        if (this.data.post[key] !== undefined || this.data.get[key] !== undefined || this.#complete) {
-          clearInterval(interval)
-          if (!key && !method) resolve(this.data.post)
-          else if (!key && method) resolve(this.data[method.toLowerCase()])
-          else if (this.data.post[key] !== undefined && method !== 'GET') resolve(this.data.post[key])
-          else if (this.data.get[key] !== undefined && method !== 'GET') resolve(this.data.get[key])
-          else resolve()
-        }
-      }, 10)
+      this.#event.end.push({callback: () => resolve(lookup())})
     })
   }
 

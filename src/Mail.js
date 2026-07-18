@@ -186,7 +186,7 @@ class Mail {
       })
 
       content = this.#parseOdacTag(content)
-      content = content.replace(/`/g, '\\\\`').replace(/\$\{/g, '\\\\${')
+      content = content.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
 
       jsBlocks.forEach((jsContent, index) => {
         content = content.replace(`___ODAC_JS_BLOCK_${index}___`, jsContent)

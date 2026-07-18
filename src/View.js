@@ -441,7 +441,7 @@ class View {
       })
 
       content = this.#parseOdacTag(content)
-      content = content.replace(/`/g, '\\\\`').replace(/\$\{/g, '\\\\${')
+      content = content.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
 
       let result = 'html += `\n' + content + '\n`'
       for (let key in this.#functions) {
