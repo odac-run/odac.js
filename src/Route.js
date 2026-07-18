@@ -38,7 +38,10 @@ class Route {
 
       if (!middleware) {
         console.error(`Middleware not found: ${mw}`)
-        return Odac.Request.abort(500)
+        await Odac.Request.abort(500)
+        // Return false (not abort's undefined) so #executeController's guard
+        // stops the chain and the controller never runs after the 500.
+        return false
       }
 
       const result = await middleware(Odac)
@@ -72,35 +75,37 @@ class Route {
       const ControllerModule = controller.cache
       const actionParts = controller.action.split('.')
 
+      // Resolve the action starting from a given root (instance or the module).
+      const resolve = root => {
+        let method = root
+        let context = root
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+        return {method, context}
+      }
+
+      // Only instantiation may legitimately fail (e.g. the controller is a plain
+      // object of static handlers, not a constructor). Keep the action call
+      // itself OUTSIDE the try so a synchronous error inside the action is not
+      // swallowed and does not trigger a second, static invocation.
+      let instance = null
       try {
-        const instance = new ControllerModule(Odac)
-        let method = instance
-        let context = instance
-
-        for (const segment of actionParts) {
-          if (method) {
-            context = method
-            method = method[segment]
-          }
-        }
-
-        if (typeof method === 'function') {
-          return method.call(context, Odac)
-        }
+        instance = new ControllerModule(Odac)
       } catch {
-        let method = ControllerModule
-        let context = ControllerModule
+        instance = null
+      }
 
-        for (const segment of actionParts) {
-          if (method) {
-            context = method
-            method = method[segment]
-          }
-        }
+      let {method, context} = instance ? resolve(instance) : {method: undefined, context: undefined}
+      // Fall back to a static method on the module when there is no instance
+      // method (non-constructor controller, or a statically-defined action).
+      if (typeof method !== 'function') ({method, context} = resolve(ControllerModule))
 
-        if (typeof method === 'function') {
-          return method.call(context, Odac)
-        }
+      if (typeof method === 'function') {
+        return method.call(context, Odac)
       }
       return Odac.Request.abort(500)
     }

@@ -86,15 +86,26 @@ class Cron {
         if (!shouldRun) break
       }
 
-      if (shouldRun) {
+      // Overlap protection: never re-trigger a job whose previous (async) run
+      // has not settled yet.
+      if (shouldRun && !job.running) {
         job.lastRun = now
         try {
           if (job.function || fs.existsSync(job.path)) {
             if (!job.function) job.function = require(job.path)
             if (job.function && typeof job.function === 'function') {
               const _odac = global.Odac.instance(null, 'cron')
-              job.function(_odac)
-              if (_odac.cleanup) _odac.cleanup()
+              job.running = true
+              // Wrap so both synchronous throws and async rejections are caught
+              // (an unhandled rejection can crash the primary process), and so
+              // cleanup runs only after the job has actually finished.
+              Promise.resolve()
+                .then(() => job.function(_odac))
+                .catch(error => console.error(`Error executing job ${job.controller}:`, error))
+                .finally(() => {
+                  job.running = false
+                  if (_odac.cleanup) _odac.cleanup()
+                })
             }
           }
         } catch (error) {
