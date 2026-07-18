@@ -54,6 +54,34 @@ describe('Route.check()', () => {
       expect(mockOdac.Request.header).toHaveBeenCalledWith('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
     })
 
+    it('does not throw when a token request has no Referer header (1.8)', async () => {
+      const mockOdac = {
+        Request: {
+          url: '/',
+          method: 'get',
+          route: 'www',
+          ssl: false,
+          host: 'example.com',
+          header: jest.fn(key => {
+            // No Referer key: header('Referer') resolves to undefined.
+            const headers = {
+              'X-Odac': 'token',
+              'X-Odac-Client': 'test-client'
+            }
+            return headers[key]
+          }),
+          cookie: jest.fn(key => (key === 'odac_client' ? 'test-client' : null)),
+          abort: jest.fn()
+        },
+        token: jest.fn(() => 'test-token')
+      }
+
+      route.routes = {www: {}}
+
+      // Missing Referer must not crash the request with a TypeError on .startsWith.
+      await expect(route.check(mockOdac)).resolves.not.toThrow()
+    })
+
     it('should handle token request with route but no page defined', async () => {
       const mockOdac = {
         Request: {

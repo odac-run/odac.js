@@ -4,6 +4,18 @@ const fsPromises = fs.promises
 const path = require('path')
 const os = require('os')
 
+// decodeURIComponent throws a URIError on malformed percent-encoding (e.g. `%`
+// or `%ZZ`). A single crafted query/body/path would otherwise bubble out and
+// crash the worker (Node >=15 exits on unhandled rejection), so fall back to
+// the raw value instead of throwing.
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 class OdacRequest {
   #odac
   #complete = false
@@ -85,12 +97,17 @@ class OdacRequest {
   cookie(key, value, options = {}) {
     if (value === undefined) {
       if (this.#cookies.data[key]) return this.#cookies.data[key]
-      value =
-        this.req.headers.cookie
-          ?.split('; ')
-          .find(c => c.startsWith(key + '='))
-          ?.split('=')[1] ?? null
-      if (value && value.startsWith('{') && value.endsWith('}')) value = JSON.parse(value)
+      const raw = this.req.headers.cookie?.split('; ').find(c => c.startsWith(key + '='))
+      // Split on the first '=' only so base64 / padded values (which contain '=')
+      // survive intact instead of being truncated by a naive split('=')[1].
+      value = raw ? raw.slice(raw.indexOf('=') + 1) : null
+      if (value && value.startsWith('{') && value.endsWith('}')) {
+        try {
+          value = JSON.parse(value)
+        } catch {
+          // Malformed JSON cookie: keep the raw string instead of throwing a 500.
+        }
+      }
       return value
     }
     this.#cookies.data[key] = value
@@ -111,8 +128,8 @@ class OdacRequest {
       let data = split[1].split('&')
       for (let i = 0; i < data.length; i++) {
         if (data[i].indexOf('=') === -1) continue
-        let key = decodeURIComponent(data[i].split('=')[0])
-        let val = decodeURIComponent(data[i].split('=')[1] || '')
+        let key = safeDecode(data[i].split('=')[0])
+        let val = safeDecode(data[i].split('=')[1] || '')
         this.data.get[key] = val
       }
     }
@@ -155,8 +172,8 @@ class OdacRequest {
         let data = body.split('&')
         for (let i = 0; i < data.length; i++) {
           if (data[i].indexOf('=') === -1) continue
-          let key = decodeURIComponent(data[i].split('=')[0])
-          let val = decodeURIComponent(data[i].split('=')[1] || '')
+          let key = safeDecode(data[i].split('=')[0])
+          let val = safeDecode(data[i].split('=')[1] || '')
           this.data.post[key] = val
         }
       }

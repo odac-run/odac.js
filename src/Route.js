@@ -132,7 +132,7 @@ class Route {
       Odac.Request.url === '/' &&
       Odac.Request.method === 'get' &&
       Odac.Request.header('X-Odac') === 'token' &&
-      Odac.Request.header('Referer').startsWith((Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host + '/') &&
+      (Odac.Request.header('Referer') ?? '').startsWith((Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host + '/') &&
       Odac.Request.header('X-Odac-Client') === Odac.Request.cookie('odac_client')
     ) {
       Odac.Request.header('Access-Control-Allow-Origin', (Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host)
@@ -627,9 +627,13 @@ class Route {
 
   async request(req, res) {
     let id = `${Date.now()}${Math.random().toString(36).substr(2, 9)}`
-    let param = Odac.instance(id, req, res)
-    if (!this.routes[param.Request.route]) return param.Request.end()
+    let param
     try {
+      // Instance construction parses the request (query/cookies/body wiring) and
+      // can throw on malformed input; keep it inside the try so a crafted request
+      // becomes a 500 instead of an unhandled rejection that kills the worker.
+      param = Odac.instance(id, req, res)
+      if (!this.routes[param.Request.route]) return param.Request.end()
       let result = this.check(param)
       if (result instanceof Promise) result = await result
       const Stream = require('./Stream.js')
@@ -649,9 +653,18 @@ class Route {
       param.cleanup()
     } catch (e) {
       console.error(e)
-      param.Request.abort(500)
-      param.cleanup()
-      return param.Request.end()
+      // param may be undefined if instance construction itself threw.
+      if (param) {
+        param.Request.abort(500)
+        param.cleanup()
+        return param.Request.end()
+      }
+      try {
+        res.statusCode = 500
+        res.end()
+      } catch {
+        res.destroy?.()
+      }
     }
   }
 
