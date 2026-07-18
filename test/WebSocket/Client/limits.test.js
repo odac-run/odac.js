@@ -50,6 +50,39 @@ describe('WebSocketClient Limits', () => {
     })
   })
 
+  describe('fragmented message total size', () => {
+    // A single unmasked frame with all-zero mask keys, so masked payload == payload.
+    function fragment(opcode, fin, payload) {
+      const b = Buffer.alloc(6 + payload.length)
+      b[0] = (fin ? 0x80 : 0x00) | opcode
+      b[1] = 0x80 | payload.length // MASK bit + length (<126)
+      // mask key bytes 2..5 left as 0 → payload copied verbatim
+      payload.copy(b, 6)
+      return b
+    }
+
+    it('closes 1009 when combined fragments exceed maxPayload', () => {
+      const socket = {
+        pause: jest.fn(),
+        resume: jest.fn(),
+        on: jest.fn(),
+        write: jest.fn(),
+        end: jest.fn(),
+        removeAllListeners: jest.fn(),
+        writable: true
+      }
+      const client = createClient(socket, server, 'test-id', {maxPayload: 10})
+      client.resume()
+      const dataHandler = socket.on.mock.calls.find(call => call[0] === 'data')[1]
+
+      // Each frame (6 bytes) is under maxPayload, but the running total is not.
+      dataHandler(fragment(0x1, false, Buffer.alloc(6))) // first text fragment
+      expect(socket.end).not.toHaveBeenCalled()
+      dataHandler(fragment(0x0, false, Buffer.alloc(6))) // continuation → total 12 > 10
+      expect(socket.end).toHaveBeenCalled()
+    })
+  })
+
   describe('rateLimit', () => {
     it('should close connection if rate limit exceeded', () => {
       const socket = {

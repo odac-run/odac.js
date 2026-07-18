@@ -437,4 +437,50 @@ describe('Route.check()', () => {
       expect(result2).toBe('mock_stream_2')
     })
   })
+
+  describe('CSRF token enforcement (1.3)', () => {
+    const createMockOdac = (method, url) => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {},
+      Request: {
+        abort: jest.fn().mockReturnValue('aborted'),
+        cookie: jest.fn(() => null),
+        data: {url: {}},
+        header: jest.fn(() => ''),
+        host: 'example.com',
+        isAjaxLoad: false,
+        method,
+        page: null,
+        request: jest.fn().mockResolvedValue(null),
+        res: {finished: false, writableEnded: false},
+        route: 'test_route',
+        setSession: jest.fn(),
+        ssl: false,
+        url
+      },
+      request: jest.fn().mockResolvedValue(null), // no _token / _odac_form_token present
+      token: jest.fn().mockReturnValue(true)
+    })
+
+    // A token:true route with no CSRF token supplied must be rejected regardless
+    // of HTTP verb. Before the fix only post/get were enforced.
+    for (const method of ['post', 'get', 'put', 'patch', 'delete']) {
+      it(`aborts 401 on a token route with no token via ${method.toUpperCase()}`, async () => {
+        const handler = jest.fn().mockReturnValue({ok: true})
+        route.routes = {
+          test_route: {
+            [method]: {
+              '/secure': {cache: handler, file: handler, token: true, mtime: Date.now()}
+            }
+          }
+        }
+
+        const mockOdac = createMockOdac(method, '/secure')
+        await route.check(mockOdac)
+
+        expect(mockOdac.Request.abort).toHaveBeenCalledWith(401)
+        expect(handler).not.toHaveBeenCalled()
+      })
+    }
+  })
 })

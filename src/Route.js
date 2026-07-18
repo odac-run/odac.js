@@ -208,7 +208,7 @@ class Route {
           if (typeof page === 'string') Odac.Request.page = page
 
           if (
-            ['post', 'get'].includes(Odac.Request.method) &&
+            ['post', 'get', 'put', 'patch', 'delete'].includes(Odac.Request.method) &&
             controller.token &&
             (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
           )

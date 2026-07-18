@@ -185,6 +185,20 @@ class WebSocketClient {
     }
   }
 
+  // Appends a continuation payload while enforcing a cap on the *total*
+  // reassembled size. Per-frame maxPayload alone lets an attacker stream
+  // unlimited small fragments and exhaust worker memory; bound the sum too.
+  #appendFragment(payload) {
+    this.#fragments.length += payload.length
+    if (this.#fragments.length > this.#maxPayload) {
+      this.#fragments = null
+      this.close(1009, 'Fragmented message too large')
+      return false
+    }
+    this.#fragments.buffers.push(payload)
+    return true
+  }
+
   #handleFrame(frame) {
     if (this.#rateLimitMax > 0) {
       this.#messageCount++
@@ -200,7 +214,7 @@ class WebSocketClient {
         if (frame.fin) {
           if (this.#fragments) {
             // Final fragment of a fragmented sequence
-            this.#fragments.buffers.push(frame.payload)
+            if (!this.#appendFragment(frame.payload)) return
             const merged = Buffer.concat(this.#fragments.buffers)
             const opcode = this.#fragments.opcode
             this.#fragments = null
@@ -211,7 +225,7 @@ class WebSocketClient {
           }
         } else {
           // First fragment — start accumulating
-          this.#fragments = {opcode: frame.opcode, buffers: [frame.payload]}
+          this.#fragments = {opcode: frame.opcode, buffers: [frame.payload], length: frame.payload.length}
         }
         break
       case OPCODE.CONTINUATION:
@@ -219,7 +233,7 @@ class WebSocketClient {
           this.close(1002, 'Protocol error: unexpected continuation frame')
           return
         }
-        this.#fragments.buffers.push(frame.payload)
+        if (!this.#appendFragment(frame.payload)) return
         if (frame.fin) {
           const merged = Buffer.concat(this.#fragments.buffers)
           const opcode = this.#fragments.opcode
