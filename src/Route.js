@@ -118,9 +118,12 @@ class Route {
   async check(Odac) {
     let url = Odac.Request.url.split('?')[0]
     if (url.endsWith('/')) url = url.slice(0, -1)
-    // Global Auth Check: Load user if valid tokens exist to simplify DX
-    // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
-    if (Odac.Auth) await Odac.Auth.check()
+    // Auth is loaded lazily at the points where user code can actually run
+    // (form processing, controller dispatch, custom 404 handlers) so that
+    // asset requests — config-route files, public files, plain 404s — never
+    // trigger a token-table query. Auth.check() memoizes a successful check on
+    // the request instance, so user code still sees Odac.Auth.user() loaded
+    // without a manual await, at most one token query per request.
 
     if (url.startsWith('/_odac/')) {
       Odac.Request.route = '_odac_internal'
@@ -129,6 +132,8 @@ class Route {
     if (['post', 'put', 'patch', 'delete'].includes(Odac.Request.method)) {
       const formToken = await Odac.request('_odac_form_token')
       if (formToken) {
+        // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
+        if (Odac.Auth) await Odac.Auth.check()
         Odac.Request.setSession()
         await Internal.processForm(Odac)
       }
@@ -207,6 +212,10 @@ class Route {
       let controller = this.#controller(Odac.Request.route, method, url)
       if (controller) {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
+          // Load the user before dispatch so controllers can call
+          // Odac.Auth.user() synchronously (memoized: no-op for # routes
+          // whose auth gate above already succeeded).
+          if (Odac.Auth) await Odac.Auth.check()
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
           Odac.Request.setSession()
           const page = controller.cache?.file || controller.file
@@ -232,6 +241,8 @@ class Route {
     }
     let pageController = this.#controller(Odac.Request.route, 'page', url)
     if (pageController) {
+      // Same DX contract as method controllers: user loaded before dispatch.
+      if (Odac.Auth) await Odac.Auth.check()
       Odac.Request.setSession()
       const page = pageController.cache?.file || pageController.file
       if (typeof page === 'string') Odac.Request.page = page
@@ -286,6 +297,10 @@ class Route {
       }
     }
 
+    // Custom 404 handlers (run inside Request.abort) are user code — load the
+    // user first so they can call Odac.Auth.user(). Skipped when no handler
+    // exists so plain asset 404s never touch the token table.
+    if (Odac.Auth && this.routes[Odac.Request.route]?.error?.[404]) await Odac.Auth.check()
     return Odac.Request.abort(404)
   }
 

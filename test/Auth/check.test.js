@@ -577,6 +577,40 @@ describe('Auth.check()', () => {
     expect(dbMock.tracker.deleteCalls.length).toBe(1)
   })
 
+  // ─── PER-REQUEST MEMOIZATION ──────────────────────────────────────────────
+  // Route.check() calls Auth.check() at several user-code boundaries (see
+  // IMPROVEMENT-PLAN 3.3). Cookies are immutable for the lifetime of a
+  // request, so neither outcome can change between those calls: a successful
+  // check is served from #user, and a failed one must not re-query the token
+  // table at every boundary (stale-cookie visitors would otherwise pay up to
+  // 3-4 identical queries per request).
+
+  it('memoizes a failed token check within the request (no repeated queries)', async () => {
+    const dbMock = createDbMock([]) // no matching token row -> check fails
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    expect(await authInstance.check()).toBe(false)
+    const queriesAfterFirst = dbMock.where.mock.calls.length
+    expect(queriesAfterFirst).toBeGreaterThan(0)
+
+    expect(await authInstance.check()).toBe(false)
+    expect(dbMock.where.mock.calls.length).toBe(queriesAfterFirst)
+  })
+
+  it('serves repeated successful checks from memory after the first', async () => {
+    const dbMock = createDbMock([freshRecord()])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    const auth = new Auth(buildReq())
+    expect(await auth.check()).toBe(true)
+    const queriesAfterFirst = dbMock.where.mock.calls.length
+
+    expect(await auth.check()).toBe(true)
+    expect(dbMock.where.mock.calls.length).toBe(queriesAfterFirst)
+  })
+
   it('accepts a legacy scrypt-hashed token for backward compatibility', async () => {
     // #verifyToken routes $scrypt$ tokens through Odac.Var().hashCheck() (mocked true).
     const dbMock = createDbMock([freshRecord({token_y: '$scrypt$deadbeef$cafe'})])

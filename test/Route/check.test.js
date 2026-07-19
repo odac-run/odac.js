@@ -483,4 +483,131 @@ describe('Route.check()', () => {
       })
     }
   })
+
+  // See IMPROVEMENT-PLAN 3.3: Auth.check() ran unconditionally at the top of
+  // check(), so every asset request (config-route files, public files, plain
+  // 404s) triggered a token-table query for logged-in users. Auth must instead
+  // load lazily at the points where user code can actually run: form
+  // processing, controller dispatch, and custom 404 handlers.
+  describe('asset requests skip Auth.check (3.3)', () => {
+    const fs = require('fs')
+    const os = require('os')
+    const path = require('path')
+
+    let tmpDir
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-check-'))
+    })
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, {recursive: true, force: true})
+    })
+
+    const createMockOdac = (method, url) => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {debug: true},
+      Request: {
+        abort: jest.fn(),
+        cookie: jest.fn(() => null),
+        data: {url: {}},
+        header: jest.fn(() => undefined),
+        host: 'example.com',
+        isAjaxLoad: false,
+        method,
+        page: null,
+        res: {finished: false, writableEnded: false},
+        route: 'www',
+        session: jest.fn(() => null),
+        setSession: jest.fn(),
+        ssl: false,
+        url
+      },
+      request: jest.fn().mockResolvedValue(null),
+      token: jest.fn().mockReturnValue(true)
+    })
+
+    it('serves a public file without calling Auth.check', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'public'))
+      fs.writeFileSync(path.join(tmpDir, 'public', 'style.css'), 'body{}')
+      global.__dir = tmpDir
+      route.routes = {www: {}}
+
+      const mockOdac = createMockOdac('get', '/style.css')
+      const result = await route.check(mockOdac)
+
+      expect(mockOdac.Auth.check).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).not.toHaveBeenCalled()
+      expect(result).toBeDefined()
+      // Close the returned read stream fully before afterEach removes tmpDir;
+      // a dangling async open would leak an ENOENT into the next test.
+      await new Promise(resolve => {
+        result.on('error', resolve)
+        result.on('close', resolve)
+        result.destroy()
+      })
+    })
+
+    it('serves a config-route file without calling Auth.check', async () => {
+      const filePath = path.join(tmpDir, 'app.js')
+      fs.writeFileSync(filePath, 'console.log(1)')
+      route.routes = {www: {}}
+
+      const mockOdac = createMockOdac('get', '/app.js')
+      mockOdac.Config.route = {'/app.js': filePath}
+      const result = await route.check(mockOdac)
+
+      expect(mockOdac.Auth.check).not.toHaveBeenCalled()
+      expect(result.toString()).toBe('console.log(1)')
+    })
+
+    it('aborts 404 without calling Auth.check when no custom 404 handler exists', async () => {
+      global.__dir = tmpDir // empty: no public dir
+      route.routes = {www: {}}
+
+      const mockOdac = createMockOdac('get', '/missing')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Auth.check).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    it('loads the user before dispatching a controller (DX contract)', async () => {
+      const order = []
+      const handler = jest.fn(() => order.push('handler'))
+      route.routes = {www: {get: {'/x': {cache: handler}}}}
+
+      const mockOdac = createMockOdac('get', '/x')
+      mockOdac.Auth.check.mockImplementation(async () => {
+        order.push('auth')
+        return true
+      })
+      await route.check(mockOdac)
+
+      expect(order).toEqual(['auth', 'handler'])
+    })
+
+    it('loads the user before abort(404) when a custom 404 handler exists', async () => {
+      global.__dir = tmpDir
+      route.routes = {www: {error: {404: {cache: jest.fn()}}}}
+
+      const mockOdac = createMockOdac('get', '/missing')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Auth.check).toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    it('loads the user before processing a form post', async () => {
+      route.routes = {www: {}}
+      global.__dir = tmpDir
+
+      const mockOdac = createMockOdac('post', '/submit')
+      mockOdac.request = jest.fn(async key => (key === '_odac_form_token' ? 'tok123' : null))
+      await route.check(mockOdac)
+
+      // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
+      expect(mockOdac.Auth.check).toHaveBeenCalled()
+    })
+  })
 })
