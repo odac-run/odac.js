@@ -352,7 +352,9 @@ class OdacRequest {
     this.print()
     this.res.end(data)
     this.#cleanupFiles()
-    this.req.connection.destroy()
+    // Do not destroy the socket here: it defeats keep-alive (Server.js sets
+    // keepAliveTimeout=65000) and forces a fresh TCP handshake per request.
+    // res.end() finishes the response; idle sockets are reaped by keepAliveTimeout.
   }
 
   // Remove temp files that were never moved to permanent storage. Runs after a
