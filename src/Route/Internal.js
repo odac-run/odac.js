@@ -382,8 +382,10 @@ class Internal {
     // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
     let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
 
-    // Security: Prevent open redirect attacks by only allowing relative paths
-    if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
+    // Security: Prevent open redirect attacks by only allowing same-site absolute
+    // paths. Reject protocol-relative ('//evil') and backslash variants ('/\evil',
+    // '/\/evil') — browsers normalize '\' to '/', turning them into '//evil'.
+    if (!redirectUrl.startsWith('/') || /^\/[\\/]/.test(redirectUrl)) {
       redirectUrl = '/'
     }
 

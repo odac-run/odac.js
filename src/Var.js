@@ -37,7 +37,9 @@ class Var {
   clear(...args) {
     args = this.#parse(args)
     let str = this.#value
-    for (const arg of args) str = str.replace(new RegExp(arg, 'g'), '')
+    // Remove each argument as a LITERAL substring. Building a RegExp from raw
+    // input crashes on invalid patterns (e.g. '[') and is a ReDoS vector.
+    for (const arg of args) str = str.replaceAll(arg, '')
     return str
   }
 
@@ -158,8 +160,18 @@ class Var {
     if (args.includes('float')) result = (result || any) && ((any && result) || !isNaN(parseFloat(this.#value)))
     if (args.includes('host')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
     if (args.includes('ip')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
-    if (args.includes('json'))
-      result = (result || any) && ((any && result) || (JSON.parse(this.#value) && JSON.parse(this.#value).length >= 0))
+    if (args.includes('json')) {
+      // Never let a malformed value throw out of a validity check; also fixes the
+      // old `.length >= 0` test that wrongly rejected valid JSON objects.
+      let isJson = false
+      try {
+        JSON.parse(this.#value)
+        isJson = true
+      } catch {
+        isJson = false
+      }
+      result = (result || any) && ((any && result) || isJson)
+    }
     if (args.includes('mac')) result = (result || any) && ((any && result) || /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(this.#value))
     if (args.includes('md5')) result = (result || any) && ((any && result) || /^[a-f0-9A-F]{32}$/.test(this.#value))
     if (args.includes('numeric')) result = (result || any) && ((any && result) || !isNaN(this.#value))
@@ -217,15 +229,11 @@ class Var {
   }
 
   save(path) {
-    if (this.#value.includes('/')) {
-      let exp = path.split('/')
-      exp.pop()
-      let dir = ''
-      for (const key of exp) {
-        dir += (dir === '' ? '' : '/') + key
-        if (!fs.existsSync(dir) || !fs.lstatSync(dir).isDirectory()) fs.mkdirSync(dir)
-      }
-    }
+    // Create parent directories based on the TARGET path, not the content being
+    // written. `recursive` handles nested and absolute paths and is a no-op when
+    // the directory already exists.
+    const dir = path.substring(0, path.lastIndexOf('/'))
+    if (dir) fs.mkdirSync(dir, {recursive: true})
     return fs.writeFileSync(path, this.#value)
   }
 

@@ -46,4 +46,33 @@ describe('Lang.set()', () => {
     lang.set('fr')
     expect(mockOdac.Var).toHaveBeenCalledWith('fr')
   })
+
+  // 1.12 — a language code must never build a filesystem path from unvalidated
+  // input. Every language file path must end in exactly two lowercase letters.
+  it('rejects a malicious ACCEPT-LANGUAGE header and falls back to a safe code', () => {
+    mockOdac.Request.header.mockReturnValue('a/../../etc/passwd')
+    new Lang(mockOdac)
+    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    expect(checkedPaths.length).toBeGreaterThan(0)
+    // No path may be derived from the 'a/' slice; all must be <2 letters>.json
+    expect(checkedPaths.every(p => /\/[a-z]{2}\.json$/.test(p))).toBe(true)
+    expect(checkedPaths).toContain('/mock/storage/language/en.json')
+  })
+
+  it('normalizes an uppercase language code to a lowercase file path', () => {
+    lang = new Lang(mockOdac)
+    fs.existsSync.mockClear()
+    lang.set('EN')
+    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    expect(checkedPaths).toContain('/mock/storage/language/en.json')
+  })
+
+  it('falls back to en when both header and configured default are invalid', () => {
+    mockOdac.Config.lang.default = 'english' // not a 2-letter code
+    mockOdac.Request.header.mockReturnValue('') // no usable header
+    new Lang(mockOdac)
+    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    expect(checkedPaths.every(p => /\/[a-z]{2}\.json$/.test(p))).toBe(true)
+    expect(checkedPaths).toContain('/mock/storage/language/en.json')
+  })
 })

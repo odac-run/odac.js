@@ -495,7 +495,9 @@ class Auth {
     if (!this.#user) return false
 
     if (!Odac.Config.auth) Odac.Config.auth = {}
-    const tokenTable = Odac.Config.auth.token || 'user_tokens'
+    // Must match the default used by check()/login() ('odac_auth'); a divergent
+    // fallback here means a config-less logout deletes from the wrong table.
+    const tokenTable = Odac.Config.auth.token || 'odac_auth'
     const primaryKey = Odac.Config.auth.key || 'id'
     const odacX = this.#request.cookie('odac_x')
     const browser = this.#request.header('user-agent')

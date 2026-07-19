@@ -259,10 +259,10 @@ class Validator {
                     error = value && value !== '' && isNaN(Date.parse(value))
                     break
                   case 'min':
-                    error = value && value !== '' && vars[1] && value < vars[1]
+                    error = value && value !== '' && vars[1] && parseFloat(value) < parseFloat(vars[1])
                     break
                   case 'max':
-                    error = value && value !== '' && vars[1] && value > vars[1]
+                    error = value && value !== '' && vars[1] && parseFloat(value) > parseFloat(vars[1])
                     break
                   case 'len':
                     error = value && value !== '' && vars[1] && String(value).length !== parseInt(vars[1])
@@ -484,30 +484,36 @@ class Validator {
   }
 
   async brute(maxAttempts = 5) {
-    const ip = this.#request.ip
-    const now = new Date().toISOString().slice(0, 13).replace(/[-:T]/g, '')
-    const page = this.#request.url.split('?')[0]
-    const storage = this.#odac.Storage
-    const validation = storage.get('validation') || {}
-
     this.#name = '_odac_form'
 
-    if (Object.keys(this.#message).length > 0) {
-      if (!validation.brute) validation.brute = {}
-      if (!validation.brute[now]) validation.brute[now] = {}
-      if (!validation.brute[now][page]) validation.brute[now][page] = {}
-      if (!validation.brute[now][page][ip]) validation.brute[now][page][ip] = 0
+    // Only a request that actually failed validation counts toward the limit.
+    if (Object.keys(this.#message).length === 0) return this
 
-      validation.brute[now][page][ip]++
+    const ipc = this.#odac.Ipc
+    if (!ipc) return this
 
-      if (validation.brute[now][page][ip] >= maxAttempts) {
-        this.#message['_odac_form'] = this.#odac.Lang
-          ? await this.#odac.Lang.get('Too many failed attempts. Please try again later.')
-          : 'Too many failed attempts. Please try again later.'
-      }
+    const ip = this.#request.ip
+    const page = this.#request.url.split('?')[0]
+    // The hour bucket lives in the KEY, so each hour starts fresh instead of
+    // accumulating buckets forever under one blob. Ipc.incrBy is atomic across
+    // workers, eliminating the old get→modify→put lost-update race.
+    const hour = new Date().toISOString().slice(0, 13) // YYYY-MM-DDTHH
+    const base = `brute:${page}:${ip}`
+    const count = await ipc.incrBy(`${base}:${hour}`, 1)
+
+    // On the first hit of a new bucket, drop this ip+page's previous-hour bucket
+    // so stale counters can't pile up unbounded.
+    if (count === 1) {
+      const prevHour = new Date(Date.now() - 3600000).toISOString().slice(0, 13)
+      ipc.del(`${base}:${prevHour}`).catch(() => {})
     }
 
-    storage.put('validation', validation)
+    if (count >= maxAttempts) {
+      this.#message['_odac_form'] = this.#odac.Lang
+        ? await this.#odac.Lang.get('Too many failed attempts. Please try again later.')
+        : 'Too many failed attempts. Please try again later.'
+    }
+
     return this
   }
 }
