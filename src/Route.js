@@ -653,7 +653,11 @@ class Route {
       // can throw on malformed input; keep it inside the try so a crafted request
       // becomes a 500 instead of an unhandled rejection that kills the worker.
       param = Odac.instance(id, req, res)
-      if (!this.routes[param.Request.route]) return param.Request.end()
+      // Unknown virtual host / route table → 404, not a status-less empty 200.
+      if (!this.routes[param.Request.route]) {
+        await param.Request.abort(404)
+        return param.cleanup()
+      }
       let result = this.check(param)
       if (result instanceof Promise) result = await result
       const Stream = require('./Stream.js')
@@ -693,6 +697,19 @@ class Route {
   }
 
   set(type, url, file, options = {}) {
+    // Odac.Route.buff names the route file currently being loaded; set() reads
+    // it to bucket the route. It only exists during synchronous loading. A route
+    // registered from an async callback (setTimeout/promise/event) runs after
+    // loading finished and buff was deleted — the route would silently land
+    // under the `undefined` bucket and never match. Fail loudly instead.
+    if (!Odac.Route.buff) {
+      throw new Error(
+        'Route.set() called with no active route file (Odac.Route.buff is unset). ' +
+          'Register routes synchronously at the top level of a route file, not from ' +
+          'async callbacks (setTimeout/promise/event handlers).'
+      )
+    }
+
     const capturedMiddlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
 
     if (Array.isArray(type)) {

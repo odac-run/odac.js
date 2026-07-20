@@ -77,4 +77,27 @@ describe('Cron.check()', () => {
 
     expect(calls).toBe(1)
   })
+
+  // 4.5: everyX conditions must apply on the FIRST check too. Previously a
+  // `job.lastRun && ...` guard skipped the modulo test when lastRun was null,
+  // so every everyX job fired unconditionally on the first tick after a deploy.
+  it('does not fire an everyMinute job on the first check when the minute is not a multiple', async () => {
+    const fn = jest.fn()
+    cron.job(fn).everyMinute(2)
+    advancePastGuard(61) // minute index here is odd → not a multiple of 2
+    cron.check()
+    await flush()
+
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('does fire an everyMinute job on the first check when the minute is a multiple', async () => {
+    const fn = jest.fn()
+    cron.job(fn).everyMinute(2)
+    advancePastGuard(120) // minute index here is even → a multiple of 2
+    cron.check()
+    await flush()
+
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
 })

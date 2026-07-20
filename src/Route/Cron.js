@@ -61,26 +61,29 @@ class Cron {
           case 'yearDay':
             if (condition.value !== yearDay) shouldRun = false
             break
+          // everyX conditions apply from the very first check: without the
+          // (previously present) `job.lastRun &&` guard, a fresh deploy no
+          // longer fires every interval job unconditionally on the first tick.
           case 'everyMinute':
-            if (job.lastRun && Math.floor(unix / 60) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 60) % condition.value !== 0) shouldRun = false
             break
           case 'everyHour':
-            if (job.lastRun && Math.floor(unix / 3600) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 3600) % condition.value !== 0) shouldRun = false
             break
           case 'everyDay':
-            if (job.lastRun && Math.floor(unix / 86400) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 86400) % condition.value !== 0) shouldRun = false
             break
           case 'everyWeekDay':
             if (condition.value !== weekDay) shouldRun = false
             break
           case 'everyMonth':
-            if (job.lastRun && (year * 12 + month) % condition.value !== 0) shouldRun = false
+            if ((year * 12 + month) % condition.value !== 0) shouldRun = false
             break
           case 'everyYear':
-            if (job.lastRun && year % condition.value !== 0) shouldRun = false
+            if (year % condition.value !== 0) shouldRun = false
             break
           case 'everyYearDay':
-            if (job.lastRun && condition.value !== yearDay) shouldRun = false
+            if (condition.value !== yearDay) shouldRun = false
             break
         }
         if (!shouldRun) break

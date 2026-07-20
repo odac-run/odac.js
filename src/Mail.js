@@ -508,6 +508,18 @@ class Mail {
 
           client.on('close', () => {
             if (Odac.Config.debug) console.log('[Mail] Connection closed')
+            // If the peer closed before sending a parseable response, resolve
+            // is a no-op (already settled); otherwise it prevents send() from
+            // hanging forever on a silent disconnect.
+            resolve(false)
+          })
+
+          // Never wait indefinitely for the Core to answer.
+          const timeoutMs = (Odac.Config.mail && Odac.Config.mail.timeout) || 30000
+          client.setTimeout(timeoutMs, () => {
+            console.error(`[Mail] No response from Odac Core within ${timeoutMs}ms; aborting.`)
+            resolve(false)
+            client.destroy()
           })
         } catch (error) {
           console.error('[Mail] Unexpected error:', error)
