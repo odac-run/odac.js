@@ -441,7 +441,21 @@ class View {
       })
 
       content = this.#parseOdacTag(content)
-      content = content.replace(/`/g, '\\`').replace(/\$\{/g, '\\${')
+      // Escape template literal meta-characters so raw HTML can be safely
+      // embedded in a JS backtick string. Backslashes must be escaped FIRST
+      // (CWE-116), but ONLY in plain HTML segments — the {{ }}/{!! !!}
+      // expression blocks produced by #parseOdacTag already handle their own
+      // backslash escaping internally (see lines 318/348/376/386).
+      const exprBlocks = []
+      content = content.replace(/\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g, block => {
+        const placeholder = `___ODAC_EXPR_${exprBlocks.length}___`
+        exprBlocks.push(block)
+        return placeholder
+      })
+      content = content.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${')
+      exprBlocks.forEach((block, index) => {
+        content = content.replace(`___ODAC_EXPR_${index}___`, () => block)
+      })
 
       let result = 'html += `\n' + content + '\n`'
       for (let key in this.#functions) {

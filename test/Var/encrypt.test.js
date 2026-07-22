@@ -1,4 +1,3 @@
-const nodeCrypto = require('crypto')
 const Var = require('../../src/Var')
 
 // encrypt() must use a fresh random IV per call and refuse the default key in
