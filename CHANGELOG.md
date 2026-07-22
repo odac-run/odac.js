@@ -1,3 +1,32 @@
+### ✨ What's New
+
+- add ClickHouse support with dedicated adapter and migration pipeline
+
+### 📚 Documentation
+
+- clarify class loader behavior and subdirectory handling in service classes
+- update security policy for clarity and consistency in versioning
+
+### 🛠️ Fixes & Improvements
+
+- bump brace-expansion/tar overrides and sharp to patched versions to clear npm audit vulnerabilities
+- correct escaping in content parsing and enhance request method handling
+- **db:** DB.table(name) skipped ODAC proxy, silently dropping .cache()
+- enhance CSRF token enforcement and add support for new encryption formats
+- enhance Mail.send() to handle socket closure and timeouts, ensuring it resolves correctly; update Odac.request() to forward method argument; improve Route.request() to return 404 for unconfigured routes; add tests for session cleanup and WebSocket relay functionality
+- enhance request handling with safe decoding and improved error management
+- implement per-request memoization for Auth.check() to reduce token queries and improve performance
+- improve error handling in route execution and add overlap protection in cron jobs
+- prevent socket destruction in Request.end() to maintain keep-alive functionality
+- **security:** escape backslashes in template literal compilation (CWE-116)
+- update default token table in Auth.logout() to align with check()/login() and improve logout functionality
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - repair broken redis pub/sub delivery and align unsubscribe() across drivers
