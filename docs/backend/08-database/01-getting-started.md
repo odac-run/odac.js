@@ -1,6 +1,6 @@
 # Getting Started
 
-ODAC supports multiple database connections including **MySQL**, **PostgreSQL** (beta), and **SQLite**. It uses a robust and secure connection pooling mechanism.
+ODAC supports multiple database connections including **MySQL**, **PostgreSQL** (beta), **SQLite**, and **ClickHouse** (analytics). It uses a robust and secure connection pooling mechanism.
 
 ## Configuration
 
@@ -13,8 +13,9 @@ Supported configuration options:
 - `password` - Database password
 - `database` - Database name
 - `port` - Database port
-- `type` - Database type (`mysql`, `postgres`, `sqlite`)
+- `type` - Database type (`mysql`, `postgres`, `sqlite`, `clickhouse`)
 - `filename` - Database file path (only for `sqlite`, default: `./dev.sqlite3`)
+- `url` - Full endpoint URL (only for `clickhouse`; alternative to host/port)
 
 ### Single Connection (MySQL Default)
 
@@ -43,6 +44,43 @@ Supported configuration options:
     "port": 5432
   }
 }
+```
+
+### ClickHouse (Analytics)
+
+ClickHouse is an OLAP (analytics) database. It is best used as a **secondary, append-only connection** for events, logs, and metrics — alongside a MySQL/PostgreSQL primary for transactional data. See [ClickHouse Support](./07-clickhouse.md) for the full scope, schema fields, and limitations.
+
+Requires the `@clickhouse/client` driver: `npm install @clickhouse/client`
+
+```json
+{
+  "database": {
+    "default": {
+      "type": "mysql",
+      "host": "localhost",
+      "database": "main_db"
+    },
+    "analytics": {
+      "type": "clickhouse",
+      "host": "localhost",
+      "port": 8123,
+      "user": "default",
+      "password": "",
+      "database": "analytics"
+    }
+  }
+}
+```
+
+```javascript
+// Batch insert events (the write pattern ClickHouse is built for)
+await Odac.DB.analytics.events.insert([{ type: 'login', user_id: 42 }])
+
+// Buffered (write-behind) insert — coalesced into batches automatically
+Odac.DB.analytics.events.buffer.insert({ type: 'pageview', path: '/home' })
+
+// Read with raw analytical SQL
+const top = await Odac.DB.analytics.raw('SELECT path, count() c FROM events GROUP BY path ORDER BY c DESC LIMIT 10')
 ```
 
 ### Multiple Databases

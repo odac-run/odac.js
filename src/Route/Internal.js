@@ -248,20 +248,24 @@ class Internal {
       return validator.result()
     }
 
-    const loginResult = await Odac.Auth.login(credentials)
-
-    if (!loginResult.success) {
-      if (loginResult.error === 'Database connection failed') {
-        return Odac.return({
-          result: {success: false},
-          errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
-        })
-      }
-      const errorField = loginResult.field || '_odac_form'
-      const errors = {[errorField]: loginResult.error}
+    // Auth.login() returns a truthy value on success and a falsy value on
+    // invalid credentials (its documented boolean contract). A thrown error
+    // means the login could not be evaluated at all (e.g. DB unreachable).
+    let loginResult
+    try {
+      loginResult = await Odac.Auth.login(credentials)
+    } catch (e) {
+      console.error(e)
       return Odac.return({
         result: {success: false},
-        errors: errors
+        errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
+      })
+    }
+
+    if (!loginResult) {
+      return Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Invalid credentials'}
       })
     }
 
@@ -378,8 +382,10 @@ class Internal {
     // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
     let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
 
-    // Security: Prevent open redirect attacks by only allowing relative paths
-    if (redirectUrl && (!redirectUrl.startsWith('/') || redirectUrl.startsWith('//'))) {
+    // Security: Prevent open redirect attacks by only allowing same-site absolute
+    // paths. Reject protocol-relative ('//evil') and backslash variants ('/\evil',
+    // '/\/evil') — browsers normalize '\' to '/', turning them into '//evil'.
+    if (!redirectUrl.startsWith('/') || /^\/[\\/]/.test(redirectUrl)) {
       redirectUrl = '/'
     }
 

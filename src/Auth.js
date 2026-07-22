@@ -10,6 +10,10 @@ class Auth {
   #request = null
   #table = null
   #token = null
+  // True once the cookie-token lookup ran for this request. Cookies are
+  // immutable for a request's lifetime, so a failed lookup cannot change
+  // outcome and must not be repeated at every check() call site.
+  #tokenChecked = false
   #user = null
   static #migrationCache = new Set()
   // First sweep fires ~5 minutes after boot, then once per interval, driven by
@@ -100,6 +104,11 @@ class Auth {
     } else if (this.#user) {
       return true
     } else {
+      // Negative cache: a failed token lookup is final for this request.
+      // (A mid-request login sets #user, which the branch above serves.)
+      if (this.#tokenChecked) return false
+      this.#tokenChecked = true
+
       // Checking for token
       let odac_x = this.#request.cookie('odac_x')
       let odac_y = this.#request.cookie('odac_y')
@@ -486,7 +495,9 @@ class Auth {
     if (!this.#user) return false
 
     if (!Odac.Config.auth) Odac.Config.auth = {}
-    const tokenTable = Odac.Config.auth.token || 'user_tokens'
+    // Must match the default used by check()/login() ('odac_auth'); a divergent
+    // fallback here means a config-less logout deletes from the wrong table.
+    const tokenTable = Odac.Config.auth.token || 'odac_auth'
     const primaryKey = Odac.Config.auth.key || 'id'
     const odacX = this.#request.cookie('odac_x')
     const browser = this.#request.header('user-agent')

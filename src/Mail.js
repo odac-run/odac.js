@@ -186,7 +186,19 @@ class Mail {
       })
 
       content = this.#parseOdacTag(content)
-      content = content.replace(/`/g, '\\\\`').replace(/\$\{/g, '\\\\${')
+      // Escape template literal meta-characters for JS backtick embedding.
+      // Backslash escape applies only to plain HTML — expression blocks from
+      // #parseOdacTag already handle their own escaping (CWE-116).
+      const exprBlocks = []
+      content = content.replace(/\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g, block => {
+        const placeholder = `___ODAC_EXPR_${exprBlocks.length}___`
+        exprBlocks.push(block)
+        return placeholder
+      })
+      content = content.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${')
+      exprBlocks.forEach((block, index) => {
+        content = content.replace(`___ODAC_EXPR_${index}___`, () => block)
+      })
 
       jsBlocks.forEach((jsContent, index) => {
         content = content.replace(`___ODAC_JS_BLOCK_${index}___`, jsContent)
@@ -508,6 +520,18 @@ class Mail {
 
           client.on('close', () => {
             if (Odac.Config.debug) console.log('[Mail] Connection closed')
+            // If the peer closed before sending a parseable response, resolve
+            // is a no-op (already settled); otherwise it prevents send() from
+            // hanging forever on a silent disconnect.
+            resolve(false)
+          })
+
+          // Never wait indefinitely for the Core to answer.
+          const timeoutMs = (Odac.Config.mail && Odac.Config.mail.timeout) || 30000
+          client.setTimeout(timeoutMs, () => {
+            console.error(`[Mail] No response from Odac Core within ${timeoutMs}ms; aborting.`)
+            resolve(false)
+            client.destroy()
           })
         } catch (error) {
           console.error('[Mail] Unexpected error:', error)

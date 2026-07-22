@@ -1,6 +1,31 @@
 const fs = require('fs')
 const nodeCrypto = require('crypto')
 
+const DEFAULT_ENCRYPT_KEY = 'odac'
+const LEGACY_IV = '2dea8a25e5e8f004'
+// Marks the random-IV format so decrypt can tell it apart from legacy fixed-IV
+// ciphertext (which is bare base64) and stay backward compatible.
+const CIPHER_PREFIX = 'v2:'
+
+// Resolves the encryption secret, refusing the well-known default key in
+// production so deterministic/guessable ciphertext never ships live.
+function resolveEncryptKey(key) {
+  key = key || Odac.Config.encrypt.key
+  if (key === DEFAULT_ENCRYPT_KEY) {
+    if (!Odac.Config.debug) {
+      throw new Error('Var.encrypt: refusing to use the default encryption key in production. Set config.encrypt.key to a strong secret.')
+    }
+    console.warn('Var.encrypt: using the default encryption key — override config.encrypt.key before deploying.')
+  }
+  return key
+}
+
+// Derives a fixed 32-byte AES-256 key from an arbitrary-length secret so any
+// configured key works and the key length is always valid.
+function deriveKey(key) {
+  return nodeCrypto.createHash('sha256').update(String(key)).digest()
+}
+
 class Var {
   #value = null
   #any = false
@@ -12,7 +37,9 @@ class Var {
   clear(...args) {
     args = this.#parse(args)
     let str = this.#value
-    for (const arg of args) str = str.replace(new RegExp(arg, 'g'), '')
+    // Remove each argument as a LITERAL substring. Building a RegExp from raw
+    // input crashes on invalid patterns (e.g. '[') and is a ReDoS vector.
+    for (const arg of args) str = str.replaceAll(arg, '')
     return str
   }
 
@@ -55,27 +82,34 @@ class Var {
   }
 
   decrypt(key) {
-    if (!key) key = Odac.Config.encrypt.key
-    const iv = '2dea8a25e5e8f004'
+    const secret = resolveEncryptKey(key)
+    const value = this.#value
     try {
-      const encryptedText = Buffer.from(this.#value, 'base64')
-      const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', key, iv)
-      let decrypted = decipher.update(encryptedText)
-      decrypted = Buffer.concat([decrypted, decipher.final()])
-      return decrypted.toString()
-    } catch (e) {
-      console.log(e)
+      if (typeof value === 'string' && value.startsWith(CIPHER_PREFIX)) {
+        // Random-IV format: first 16 bytes are the IV, rest is ciphertext.
+        const raw = Buffer.from(value.slice(CIPHER_PREFIX.length), 'base64')
+        const iv = raw.subarray(0, 16)
+        const encryptedText = raw.subarray(16)
+        const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', deriveKey(secret), iv)
+        return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString()
+      }
+      // Legacy fixed-IV format (raw 32-byte key): kept so data encrypted before
+      // the random-IV migration still decrypts.
+      const encryptedText = Buffer.from(value, 'base64')
+      const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', secret, LEGACY_IV)
+      return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString()
+    } catch {
       return null
     }
   }
 
   encrypt(key) {
-    if (!key) key = Odac.Config.encrypt.key
-    const iv = '2dea8a25e5e8f004'
-    const cipher = nodeCrypto.createCipheriv('aes-256-cbc', key, iv)
-    let encrypted = cipher.update(this.#value)
-    encrypted = Buffer.concat([encrypted, cipher.final()])
-    return encrypted.toString('base64')
+    const secret = resolveEncryptKey(key)
+    // Fresh random IV per call → identical plaintext yields different ciphertext.
+    const iv = nodeCrypto.randomBytes(16)
+    const cipher = nodeCrypto.createCipheriv('aes-256-cbc', deriveKey(secret), iv)
+    const encrypted = Buffer.concat([cipher.update(this.#value), cipher.final()])
+    return CIPHER_PREFIX + Buffer.concat([iv, encrypted]).toString('base64')
   }
 
   hash() {
@@ -126,8 +160,18 @@ class Var {
     if (args.includes('float')) result = (result || any) && ((any && result) || !isNaN(parseFloat(this.#value)))
     if (args.includes('host')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
     if (args.includes('ip')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
-    if (args.includes('json'))
-      result = (result || any) && ((any && result) || (JSON.parse(this.#value) && JSON.parse(this.#value).length >= 0))
+    if (args.includes('json')) {
+      // Never let a malformed value throw out of a validity check; also fixes the
+      // old `.length >= 0` test that wrongly rejected valid JSON objects.
+      let isJson = false
+      try {
+        JSON.parse(this.#value)
+        isJson = true
+      } catch {
+        isJson = false
+      }
+      result = (result || any) && ((any && result) || isJson)
+    }
     if (args.includes('mac')) result = (result || any) && ((any && result) || /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(this.#value))
     if (args.includes('md5')) result = (result || any) && ((any && result) || /^[a-f0-9A-F]{32}$/.test(this.#value))
     if (args.includes('numeric')) result = (result || any) && ((any && result) || !isNaN(this.#value))
@@ -185,15 +229,11 @@ class Var {
   }
 
   save(path) {
-    if (this.#value.includes('/')) {
-      let exp = path.split('/')
-      exp.pop()
-      let dir = ''
-      for (const key of exp) {
-        dir += (dir === '' ? '' : '/') + key
-        if (!fs.existsSync(dir) || !fs.lstatSync(dir).isDirectory()) fs.mkdirSync(dir)
-      }
-    }
+    // Create parent directories based on the TARGET path, not the content being
+    // written. `recursive` handles nested and absolute paths and is a no-op when
+    // the directory already exists.
+    const dir = path.substring(0, path.lastIndexOf('/'))
+    if (dir) fs.mkdirSync(dir, {recursive: true})
     return fs.writeFileSync(path, this.#value)
   }
 

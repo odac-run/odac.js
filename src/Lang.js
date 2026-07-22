@@ -15,7 +15,9 @@ class Lang {
     if (typeof args[0] !== 'string') return args[0]
     if (!this.#data[args[0]]) {
       this.#data[args[0]] = args[0]
-      this.#save()
+      // Fire-and-forget so we never block the response on disk I/O; #save()
+      // swallows its own errors, and .catch() is a belt-and-braces guard.
+      this.#save().catch(() => {})
     }
     let str = this.#data[args[0]]
 
@@ -37,9 +39,18 @@ class Lang {
 
   async #save() {
     if (!this.#lang) return
-    const langDir = __dir + '/storage/language/'
-    if (!fs.existsSync(langDir)) await fsPromises.mkdir(langDir, {recursive: true})
-    await fsPromises.writeFile(langDir + this.#lang + '.json', JSON.stringify(this.#data, null, 4))
+    try {
+      const langDir = __dir + '/storage/language/'
+      if (!fs.existsSync(langDir)) await fsPromises.mkdir(langDir, {recursive: true})
+      // Atomic write: a concurrent worker writing the same file can otherwise
+      // interleave and corrupt the JSON. Write to a unique temp file, then rename.
+      const target = langDir + this.#lang + '.json'
+      const tmp = `${target}.${process.pid}.${Date.now()}.tmp`
+      await fsPromises.writeFile(tmp, JSON.stringify(this.#data, null, 4))
+      await fsPromises.rename(tmp, target)
+    } catch {
+      // Best-effort persistence of auto-collected keys; never crash a request.
+    }
   }
 
   set(lang) {
@@ -54,6 +65,14 @@ class Lang {
       } else {
         lang = this.#odac.Config.lang?.default || 'en'
       }
+    }
+    // Final gate before this value ever reaches a filesystem path: a language
+    // code must be exactly two ASCII letters. Header junk ('a/', '..'), or a
+    // misconfigured default, falls back to a guaranteed-valid code.
+    lang = String(lang).toLowerCase()
+    if (!/^[a-z]{2}$/.test(lang)) {
+      lang = String(this.#odac.Config.lang?.default || 'en').toLowerCase()
+      if (!/^[a-z]{2}$/.test(lang)) lang = 'en'
     }
     this.#lang = lang
     const langFile = __dir + '/storage/language/' + lang + '.json'

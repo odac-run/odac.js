@@ -151,4 +151,25 @@ describe('Route.set()', () => {
       expect(route.routes.app.get['/token-test'].token).toBe(true)
     })
   })
+
+  // 4.3: set() reads Odac.Route.buff (the route file currently being loaded) to
+  // bucket the route. If a route file registers routes from an async callback,
+  // loading has finished and buff is gone — the route would silently land under
+  // `undefined`. set() must fail loudly instead.
+  describe('missing route context (buff)', () => {
+    it('throws a descriptive error when Odac.Route.buff is unset', () => {
+      global.Odac.Route.buff = undefined
+      expect(() => route.set('get', '/late', jest.fn())).toThrow(/route file/i)
+    })
+
+    it('does not register the route under an "undefined" bucket', () => {
+      global.Odac.Route.buff = undefined
+      try {
+        route.set('get', '/late', jest.fn())
+      } catch {
+        // expected
+      }
+      expect(route.routes.undefined).toBeUndefined()
+    })
+  })
 })

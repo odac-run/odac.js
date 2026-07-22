@@ -24,6 +24,7 @@ ODAC uses a request-scoped container. Most logic should be encapsulated in Servi
     -   Place classes in the `class/` directory.
     -   They are automatically instantiated and attached to `Odac` as `Odac.ClassName`.
     -   They are **Request Scoped** (new instance per request).
+    -   The loader only scans the **top level** of `class/` — it does **not** recurse into subfolders. A file like `class/billing/Invoice.js` will not be auto-loaded.
 3.  **Dependency Injection**: Services receive the framework instance (`Odac`) in their constructor.
 
 ## Reference Patterns
@@ -62,3 +63,4 @@ module.exports = User;
 -   **Context Awareness**: Use `this.Odac` inside service classes to access the specific request's state (current user, session, etc.).
 -   **Naming**: If a class name conflicts with core services (like `Mail`), it is placed under `Odac.App` (e.g., `Odac.App.Mail`).
 -   **Separation**: Keep controllers focused on request/response; move all data processing and business logic to the `class/` directory.
+-   **Splitting large services**: Since subfolders aren't scanned, keep the loadable class file at the root of `class/` and `require()` submodules from a subfolder inside it (plain Node.js `require`, not auto-loading) — e.g. `class/Billing.js` requiring `./billing/invoiceHelpers.js`.

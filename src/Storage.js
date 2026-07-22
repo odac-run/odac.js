@@ -1,6 +1,23 @@
 const fs = require('fs')
 const path = require('path')
 
+// Form records (see View/Form.js) live under a session as sub-keys named
+// `_<type>_form_<token>` and carry their own short `expires` timestamp. Evict
+// them the instant they lapse rather than waiting for the whole parent session
+// to reach the 7-day window — otherwise every unused form render lingers for
+// days. Scoped to `_form_` keys so ordinary session values (even ones that
+// happen to hold an `expires` field) are never touched.
+function isExpiredFormRecord(key, value, now) {
+  return (
+    typeof key === 'string' &&
+    key.includes('_form_') &&
+    value !== null &&
+    typeof value === 'object' &&
+    typeof value.expires === 'number' &&
+    now > value.expires
+  )
+}
+
 class OdacStorage {
   constructor() {
     this.db = null
@@ -124,6 +141,8 @@ class OdacStorage {
           this.db.remove(subKey)
         }
         count++
+      } else if (isExpiredFormRecord(key, value, now)) {
+        this.db.remove(key)
       }
     }
 
@@ -155,6 +174,8 @@ class OdacStorage {
             this.db.remove(subKey)
           }
           count++
+        } else if (isExpiredFormRecord(key, value, now)) {
+          this.db.remove(key)
         }
       }
 

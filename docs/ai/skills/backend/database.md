@@ -1,8 +1,8 @@
 ---
 name: backend-database-skill
-description: High-performance ODAC database querying patterns including the Read-Through Cache for SELECT results and the Write-Behind Cache for counters, last-write-wins updates, and buffered batch inserts.
+description: High-performance ODAC database querying patterns including the Read-Through Cache for SELECT results and the Write-Behind Cache for counters, last-write-wins updates, and buffered batch inserts. Also covers ClickHouse (OLAP/analytics) connections for append-only event data.
 metadata:
-  tags: backend, database, query-builder, sql, read-through-cache, write-behind-cache, performance, security
+  tags: backend, database, query-builder, sql, clickhouse, olap, analytics, read-through-cache, write-behind-cache, performance, security
 ---
 
 # Backend Database Skill
@@ -53,7 +53,21 @@ Define named objects. The one named `default` (or the first one) is used by defa
 
 Access named connections via: `Odac.DB.analytics.tableName`
 
-### 3. Environment Variables
+### 3. ClickHouse (OLAP / Analytics)
+Supported types: `mysql`, `postgres`, `sqlite`, `clickhouse`. ClickHouse is a columnar OLAP store —
+use it as a **secondary, append-only connection** for events/logs/metrics alongside a
+MySQL/PostgreSQL primary. Requires the `@clickhouse/client` driver.
+```json
+{
+  "database": {
+    "default":  {"type": "mysql", "database": "app_db"},
+    "analytics": {"type": "clickhouse", "host": "${CH_HOST}", "port": 8123, "database": "analytics"}
+  }
+}
+```
+See the dedicated **ClickHouse (Analytics / OLAP)** section below for the supported query surface and limits.
+
+### 4. Environment Variables
 Always use `${VAR_NAME}` for sensitive credentials. Map them in `.env`.
 
 ## Query Builder Patterns
@@ -256,6 +270,48 @@ await Odac.DB.buffer.flush()         // flush everything
   }
 }
 ```
+
+## ClickHouse (Analytics / OLAP)
+
+ClickHouse connections are served by a dedicated adapter (not Knex/SQL query builder). The API is
+**intentionally scoped** to what ClickHouse does well — batch insert + analytical reads. Row-level
+`update`/`delete`, `cache()`, `buffer.increment/update`, foreign keys and indexes are **not**
+available on ClickHouse connections (they are OLTP-only). Install the driver with
+`npm install @clickhouse/client`.
+
+### Supported surface
+```javascript
+// Insert — single object or array (batch)
+await Odac.DB.analytics.events.insert({event: 'login', user_id: 42})
+await Odac.DB.analytics.events.insert([{event: 'a'}, {event: 'b'}])
+
+// Write-behind buffered insert (coalesced into batches — ideal for high-frequency events)
+Odac.DB.analytics.events.buffer.insert({event: 'pageview', path: '/home'})
+await Odac.DB.analytics.events.buffer.flush()
+
+// Fluent SELECT builder (compiles to ClickHouse SQL; identifiers quoted, values escaped)
+const top = await Odac.DB.analytics.events
+  .select('path', 'count() AS c')
+  .where('created_at', '>=', '2026-01-01')
+  .groupBy('path').orderBy('c', 'desc').limit(10)
+
+const last  = await Odac.DB.analytics.events.where({user_id: 42}).orderBy('created_at', 'desc').first()
+const total = await Odac.DB.analytics.events.where('event', 'login').count()   // → Number
+const some  = await Odac.DB.analytics.events.whereIn('user_id', [1, 2, 3])
+
+// Raw SQL escape hatch (connection- or table-scoped)
+await Odac.DB.analytics.raw('SELECT ... FROM events GROUP BY ...')
+await Odac.DB.analytics.events.query('SELECT * FROM events LIMIT 100')
+```
+
+Builder methods: `select`, `where` (object / `col,val` / `col,op,val` / `IS NULL`), `whereIn`,
+`groupBy`, `orderBy`, `limit`, `offset`, `first`, `count`, `toSQL`. Awaiting the builder executes it.
+
+### Rules
+1. **Reads only in the builder** — no `update`/`delete`. Model changes as new inserts (aggregating engine where needed).
+2. **No `.cache()`** on ClickHouse — OLTP feature only.
+3. **`buffer` = insert only** — `increment`/`update` are not exposed for ClickHouse connections.
+4. **Schema-first still applies** — define CH tables in `schema/<conn>/*.js` with `engine`/`orderBy`. See migrations.md.
 
 ## Migration Awareness
 1.  **Schema-First**: Structural DB changes must be defined in `schema/*.js`.

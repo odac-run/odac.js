@@ -38,7 +38,10 @@ class Route {
 
       if (!middleware) {
         console.error(`Middleware not found: ${mw}`)
-        return Odac.Request.abort(500)
+        await Odac.Request.abort(500)
+        // Return false (not abort's undefined) so #executeController's guard
+        // stops the chain and the controller never runs after the 500.
+        return false
       }
 
       const result = await middleware(Odac)
@@ -72,35 +75,37 @@ class Route {
       const ControllerModule = controller.cache
       const actionParts = controller.action.split('.')
 
+      // Resolve the action starting from a given root (instance or the module).
+      const resolve = root => {
+        let method = root
+        let context = root
+        for (const segment of actionParts) {
+          if (method) {
+            context = method
+            method = method[segment]
+          }
+        }
+        return {method, context}
+      }
+
+      // Only instantiation may legitimately fail (e.g. the controller is a plain
+      // object of static handlers, not a constructor). Keep the action call
+      // itself OUTSIDE the try so a synchronous error inside the action is not
+      // swallowed and does not trigger a second, static invocation.
+      let instance = null
       try {
-        const instance = new ControllerModule(Odac)
-        let method = instance
-        let context = instance
-
-        for (const segment of actionParts) {
-          if (method) {
-            context = method
-            method = method[segment]
-          }
-        }
-
-        if (typeof method === 'function') {
-          return method.call(context, Odac)
-        }
+        instance = new ControllerModule(Odac)
       } catch {
-        let method = ControllerModule
-        let context = ControllerModule
+        instance = null
+      }
 
-        for (const segment of actionParts) {
-          if (method) {
-            context = method
-            method = method[segment]
-          }
-        }
+      let {method, context} = instance ? resolve(instance) : {method: undefined, context: undefined}
+      // Fall back to a static method on the module when there is no instance
+      // method (non-constructor controller, or a statically-defined action).
+      if (typeof method !== 'function') ({method, context} = resolve(ControllerModule))
 
-        if (typeof method === 'function') {
-          return method.call(context, Odac)
-        }
+      if (typeof method === 'function') {
+        return method.call(context, Odac)
       }
       return Odac.Request.abort(500)
     }
@@ -113,9 +118,12 @@ class Route {
   async check(Odac) {
     let url = Odac.Request.url.split('?')[0]
     if (url.endsWith('/')) url = url.slice(0, -1)
-    // Global Auth Check: Load user if valid tokens exist to simplify DX
-    // This allows calling Odac.Auth.user() anywhere without manual await Odac.Auth.check()
-    if (Odac.Auth) await Odac.Auth.check()
+    // Auth is loaded lazily at the points where user code can actually run
+    // (form processing, controller dispatch, custom 404 handlers) so that
+    // asset requests — config-route files, public files, plain 404s — never
+    // trigger a token-table query. Auth.check() memoizes a successful check on
+    // the request instance, so user code still sees Odac.Auth.user() loaded
+    // without a manual await, at most one token query per request.
 
     if (url.startsWith('/_odac/')) {
       Odac.Request.route = '_odac_internal'
@@ -124,6 +132,8 @@ class Route {
     if (['post', 'put', 'patch', 'delete'].includes(Odac.Request.method)) {
       const formToken = await Odac.request('_odac_form_token')
       if (formToken) {
+        // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
+        if (Odac.Auth) await Odac.Auth.check()
         Odac.Request.setSession()
         await Internal.processForm(Odac)
       }
@@ -132,7 +142,7 @@ class Route {
       Odac.Request.url === '/' &&
       Odac.Request.method === 'get' &&
       Odac.Request.header('X-Odac') === 'token' &&
-      Odac.Request.header('Referer').startsWith((Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host + '/') &&
+      (Odac.Request.header('Referer') ?? '').startsWith((Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host + '/') &&
       Odac.Request.header('X-Odac-Client') === Odac.Request.cookie('odac_client')
     ) {
       Odac.Request.header('Access-Control-Allow-Origin', (Odac.Request.ssl ? 'https://' : 'http://') + Odac.Request.host)
@@ -202,13 +212,17 @@ class Route {
       let controller = this.#controller(Odac.Request.route, method, url)
       if (controller) {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
+          // Load the user before dispatch so controllers can call
+          // Odac.Auth.user() synchronously (memoized: no-op for # routes
+          // whose auth gate above already succeeded).
+          if (Odac.Auth) await Odac.Auth.check()
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
           Odac.Request.setSession()
           const page = controller.cache?.file || controller.file
           if (typeof page === 'string') Odac.Request.page = page
 
           if (
-            ['post', 'get'].includes(Odac.Request.method) &&
+            ['post', 'get', 'put', 'patch', 'delete'].includes(Odac.Request.method) &&
             controller.token &&
             (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
           )
@@ -227,6 +241,8 @@ class Route {
     }
     let pageController = this.#controller(Odac.Request.route, 'page', url)
     if (pageController) {
+      // Same DX contract as method controllers: user loaded before dispatch.
+      if (Odac.Auth) await Odac.Auth.check()
       Odac.Request.setSession()
       const page = pageController.cache?.file || pageController.file
       if (typeof page === 'string') Odac.Request.page = page
@@ -281,6 +297,10 @@ class Route {
       }
     }
 
+    // Custom 404 handlers (run inside Request.abort) are user code — load the
+    // user first so they can call Odac.Auth.user(). Skipped when no handler
+    // exists so plain asset 404s never touch the token table.
+    if (Odac.Auth && this.routes[Odac.Request.route]?.error?.[404]) await Odac.Auth.check()
     return Odac.Request.abort(404)
   }
 
@@ -627,9 +647,17 @@ class Route {
 
   async request(req, res) {
     let id = `${Date.now()}${Math.random().toString(36).substr(2, 9)}`
-    let param = Odac.instance(id, req, res)
-    if (!this.routes[param.Request.route]) return param.Request.end()
+    let param
     try {
+      // Instance construction parses the request (query/cookies/body wiring) and
+      // can throw on malformed input; keep it inside the try so a crafted request
+      // becomes a 500 instead of an unhandled rejection that kills the worker.
+      param = Odac.instance(id, req, res)
+      // Unknown virtual host / route table → 404, not a status-less empty 200.
+      if (!this.routes[param.Request.route]) {
+        await param.Request.abort(404)
+        return param.cleanup()
+      }
       let result = this.check(param)
       if (result instanceof Promise) result = await result
       const Stream = require('./Stream.js')
@@ -649,9 +677,18 @@ class Route {
       param.cleanup()
     } catch (e) {
       console.error(e)
-      param.Request.abort(500)
-      param.cleanup()
-      return param.Request.end()
+      // param may be undefined if instance construction itself threw.
+      if (param) {
+        param.Request.abort(500)
+        param.cleanup()
+        return param.Request.end()
+      }
+      try {
+        res.statusCode = 500
+        res.end()
+      } catch {
+        res.destroy?.()
+      }
     }
   }
 
@@ -660,6 +697,19 @@ class Route {
   }
 
   set(type, url, file, options = {}) {
+    // Odac.Route.buff names the route file currently being loaded; set() reads
+    // it to bucket the route. It only exists during synchronous loading. A route
+    // registered from an async callback (setTimeout/promise/event) runs after
+    // loading finished and buff was deleted — the route would silently land
+    // under the `undefined` bucket and never match. Fail loudly instead.
+    if (!Odac.Route.buff) {
+      throw new Error(
+        'Route.set() called with no active route file (Odac.Route.buff is unset). ' +
+          'Register routes synchronously at the top level of a route file, not from ' +
+          'async callbacks (setTimeout/promise/event handlers).'
+      )
+    }
+
     const capturedMiddlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
 
     if (Array.isArray(type)) {

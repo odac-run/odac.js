@@ -61,40 +61,54 @@ class Cron {
           case 'yearDay':
             if (condition.value !== yearDay) shouldRun = false
             break
+          // everyX conditions apply from the very first check: without the
+          // (previously present) `job.lastRun &&` guard, a fresh deploy no
+          // longer fires every interval job unconditionally on the first tick.
           case 'everyMinute':
-            if (job.lastRun && Math.floor(unix / 60) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 60) % condition.value !== 0) shouldRun = false
             break
           case 'everyHour':
-            if (job.lastRun && Math.floor(unix / 3600) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 3600) % condition.value !== 0) shouldRun = false
             break
           case 'everyDay':
-            if (job.lastRun && Math.floor(unix / 86400) % condition.value !== 0) shouldRun = false
+            if (Math.floor(unix / 86400) % condition.value !== 0) shouldRun = false
             break
           case 'everyWeekDay':
             if (condition.value !== weekDay) shouldRun = false
             break
           case 'everyMonth':
-            if (job.lastRun && (year * 12 + month) % condition.value !== 0) shouldRun = false
+            if ((year * 12 + month) % condition.value !== 0) shouldRun = false
             break
           case 'everyYear':
-            if (job.lastRun && year % condition.value !== 0) shouldRun = false
+            if (year % condition.value !== 0) shouldRun = false
             break
           case 'everyYearDay':
-            if (job.lastRun && condition.value !== yearDay) shouldRun = false
+            if (condition.value !== yearDay) shouldRun = false
             break
         }
         if (!shouldRun) break
       }
 
-      if (shouldRun) {
+      // Overlap protection: never re-trigger a job whose previous (async) run
+      // has not settled yet.
+      if (shouldRun && !job.running) {
         job.lastRun = now
         try {
           if (job.function || fs.existsSync(job.path)) {
             if (!job.function) job.function = require(job.path)
             if (job.function && typeof job.function === 'function') {
               const _odac = global.Odac.instance(null, 'cron')
-              job.function(_odac)
-              if (_odac.cleanup) _odac.cleanup()
+              job.running = true
+              // Wrap so both synchronous throws and async rejections are caught
+              // (an unhandled rejection can crash the primary process), and so
+              // cleanup runs only after the job has actually finished.
+              Promise.resolve()
+                .then(() => job.function(_odac))
+                .catch(error => console.error(`Error executing job ${job.controller}:`, error))
+                .finally(() => {
+                  job.running = false
+                  if (_odac.cleanup) _odac.cleanup()
+                })
             }
           }
         } catch (error) {

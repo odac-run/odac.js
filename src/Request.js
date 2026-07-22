@@ -4,6 +4,18 @@ const fsPromises = fs.promises
 const path = require('path')
 const os = require('os')
 
+// decodeURIComponent throws a URIError on malformed percent-encoding (e.g. `%`
+// or `%ZZ`). A single crafted query/body/path would otherwise bubble out and
+// crash the worker (Node >=15 exits on unhandled rejection), so fall back to
+// the raw value instead of throwing.
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
+}
+
 class OdacRequest {
   #odac
   #complete = false
@@ -85,12 +97,17 @@ class OdacRequest {
   cookie(key, value, options = {}) {
     if (value === undefined) {
       if (this.#cookies.data[key]) return this.#cookies.data[key]
-      value =
-        this.req.headers.cookie
-          ?.split('; ')
-          .find(c => c.startsWith(key + '='))
-          ?.split('=')[1] ?? null
-      if (value && value.startsWith('{') && value.endsWith('}')) value = JSON.parse(value)
+      const raw = this.req.headers.cookie?.split('; ').find(c => c.startsWith(key + '='))
+      // Split on the first '=' only so base64 / padded values (which contain '=')
+      // survive intact instead of being truncated by a naive split('=')[1].
+      value = raw ? raw.slice(raw.indexOf('=') + 1) : null
+      if (value && value.startsWith('{') && value.endsWith('}')) {
+        try {
+          value = JSON.parse(value)
+        } catch {
+          // Malformed JSON cookie: keep the raw string instead of throwing a 500.
+        }
+      }
       return value
     }
     this.#cookies.data[key] = value
@@ -111,8 +128,8 @@ class OdacRequest {
       let data = split[1].split('&')
       for (let i = 0; i < data.length; i++) {
         if (data[i].indexOf('=') === -1) continue
-        let key = decodeURIComponent(data[i].split('=')[0])
-        let val = decodeURIComponent(data[i].split('=')[1] || '')
+        let key = safeDecode(data[i].split('=')[0])
+        let val = safeDecode(data[i].split('=')[1] || '')
         this.data.get[key] = val
       }
     }
@@ -155,8 +172,8 @@ class OdacRequest {
         let data = body.split('&')
         for (let i = 0; i < data.length; i++) {
           if (data[i].indexOf('=') === -1) continue
-          let key = decodeURIComponent(data[i].split('=')[0])
-          let val = decodeURIComponent(data[i].split('=')[1] || '')
+          let key = safeDecode(data[i].split('=')[0])
+          let val = safeDecode(data[i].split('=')[1] || '')
           this.data.post[key] = val
         }
       }
@@ -335,7 +352,9 @@ class OdacRequest {
     this.print()
     this.res.end(data)
     this.#cleanupFiles()
-    this.req.connection.destroy()
+    // Do not destroy the socket here: it defeats keep-alive (Server.js sets
+    // keepAliveTimeout=65000) and forces a fresh TCP handshake per request.
+    // res.end() finishes the response; idle sockets are reaped by keepAliveTimeout.
   }
 
   // Remove temp files that were never moved to permanent storage. Runs after a
@@ -409,21 +428,29 @@ class OdacRequest {
 
   // - GET REQUEST
   async request(key, method) {
-    if (method) method = method.toUpperCase()
-    if ((!method || method === 'post') && (this.data.post[key] ?? null)) return this.data.post[key]
-    if ((!method || method === 'get') && (this.data.get[key] ?? null)) return this.data.get[key]
-    if ((!method || method === 'url') && (this.data.url[key] ?? null)) return this.data.url[key]
+    if (method) method = method.toLowerCase()
+    // Buckets to search, in priority order: a scoped call looks only at its own
+    // bucket; an unscoped call falls back through post → get → url.
+    const buckets = method ? [method] : ['post', 'get', 'url']
+
+    // No key → return the whole bucket (post by default) once available.
+    const lookup = () => {
+      if (!key) return this.data[method || 'post']
+      for (const bucket of buckets) {
+        const value = this.data[bucket]?.[key]
+        if (value !== undefined && value !== null) return value
+      }
+      return undefined
+    }
+
+    const found = lookup()
+    if (found !== undefined && found !== null) return found
+    // Body already parsed: nothing more will arrive, resolve with what we have.
+    if (this.#complete) return lookup()
+
+    // Wait for the body to finish parsing instead of polling every 10ms.
     return new Promise(resolve => {
-      let interval = setInterval(() => {
-        if (this.data.post[key] !== undefined || this.data.get[key] !== undefined || this.#complete) {
-          clearInterval(interval)
-          if (!key && !method) resolve(this.data.post)
-          else if (!key && method) resolve(this.data[method.toLowerCase()])
-          else if (this.data.post[key] !== undefined && method !== 'GET') resolve(this.data.post[key])
-          else if (this.data.get[key] !== undefined && method !== 'GET') resolve(this.data.get[key])
-          else resolve()
-        }
-      }, 10)
+      this.#event.end.push({callback: () => resolve(lookup())})
     })
   }
 

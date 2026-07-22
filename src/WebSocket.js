@@ -1,6 +1,13 @@
 const nodeCrypto = require('crypto')
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+// Ipc channel and per-process identity used to bridge WebSocket fan-out
+// (broadcast/toRoom) across cluster workers. Each worker holds its own client
+// map, so a fan-out call is delivered locally AND relayed to sibling workers,
+// which re-deliver to their own local clients. WORKER_ID tags each relay so a
+// worker can drop its own echo instead of delivering twice.
+const WS_RELAY_CHANNEL = 'odac:ws:relay'
+const WORKER_ID = `${process.pid}`
 const DEFAULT_MAX_PAYLOAD = 10 * 1024 * 1024
 const DEFAULT_RATE_LIMIT_MAX = 50
 const DEFAULT_RATE_LIMIT_WINDOW = 1000
@@ -185,6 +192,20 @@ class WebSocketClient {
     }
   }
 
+  // Appends a continuation payload while enforcing a cap on the *total*
+  // reassembled size. Per-frame maxPayload alone lets an attacker stream
+  // unlimited small fragments and exhaust worker memory; bound the sum too.
+  #appendFragment(payload) {
+    this.#fragments.length += payload.length
+    if (this.#fragments.length > this.#maxPayload) {
+      this.#fragments = null
+      this.close(1009, 'Fragmented message too large')
+      return false
+    }
+    this.#fragments.buffers.push(payload)
+    return true
+  }
+
   #handleFrame(frame) {
     if (this.#rateLimitMax > 0) {
       this.#messageCount++
@@ -200,7 +221,7 @@ class WebSocketClient {
         if (frame.fin) {
           if (this.#fragments) {
             // Final fragment of a fragmented sequence
-            this.#fragments.buffers.push(frame.payload)
+            if (!this.#appendFragment(frame.payload)) return
             const merged = Buffer.concat(this.#fragments.buffers)
             const opcode = this.#fragments.opcode
             this.#fragments = null
@@ -211,7 +232,7 @@ class WebSocketClient {
           }
         } else {
           // First fragment — start accumulating
-          this.#fragments = {opcode: frame.opcode, buffers: [frame.payload]}
+          this.#fragments = {opcode: frame.opcode, buffers: [frame.payload], length: frame.payload.length}
         }
         break
       case OPCODE.CONTINUATION:
@@ -219,7 +240,7 @@ class WebSocketClient {
           this.close(1002, 'Protocol error: unexpected continuation frame')
           return
         }
-        this.#fragments.buffers.push(frame.payload)
+        if (!this.#appendFragment(frame.payload)) return
         if (frame.fin) {
           const merged = Buffer.concat(this.#fragments.buffers)
           const opcode = this.#fragments.opcode
@@ -392,6 +413,7 @@ class WebSocketServer {
   #clients = new Map()
   #rooms = new Map()
   #routes = new Map()
+  #bridgeReady = false
 
   route(path, handler, options = {}) {
     this.#routes.set(path, {handler, options})
@@ -464,6 +486,9 @@ class WebSocketServer {
     const clientId = nodeCrypto.randomUUID()
     const client = new WebSocketClient(socket, this, clientId, options)
     this.#clients.set(clientId, client)
+    // A worker with local clients must listen for relays from its siblings, even
+    // if it never itself broadcasts.
+    this.#ensureBridge()
 
     if (params) {
       for (const [k, v] of Object.entries(params)) {
@@ -494,6 +519,11 @@ class WebSocketServer {
   }
 
   toRoom(room, data) {
+    this.#toRoomLocal(room, data)
+    this.#relay({op: 'room', room, payload: this.#encodeData(data)})
+  }
+
+  #toRoomLocal(room, data) {
     if (!this.#rooms.has(room)) return
     for (const clientId of this.#rooms.get(room)) {
       const client = this.#clients.get(clientId)
@@ -502,6 +532,11 @@ class WebSocketServer {
   }
 
   toRoomBinary(room, data) {
+    this.#toRoomBinaryLocal(room, data)
+    this.#relay({op: 'roomBinary', room, payload: this.#encodeData(data)})
+  }
+
+  #toRoomBinaryLocal(room, data) {
     if (!this.#rooms.has(room)) return
     for (const clientId of this.#rooms.get(room)) {
       const client = this.#clients.get(clientId)
@@ -510,8 +545,69 @@ class WebSocketServer {
   }
 
   broadcast(data, excludeId = null) {
+    this.#broadcastLocal(data, excludeId)
+    // excludeId identifies a client on the ORIGIN worker; on sibling workers it
+    // simply matches nothing, so relaying it through is safe.
+    this.#relay({op: 'broadcast', excludeId, payload: this.#encodeData(data)})
+  }
+
+  #broadcastLocal(data, excludeId = null) {
     for (const [id, client] of this.#clients) {
       if (id !== excludeId) client.send(data)
+    }
+  }
+
+  // --- Cross-worker relay (see WS_RELAY_CHANNEL) ---
+
+  // Binary payloads can't survive the JSON hop that Ipc pub/sub uses, so encode
+  // them as base64 with a flag the receiver uses to reconstruct a Buffer.
+  #encodeData(data) {
+    if (isBinary(data)) return {binary: true, data: toPayload(data).toString('base64')}
+    return {binary: false, data}
+  }
+
+  #decodeData(payload) {
+    if (!payload) return undefined
+    return payload.binary ? Buffer.from(payload.data, 'base64') : payload.data
+  }
+
+  // Subscribe once so this worker re-delivers messages relayed by its siblings.
+  // No-op when there is no Ipc (single-process/dev) — fan-out stays local-only.
+  #ensureBridge() {
+    if (this.#bridgeReady) return
+    const Ipc = global.Odac && global.Odac.Ipc
+    if (!Ipc || typeof Ipc.subscribe !== 'function') return
+    this.#bridgeReady = true
+    Promise.resolve(Ipc.subscribe(WS_RELAY_CHANNEL, msg => this.#onRelay(msg))).catch(err => {
+      this.#bridgeReady = false
+      console.error('[Odac WS] Failed to set up cross-worker relay:', err && err.message)
+    })
+  }
+
+  #relay(message) {
+    const Ipc = global.Odac && global.Odac.Ipc
+    if (!Ipc || typeof Ipc.publish !== 'function') return
+    this.#ensureBridge()
+    message.origin = WORKER_ID
+    Promise.resolve(Ipc.publish(WS_RELAY_CHANNEL, message)).catch(err =>
+      console.error('[Odac WS] Failed to relay to other workers:', err && err.message)
+    )
+  }
+
+  #onRelay(message) {
+    // Drop our own echo — the origin worker already delivered locally.
+    if (!message || message.origin === WORKER_ID) return
+    const data = this.#decodeData(message.payload)
+    switch (message.op) {
+      case 'broadcast':
+        this.#broadcastLocal(data, message.excludeId ?? null)
+        break
+      case 'room':
+        this.#toRoomLocal(message.room, data)
+        break
+      case 'roomBinary':
+        this.#toRoomBinaryLocal(message.room, data)
+        break
     }
   }
 

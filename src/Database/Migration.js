@@ -3,6 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const nanoid = require('./nanoid')
+const clickhouse = require('./ClickHouse')
 
 /**
  * ODAC Migration Engine — "Schema-First with Auto-Diff"
@@ -52,6 +53,13 @@ class Migration {
       const knex = this.connections[key]
       if (!knex) throw new Error(`ODAC Migration: Unknown database connection '${key}'.`)
 
+      // ClickHouse (OLAP) diverges from the Knex schema-builder pipeline: it needs
+      // engine-aware CREATE TABLE, has no FK/unique/index diffing, and is add-column only.
+      if (this._dialect(knex) === clickhouse.DIALECT) {
+        summary[key] = await this._migrateClickHouse(knex, key, dryRun)
+        continue
+      }
+
       await this._ensureTrackingTable(knex)
 
       const schemaChanges = await this._applySchemaChanges(knex, key, dryRun)
@@ -62,6 +70,17 @@ class Migration {
     }
 
     return summary
+  }
+
+  /**
+   * Resolves the dialect of a connection.
+   * Why: ClickHouse connections are ClickHouseAdapter instances (not Knex) and carry an
+   * `_odacDialect` marker; Knex connections expose it via `client.config.client`.
+   * @param {object} conn - Connection (Knex instance or ClickHouseAdapter)
+   * @returns {string} Dialect identifier ('clickhouse', 'pg', 'mysql2', 'sqlite3', …)
+   */
+  _dialect(conn) {
+    return conn._odacDialect || conn.client?.config?.client || 'unknown'
   }
 
   /**
@@ -91,6 +110,12 @@ class Migration {
       const knex = this.connections[key]
       if (!knex) throw new Error(`ODAC Migration: Unknown database connection '${key}'.`)
 
+      // Rollback relies on DELETE from the tracking table; on ClickHouse a DELETE is a heavy
+      // async mutation, and CH schema files are append-only. Rolling back is intentionally unsupported.
+      if (this._dialect(knex) === clickhouse.DIALECT) {
+        throw new Error(`ODAC Migration: rollback is not supported on ClickHouse connection '${key}'.`)
+      }
+
       await this._ensureTrackingTable(knex)
       result[key] = await this._rollbackLastBatch(knex, key)
     }
@@ -113,6 +138,12 @@ class Migration {
     for (const key of connectionKeys) {
       const knex = this.connections[key]
       if (!knex) throw new Error(`ODAC Migration: Unknown database connection '${key}'.`)
+
+      // Snapshot reverse-maps DB types back to ODAC schema types; ClickHouse types and engine
+      // metadata don't round-trip cleanly, so schema files stay the source of truth for CH.
+      if (this._dialect(knex) === clickhouse.DIALECT) {
+        throw new Error(`ODAC Migration: snapshot is not supported on ClickHouse connection '${key}'.`)
+      }
 
       result[key] = await this._snapshotDatabase(knex, key)
     }
@@ -1331,6 +1362,295 @@ class Migration {
     }
 
     return false
+  }
+
+  // ---------------------------------------------------------------------------
+  // CLICKHOUSE PIPELINE — engine-aware, add-column-only, no FK/index/mutation
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Runs the migration pipeline for a ClickHouse connection.
+   * Scope (by design, matching ClickHouse's OLAP model):
+   *   - CREATE TABLE (engine + ORDER BY aware) and ADD COLUMN only — no drop/alter/index/FK.
+   *   - Seeds are insert-only (no mutation-based updates).
+   *   - Rollback/snapshot are unsupported (guarded in their public methods).
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {boolean} dryRun - If true, compute operations without executing
+   * @returns {Promise<object>} Summary {schema, files, seeds}
+   */
+  async _migrateClickHouse(conn, connectionKey, dryRun) {
+    await this._ensureTrackingTableClickHouse(conn, dryRun)
+
+    const schema = await this._applySchemaChangesClickHouse(conn, connectionKey, dryRun)
+    const files = await this._applyMigrationFilesClickHouse(conn, connectionKey, dryRun)
+    const seeds = await this._applySeedsClickHouse(conn, connectionKey, dryRun)
+
+    return {schema, files, seeds}
+  }
+
+  /**
+   * Ensures the migration tracking table exists on a ClickHouse connection.
+   * Uses a MergeTree table ordered by (connection, name) — append-only, no primary key needed.
+   * The `value` column stores the last-applied table TTL expression (type='ttl' rows).
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {boolean} dryRun
+   */
+  async _ensureTrackingTableClickHouse(conn, dryRun) {
+    if (dryRun) return
+
+    if (!(await conn.hasTable(this.trackingTable))) {
+      await conn.exec(
+        `CREATE TABLE IF NOT EXISTS ${clickhouse.quoteIdent(this.trackingTable)} (\n` +
+          `  name String,\n  connection String,\n  type String,\n  batch UInt32,\n  value String DEFAULT '',\n  applied_at DateTime DEFAULT now()\n` +
+          `) ENGINE = MergeTree() ORDER BY (connection, name)`
+      )
+      return
+    }
+
+    // Older tracking tables predate the `value` column — idempotent metadata-only upgrade.
+    await conn.exec(`ALTER TABLE ${clickhouse.quoteIdent(this.trackingTable)} ADD COLUMN IF NOT EXISTS \`value\` String DEFAULT ''`)
+  }
+
+  /**
+   * Applies structural schema changes to a ClickHouse connection: creates missing tables and
+   * adds missing columns. Column drops, type alters, indexes and foreign keys are intentionally
+   * out of scope for ClickHouse.
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {boolean} dryRun
+   * @returns {Promise<Array>} List of applied operations
+   */
+  async _applySchemaChangesClickHouse(conn, connectionKey, dryRun) {
+    const desiredSchemas = this._loadSchemaFiles(connectionKey)
+    const operations = []
+
+    for (const [tableName, desired] of Object.entries(desiredSchemas)) {
+      const exists = await conn.hasTable(tableName)
+
+      if (!exists) {
+        operations.push({type: 'create_table', table: tableName, columns: desired.columns})
+        if (!dryRun) {
+          await conn.exec(clickhouse.buildCreateTableDDL(tableName, desired))
+
+          // Record the TTL baked into CREATE so later schema edits diff against it.
+          const initialTtl = this._desiredClickHouseTTL(desired)
+          if (initialTtl) await this._recordClickHouseTTL(conn, connectionKey, tableName, initialTtl, 1)
+        }
+        continue
+      }
+
+      const current = await conn.columnInfo(tableName)
+      const desiredCols = this._expandClickHouseColumns(desired.columns)
+
+      for (const [colName, def] of Object.entries(desiredCols)) {
+        if (current[colName]) continue
+        operations.push({type: 'add_column', table: tableName, column: colName})
+        if (!dryRun) await conn.exec(clickhouse.buildAddColumnDDL(tableName, colName, def))
+      }
+
+      const ttlOp = await this._syncClickHouseTableTTL(conn, connectionKey, tableName, desired, dryRun)
+      if (ttlOp) operations.push(ttlOp)
+    }
+
+    return operations
+  }
+
+  /**
+   * Resolves the effective table-level TTL a schema asks for: the trimmed expression, or ''
+   * when the schema has none or the engine is not MergeTree-family (TTL unsupported there).
+   * @param {object} schema - Full schema definition
+   * @returns {string}
+   */
+  _desiredClickHouseTTL(schema) {
+    if (!clickhouse.isMergeTreeEngine(clickhouse.normalizeEngine(schema.engine))) return ''
+    return typeof schema.ttl === 'string' ? schema.ttl.trim() : ''
+  }
+
+  /**
+   * Reconciles an existing ClickHouse table's TTL with the schema's `ttl` field.
+   *
+   * Why tracking-table based (not introspection): ClickHouse normalizes TTL expressions in
+   * system.tables ('INTERVAL 30 DAY' → 'toIntervalDay(30)'), so comparing the schema's raw
+   * string against introspected DDL would never match — re-issuing MODIFY TTL (a mutation that
+   * rewrites parts) on every startup. Diffing against the expression ODAC last applied, stored
+   * as type='ttl' rows in the tracking table, is deterministic and idempotent. `batch` acts as
+   * a per-table revision counter (append-only table — latest revision wins). Consequence:
+   * out-of-band TTL changes (manual ALTER) are invisible to this diff by design.
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {string} tableName - Target table
+   * @param {object} schema - Full schema definition
+   * @param {boolean} dryRun
+   * @returns {Promise<object|null>} The applied operation, or null when TTL is already in sync
+   */
+  async _syncClickHouseTableTTL(conn, connectionKey, tableName, schema, dryRun) {
+    const desired = this._desiredClickHouseTTL(schema)
+    const recorded = await this._recordedClickHouseTTL(conn, connectionKey, tableName)
+    if (desired === recorded.value) return null
+
+    const op = desired ? {type: 'modify_ttl', table: tableName, ttl: desired} : {type: 'remove_ttl', table: tableName}
+
+    if (!dryRun) {
+      const t = clickhouse.quoteIdent(tableName)
+      // MODIFY TTL materializes the new policy on existing parts (background mutation) — can be
+      // heavy on large tables, but it is exactly what the schema declares.
+      await conn.exec(desired ? `ALTER TABLE ${t} MODIFY TTL ${desired}` : `ALTER TABLE ${t} REMOVE TTL`)
+      await this._recordClickHouseTTL(conn, connectionKey, tableName, desired, recorded.revision + 1)
+    }
+
+    return op
+  }
+
+  /**
+   * Reads the latest TTL revision ODAC recorded for a table ('' / revision 0 when none).
+   * Tolerates a missing tracking table or a pre-`value`-column tracking table (dry-run on a
+   * fresh database, or status before the idempotent upgrade ran).
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {string} tableName - Target table
+   * @returns {Promise<{value: string, revision: number}>}
+   */
+  async _recordedClickHouseTTL(conn, connectionKey, tableName) {
+    if (!(await conn.hasTable(this.trackingTable))) return {value: '', revision: 0}
+
+    const cols = await conn.columnInfo(this.trackingTable)
+    if (!cols.value) return {value: '', revision: 0}
+
+    const tt = clickhouse.quoteIdent(this.trackingTable)
+    const rows = await conn.query(
+      `SELECT value, batch FROM ${tt} WHERE connection = ${clickhouse.quoteLiteral(connectionKey)}` +
+        ` AND type = 'ttl' AND name = ${clickhouse.quoteLiteral(tableName)} ORDER BY batch DESC LIMIT 1`
+    )
+
+    if (rows.length === 0) return {value: '', revision: 0}
+    return {value: rows[0].value || '', revision: Number(rows[0].batch) || 0}
+  }
+
+  /**
+   * Appends a TTL revision row to the tracking table.
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {string} tableName - Target table
+   * @param {string} value - Applied TTL expression ('' for removal)
+   * @param {number} revision - Monotonic per-table revision number
+   */
+  async _recordClickHouseTTL(conn, connectionKey, tableName, value, revision) {
+    // applied_at omitted → DEFAULT now() fills it (same convention as file-migration rows).
+    await conn.insert(this.trackingTable, [{name: tableName, connection: connectionKey, type: 'ttl', batch: revision, value}])
+  }
+
+  /**
+   * Expands a schema column map into concrete ClickHouse column definitions, resolving the
+   * virtual 'timestamps' type into created_at/updated_at. Mirrors the SQL diff engine's handling.
+   * @param {object} columns - Desired column definitions
+   * @returns {object} Map of columnName -> definition
+   */
+  _expandClickHouseColumns(columns) {
+    const expanded = {}
+    for (const [colName, def] of Object.entries(columns || {})) {
+      if (def.type === 'timestamps') {
+        expanded['created_at'] = {type: 'datetime', default: 'now()'}
+        expanded['updated_at'] = {type: 'datetime', default: 'now()'}
+        continue
+      }
+      expanded[colName] = def
+    }
+    return expanded
+  }
+
+  /**
+   * Runs pending imperative migration files against a ClickHouse connection and records them in
+   * the tracking table. The migration file's up(conn) receives the ClickHouseAdapter.
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {boolean} dryRun
+   * @returns {Promise<Array>} Applied/pending file descriptors
+   */
+  async _applyMigrationFilesClickHouse(conn, connectionKey, dryRun) {
+    const migrationFiles = this._loadMigrationFiles(connectionKey)
+    if (migrationFiles.length === 0) return []
+
+    const tt = clickhouse.quoteIdent(this.trackingTable)
+    const connLit = clickhouse.quoteLiteral(connectionKey)
+
+    const appliedRows = await conn.query(`SELECT name FROM ${tt} WHERE connection = ${connLit} AND type = 'file'`)
+    const appliedNames = new Set(appliedRows.map(r => r.name))
+    const pending = migrationFiles.filter(f => !appliedNames.has(f.name))
+
+    if (dryRun) return pending.map(f => ({type: 'pending_file', name: f.name}))
+
+    // type='file' filter: TTL revision rows also live in this table and reuse `batch` as their
+    // own per-table counter — they must not inflate the file-migration batch numbering.
+    const batchRows = await conn.query(`SELECT max(batch) AS maxBatch FROM ${tt} WHERE connection = ${connLit} AND type = 'file'`)
+    const batch = (Number(batchRows[0]?.maxBatch) || 0) + 1
+
+    const results = []
+
+    for (const file of pending) {
+      const migration = this._requireSchema(file.path)
+      if (typeof migration.up !== 'function') {
+        throw new Error(`ODAC Migration: File '${file.name}' is missing an 'up' function.`)
+      }
+
+      await migration.up(conn)
+
+      // applied_at is omitted so the column's DEFAULT now() fills it (JSONEachRow default fill).
+      await conn.insert(this.trackingTable, [{name: file.name, connection: connectionKey, type: 'file', batch}])
+      results.push({type: 'applied_file', name: file.name})
+    }
+
+    return results
+  }
+
+  /**
+   * Applies seed data to a ClickHouse connection using insert-only semantics.
+   * Existing rows (matched by seedKey) are left untouched — ClickHouse has no cheap row update.
+   * @param {object} conn - ClickHouseAdapter instance
+   * @param {string} connectionKey - Connection identifier
+   * @param {boolean} dryRun
+   * @returns {Promise<Array>} Seed operation results
+   */
+  async _applySeedsClickHouse(conn, connectionKey, dryRun) {
+    const schemas = this._loadSchemaFiles(connectionKey)
+    const results = []
+
+    for (const [tableName, schema] of Object.entries(schemas)) {
+      if (!schema.seed || !Array.isArray(schema.seed) || schema.seed.length === 0) continue
+
+      const seedKey = schema.seedKey
+      if (!seedKey) {
+        throw new Error(`ODAC Migration: Schema '${tableName}' has seed data but no seedKey defined.`)
+      }
+
+      for (const row of schema.seed) {
+        const keyValue = row[seedKey]
+        if (keyValue === undefined) continue
+
+        const existing = await conn.query(
+          `SELECT 1 FROM ${clickhouse.quoteIdent(tableName)} WHERE ${clickhouse.quoteIdent(seedKey)} = ${this._clickhouseValue(keyValue)} LIMIT 1`
+        )
+
+        if (existing.length > 0) continue
+
+        const preparedRow = this._prepareSeedRow(row, schema)
+        this._fillNanoidColumns(preparedRow, schema)
+
+        if (!dryRun) await conn.insert(tableName, [preparedRow])
+        results.push({type: 'seed_insert', table: tableName, key: keyValue})
+      }
+    }
+
+    return results
+  }
+
+  /**
+   * Renders a scalar value for a ClickHouse WHERE comparison: numbers bare, everything else quoted.
+   * @param {*} value
+   * @returns {string}
+   */
+  _clickhouseValue(value) {
+    return typeof value === 'number' ? String(value) : clickhouse.quoteLiteral(value)
   }
 
   // ---------------------------------------------------------------------------

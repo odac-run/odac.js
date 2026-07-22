@@ -1,8 +1,8 @@
 ---
 name: backend-migrations-skill
-description: Schema-first ODAC migration strategy for deterministic database evolution, index sync, and cluster-safe execution.
+description: Schema-first ODAC migration strategy for deterministic database evolution, index sync, and cluster-safe execution across SQL engines and ClickHouse (OLAP).
 metadata:
-  tags: backend, migrations, schema, database-evolution, indexes, cluster-safety
+  tags: backend, migrations, schema, database-evolution, indexes, cluster-safety, clickhouse, olap
 ---
 
 # Backend Migrations Skill
@@ -80,6 +80,40 @@ schema/
   analytics/
     events.js         # analytics DB
 ```
+
+### ClickHouse Schema (OLAP)
+ClickHouse tables live under a named-connection subdirectory (e.g. `schema/analytics/events.js`)
+and use the same `columns` format plus ClickHouse-only fields (ignored by SQL engines). CREATE TABLE
+needs a table **engine** and a **sorting key**.
+```javascript
+// schema/analytics/events.js
+module.exports = {
+  engine: 'MergeTree',                    // default 'MergeTree'; 'ReplacingMergeTree(ver)' etc. passed verbatim
+  orderBy: ['created_at', 'id'],          // sorting key (MergeTree requires one; defaults to tuple())
+  partitionBy: 'toYYYYMM(created_at)',    // optional
+  ttl: 'created_at + INTERVAL 30 DAY',    // optional table-level retention (raw TTL expr, MergeTree only)
+  settings: 'index_granularity = 8192',   // optional raw SETTINGS
+  columns: {
+    id:         {type: 'nanoid'},
+    user_id:    {type: 'bigInteger'},
+    event:      {type: 'string'},
+    source:     {type: 'string', nullable: true},   // nullable ONLY when explicitly true (see below)
+    token:      {type: 'string', default: '', ttl: 'created_at + INTERVAL 7 DAY'},  // per-column TTL: expires value, not row
+    created_at: {type: 'datetime', nullable: false}
+  },
+  seedKey: 'event',                       // insert-only seeding on ClickHouse
+  seed: [{event: 'signup', user_id: 0, id: '', created_at: '2026-01-01 00:00:00'}]
+}
+```
+
+**ClickHouse migration rules:**
+- **Nullable inverted**: SQL treats unspecified `nullable` as NULLABLE; ClickHouse columns are NOT NULL by default. A CH column is nullable **only** when `nullable: true`.
+- **Add-column only**: schema diff creates tables and adds new columns. Column drops, type alters, indexes and foreign keys are **not** applied on ClickHouse.
+- **TTL** (`ttl` field, table- or column-level): raw CH expression, MergeTree-family only. **Table-level TTL is auto-synced**: changing/removing `ttl` in the schema issues `MODIFY TTL` / `REMOVE TTL` on the next migrate. The diff compares against the **last-applied** expression (tracked in `_odac_migrations`, type='ttl' rows) — not live DDL, because CH normalizes expressions (`INTERVAL 30 DAY` → `toIntervalDay(30)`). Manual out-of-band TTL edits are invisible to the diff; keep the schema expression byte-stable to avoid needless re-applies (`MODIFY TTL` materializes on existing parts = heavy on big tables). Column-level TTL applies at CREATE/ADD COLUMN only; changing it later is a manual `MODIFY COLUMN`.
+- **`specificType` passthrough**: use it for native CH types — `{type: 'specificType', length: 'LowCardinality(String)'}`, `'Array(UInt32)'`, `'DateTime64(3)'`.
+- **Seeds are insert-only** (no mutation-based updates); existing rows (matched by `seedKey`) are left untouched.
+- **`migrate:rollback` and `migrate:snapshot` are unsupported** on ClickHouse connections (append-only / no clean type round-trip).
+- `npx odac migrate` / `migrate:status` work normally; use `--db=analytics` to target one connection.
 
 ### 3. Imperative Data Migration (One-Time)
 ```javascript

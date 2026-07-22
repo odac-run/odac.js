@@ -71,6 +71,41 @@ class User {
 module.exports = User
 ```
 
+#### Subdirectories Are Not Scanned
+
+The `class/` loader only scans the **top level** of the directory — it does not recurse into subfolders. If you create `class/billing/Invoice.js`, it will **not** be automatically detected or attached to `Odac`.
+
+To organize large services into multiple files, keep the loadable class at the root of `class/` and `require()` your submodules from inside it:
+
+```javascript
+// class/billing/invoiceHelpers.js
+module.exports = {
+  calculateTax(amount) {
+    return amount * 0.18
+  }
+}
+```
+
+```javascript
+// class/Billing.js
+const invoiceHelpers = require('./billing/invoiceHelpers')
+
+class Billing {
+  constructor(Odac) {
+    this.Odac = Odac
+  }
+
+  async createInvoice(amount) {
+    const tax = invoiceHelpers.calculateTax(amount)
+    // ...
+  }
+}
+
+module.exports = Billing
+```
+
+Only `class/Billing.js` needs to sit directly in `class/` for Odac to pick it up; everything it `require()`s from subfolders is just plain Node.js module resolution.
+
 #### Naming Collisions
 
 If your class name conflicts with a built-in Odac service (like `Mail`, `DB`, `Auth`), it will be automatically placed under `Odac.App` namespace to prevent errors.
