@@ -312,6 +312,7 @@ Builder methods: `select`, `where` (object / `col,val` / `col,op,val` / `IS NULL
 2. **No `.cache()`** on ClickHouse — OLTP feature only.
 3. **`buffer` = insert only** — `increment`/`update` are not exposed for ClickHouse connections.
 4. **Schema-first still applies** — define CH tables in `schema/<conn>/*.js` with `engine`/`orderBy`. See migrations.md.
+5. **Time-series downsampling** — for metrics/log tables that must shrink over time, use the `rollup` schema field (auto-tiered `TTL … GROUP BY` that keeps recent data fine-grained and buckets old data). Store `sum` + the injected `samples` column and read means as `sum(x) / sum(samples)` — never aggregate `avg`. See migrations.md → ClickHouse Schema.
 
 ## Migration Awareness
 1.  **Schema-First**: Structural DB changes must be defined in `schema/*.js`.

@@ -1425,7 +1425,10 @@ class Migration {
     const desiredSchemas = this._loadSchemaFiles(connectionKey)
     const operations = []
 
-    for (const [tableName, desired] of Object.entries(desiredSchemas)) {
+    for (const [tableName, rawDesired] of Object.entries(desiredSchemas)) {
+      // Compile the rollup DSL (if any) up front so TTL-diff and column-expansion both see the
+      // resolved ttl/orderBy and the injected samples column. No-op for non-rollup schemas.
+      const desired = clickhouse.compileRollup(rawDesired)
       const exists = await conn.hasTable(tableName)
 
       if (!exists) {

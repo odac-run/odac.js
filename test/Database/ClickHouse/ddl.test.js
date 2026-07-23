@@ -74,6 +74,15 @@ describe('ClickHouse.buildCreateTableDDL()', () => {
     expect(ddl).toContain('ORDER BY (`created_at`, `id`)')
   })
 
+  it('quotes bare identifiers but passes expression ORDER BY elements through verbatim', () => {
+    const ddl = ch.buildCreateTableDDL('m', {
+      engine: 'MergeTree',
+      orderBy: ['resource_id', 'toStartOfDay(t)', 'toStartOfTenMinutes(t)'],
+      columns: {resource_id: {type: 'string'}, t: {type: 'datetime'}}
+    })
+    expect(ddl).toContain('ORDER BY (`resource_id`, toStartOfDay(t), toStartOfTenMinutes(t))')
+  })
+
   it('defaults ORDER BY to tuple() when omitted for MergeTree family', () => {
     const ddl = ch.buildCreateTableDDL('logs', {columns: {msg: {type: 'string'}}})
     expect(ddl).toContain('ENGINE = MergeTree()')
