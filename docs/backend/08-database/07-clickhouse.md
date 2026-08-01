@@ -124,6 +124,103 @@ know about how the diff works:
 **Column-level TTL** is applied at `CREATE TABLE` / `ADD COLUMN` only. Changing an existing
 column's TTL is a `MODIFY COLUMN` operation — run it manually via `conn.raw(...)` if needed.
 
+### Automatic downsampling (rollup)
+
+Time-series tables grow without bound. ClickHouse can **downsample old data during background
+merges** — keep the last 24h at full resolution, roll everything older into 10-minute buckets, and
+older still into daily buckets. Under the hood this is a multi-tier `TTL … GROUP BY … SET …`
+expression, and getting the required `ORDER BY` prefix exactly right by hand is fiddly.
+
+The `rollup` field is a declarative shorthand that **compiles to the correct `orderBy` + `ttl`** for
+you. You declare intent; ODAC emits the DDL:
+
+```javascript
+// schema/analytics/app_stat.js
+module.exports = {
+  engine: 'MergeTree',
+  partitionBy: 'toYYYYMM(t)',
+  rollup: {
+    time: 't',                 // timestamp column every tier ages against
+    by: ['resource_id'],       // non-time leading dimensions (kept at every tier)
+    count: 'samples',          // sample-count column (default 'samples'; alias: samplesColumn)
+    tiers: [
+      { olderThan: '24 HOUR', bucket: 'tenMinutes' },  // >24h → 10-minute buckets
+      { olderThan: '30 DAY',  bucket: 'day' },         // >30d → daily buckets
+      { olderThan: '2 YEAR',  delete: true }           // >2y  → purge (optional final tier)
+    ],
+    set: {
+      cpu: 'sum', mem_used: 'sum', mem_percent: 'sum', // mean → sum / samples at read time
+      net_rx_total: 'max', net_tx_total: 'max', pids: 'max'
+    }
+  },
+  columns: {
+    resource_id:  { type: 'string' },
+    server_id:    { type: 'string' },
+    t:            { type: 'specificType', length: 'DateTime64(3)' },
+    cpu:          { type: 'specificType', length: 'Float32' },
+    mem_used:     { type: 'specificType', length: 'UInt64' },
+    mem_percent:  { type: 'specificType', length: 'Float32' },
+    net_rx_total: { type: 'specificType', length: 'UInt64' },
+    net_tx_total: { type: 'specificType', length: 'UInt64' },
+    pids:         { type: 'specificType', length: 'UInt32' }
+    // `samples` (UInt64 DEFAULT 1) is injected automatically — you never write it
+  }
+}
+```
+
+This compiles to:
+
+```sql
+ORDER BY (`resource_id`, toStartOfDay(t), toStartOfTenMinutes(t))
+TTL t + INTERVAL 24 HOUR
+      GROUP BY resource_id, toStartOfDay(t), toStartOfTenMinutes(t)
+      SET cpu = sum(cpu), …, pids = max(pids), samples = sum(samples),
+    t + INTERVAL 30 DAY
+      GROUP BY resource_id, toStartOfDay(t)
+      SET cpu = sum(cpu), …, samples = sum(samples),
+    t + INTERVAL 2 YEAR DELETE
+```
+
+How it works and what to know:
+
+- **`ORDER BY` is derived** as `[...by, buckets coarse→fine]` so each tier's `GROUP BY` is a valid
+  primary-key prefix (ClickHouse requires this). You may still hand-write `orderBy`, but it **must
+  start with** that derived prefix — otherwise the compile **throws** (it is never silently ignored).
+- **Means need a sample count, not `avg`.** Averaging already-averaged buckets drifts, so ODAC injects
+  a `samples` column (`DEFAULT 1`), sums it at every tier, and **rejects `avg`** in `set`. Store `sum`
+  and compute the mean at read time: `sum(cpu) / sum(samples)`.
+- **Aggregates** allowed in `set`: `sum`, `max`, `min`, `any`. Monotonic counters (e.g. total bytes)
+  fit `max`; gauges you want peaks of fit `max`; additive metrics fit `sum`.
+- **Buckets must coarsen as data ages** (`tenMinutes` → `day` → …). A finer bucket on older data is
+  rejected. Bucket vocabulary: `minute`, `fiveMinutes`, `tenMinutes`, `fifteenMinutes`, `hour`, `day`,
+  `week`, `month`, `quarter`, `year`.
+- **`delete: true`** is an optional final purge tier; it must be the oldest (largest `olderThan`).
+- **`reserve: true`** pre-registers a bucket in `ORDER BY` **without** emitting a rollup step (it
+  carries no `olderThan`). Because `ORDER BY` can only be set at `CREATE TABLE`, introducing a *new*
+  bucket granularity later would otherwise force a full table recreate. Reserve the granularities you
+  might want up front, and activating one later — swap `reserve: true` for an `olderThan` — is a plain
+  `MODIFY TTL` with **no recreate**. Pick the activation `olderThan` to fit the bucket's coarseness
+  slot (coarser bucket → older tier). A coarser reserve rides along in every `GROUP BY` (harmless,
+  since a finer active bucket already determines it); a finer reserve stays out until activated.
+
+  ```javascript
+  tiers: [
+    { bucket: 'minute', reserve: true },              // spare fine bucket (ORDER BY only)
+    { olderThan: '24 HOUR', bucket: 'tenMinutes' },
+    { olderThan: '30 DAY',  bucket: 'day' },
+    { bucket: 'week', reserve: true },                // spare coarse bucket (ORDER BY only)
+    { olderThan: '100 DAY', delete: true }
+  ]
+  // Later, activate 'week' with zero recreate:
+  //   { olderThan: '60 DAY', bucket: 'week' }        // between day(30d) and delete(100d)
+  ```
+- **Columns not in `by` or `set`** (e.g. `server_id`) get an arbitrary in-bucket row's value after
+  rollup (ClickHouse `any()` semantics). Fine when they are functionally fixed per `resource_id`;
+  otherwise add them to `by` or `set: { server_id: 'any' }`.
+- **Auto-synced like any TTL.** The generated expression is deterministic and flows through the same
+  `MODIFY TTL` diff — edit a tier and the next `migrate` re-applies it (see the TTL notes above).
+- **`rollup` replaces manual `ttl`** for the table. Use one or the other, not both.
+
 ### Type mapping
 
 | ODAC type              | ClickHouse            |
@@ -221,6 +318,7 @@ anti-patterns:
 | Raw / analytical reads | ✅ Supported |
 | Write-behind `buffer.insert` | ✅ Supported |
 | Table- & column-level `ttl` at `CREATE TABLE` | ✅ Supported (MergeTree family) |
+| `rollup` DSL → multi-tier `TTL … GROUP BY` downsampling | ✅ Compiles to `orderBy` + `ttl` (MergeTree family) |
 | Table-level TTL auto-sync (`MODIFY TTL` / `REMOVE TTL`) | ✅ Diffed vs last-applied expression |
 | Column-level TTL change on an existing column | ❌ `MODIFY COLUMN` — run manually |
 | Read-through `.cache()` | ❌ OLTP-only |

@@ -110,6 +110,28 @@ module.exports = {
 - **Nullable inverted**: SQL treats unspecified `nullable` as NULLABLE; ClickHouse columns are NOT NULL by default. A CH column is nullable **only** when `nullable: true`.
 - **Add-column only**: schema diff creates tables and adds new columns. Column drops, type alters, indexes and foreign keys are **not** applied on ClickHouse.
 - **TTL** (`ttl` field, table- or column-level): raw CH expression, MergeTree-family only. **Table-level TTL is auto-synced**: changing/removing `ttl` in the schema issues `MODIFY TTL` / `REMOVE TTL` on the next migrate. The diff compares against the **last-applied** expression (tracked in `_odac_migrations`, type='ttl' rows) — not live DDL, because CH normalizes expressions (`INTERVAL 30 DAY` → `toIntervalDay(30)`). Manual out-of-band TTL edits are invisible to the diff; keep the schema expression byte-stable to avoid needless re-applies (`MODIFY TTL` materializes on existing parts = heavy on big tables). Column-level TTL applies at CREATE/ADD COLUMN only; changing it later is a manual `MODIFY COLUMN`.
+- **`rollup` DSL (automatic downsampling)**: a declarative shorthand that **compiles to `orderBy` + a multi-tier `ttl`** (`TTL … GROUP BY … SET …`) for time-series tables. Use it instead of hand-writing `orderBy`/`ttl` when you want old data rolled into coarser buckets during background merges. It flows through the same auto-sync `MODIFY TTL` diff.
+  ```javascript
+  rollup: {
+    time: 't',                 // timestamp column each tier ages against (must be a declared column)
+    by: ['resource_id'],       // non-time leading dims; kept in every tier's GROUP BY
+    count: 'samples',          // sample-count column, default 'samples' (alias: samplesColumn)
+    tiers: [
+      {olderThan: '24 HOUR', bucket: 'tenMinutes'},  // >24h → 10-min buckets
+      {olderThan: '30 DAY',  bucket: 'day'},         // >30d → daily buckets
+      {bucket: 'week', reserve: true},               // spare bucket: ORDER BY only, no TTL step
+      {olderThan: '2 YEAR',  delete: true}           // optional final purge tier
+    ],
+    set: {cpu: 'sum', net_rx_total: 'max', pids: 'max'}  // per-column aggregate
+  }
+  ```
+  Rules the compiler enforces (throws on violation — never silent):
+  - **`orderBy` is derived** = `[...by, buckets coarse→fine]` so each tier's GROUP BY is a primary-key prefix. A hand-written `orderBy` is honored **only if it starts with** that derived prefix.
+  - **No `avg`.** Averaging averages drifts across tiers → ODAC injects a `samples UInt64 DEFAULT 1` column, sums it every tier, and rejects `avg`. Compute mean at read time as `sum(x) / sum(samples)`. Allowed aggregates: `sum`, `max`, `min`, `any`.
+  - **Buckets must coarsen as data ages**; vocabulary: `minute`, `fiveMinutes`, `tenMinutes`, `fifteenMinutes`, `hour`, `day`, `week`, `month`, `quarter`, `year`.
+  - **`delete: true`** tier (if any) must be the oldest. Columns absent from `by`/`set` take an arbitrary in-bucket value (CH `any()`), so add them to `by` or `set: {col: 'any'}` if that matters.
+  - **`reserve: true`** tier (bucket, **no `olderThan`**) pre-registers a granularity in `ORDER BY` without emitting a TTL step. Since `ORDER BY` is fixed at CREATE, this lets you **activate that bucket later** (swap `reserve: true` → `olderThan`) as a pure `MODIFY TTL` with **no table recreate**. Changing/adding a bucket granularity that is NOT reserved reshapes `ORDER BY` → requires recreate. Compiler rejects a reserve with `olderThan`, a tier missing `olderThan` that isn't reserve/delete, and reserving a bucket an active tier already uses.
+  - **Requires a MergeTree-family engine**; `rollup` replaces manual `ttl` for the table (use one, not both).
 - **`specificType` passthrough**: use it for native CH types — `{type: 'specificType', length: 'LowCardinality(String)'}`, `'Array(UInt32)'`, `'DateTime64(3)'`.
 - **Seeds are insert-only** (no mutation-based updates); existing rows (matched by `seedKey`) are left untouched.
 - **`migrate:rollback` and `migrate:snapshot` are unsupported** on ClickHouse connections (append-only / no clean type round-trip).
