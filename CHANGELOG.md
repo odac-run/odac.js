@@ -1,5 +1,15 @@
 ### ✨ What's New
 
+- add automatic downsampling (rollup) support for ClickHouse
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### ✨ What's New
+
 - add ClickHouse support with dedicated adapter and migration pipeline
 
 ### 📚 Documentation
