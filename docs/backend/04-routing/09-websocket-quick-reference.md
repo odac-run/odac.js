@@ -65,6 +65,9 @@ const ws = Odac.ws('/path', options)
 | Option | Default | Description |
 |--------|---------|-------------|
 | `token` | `true` | Require CSRF token |
+| `maxPayload` | `10MB` | Max payload size in bytes |
+| `rateLimit` | `{max: 50, window: 1000}` | Incoming message rate limit |
+| `parseJson` | `true` | Auto-parse text messages as JSON |
 
 ### Client Options
 

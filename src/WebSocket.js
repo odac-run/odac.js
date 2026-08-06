@@ -65,6 +65,7 @@ class WebSocketClient {
   #messageCount = 0
   #rateLimitTimer
   #fragments = null
+  #parseJson
   data = {}
 
   constructor(socket, server, id, options = {}) {
@@ -76,6 +77,7 @@ class WebSocketClient {
 
     this.#rateLimitMax = options.rateLimit?.max ?? DEFAULT_RATE_LIMIT_MAX
     this.#rateLimitWindow = options.rateLimit?.window ?? DEFAULT_RATE_LIMIT_WINDOW
+    this.#parseJson = options.parseJson !== false
 
     if (this.#rateLimitMax > 0) {
       this.#rateLimitTimer = setInterval(() => {
@@ -261,10 +263,20 @@ class WebSocketClient {
     }
   }
 
+  /**
+   * TEXT frames are offered to JSON.parse as a convenience; BINARY frames never
+   * are. Passing a Buffer to JSON.parse would stringify it first, so a binary
+   * payload of `42` would silently arrive as the number 42 instead of bytes.
+   *
+   * Text payloads that are not meant as JSON want neither: the convenience
+   * turns "1" into the number 1. `parseJson: false` on the route opts out and
+   * delivers every payload untouched.
+   */
   #handleMessage(data) {
+    if (!this.#parseJson || typeof data !== 'string') return this.#emit('message', data)
+
     try {
-      const parsed = JSON.parse(data)
-      this.#emit('message', parsed)
+      this.#emit('message', JSON.parse(data))
     } catch {
       this.#emit('message', data)
     }
