@@ -433,11 +433,20 @@ class View {
       content = Form.parse(content, this.#odac)
       content = Image.parse(content)
 
+      // Lift backend JS bodies out of the template before any escaping runs, so
+      // user JS keeps its literal backslashes, backticks and ${...} sequences.
+      // Both spellings are covered: <script:odac> (IDE-friendly) and the raw
+      // <odac:js> tag it is rewritten to by #parseOdacTag.
       const jsBlocks = []
       content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
         const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
         jsBlocks.push(jsContent)
         return `<script:odac${attrs}>${placeholder}</script:odac>`
+      })
+      content = content.replace(/<odac:js>([\s\S]*?)<\/odac:js>/g, (match, jsContent) => {
+        const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
+        jsBlocks.push(jsContent)
+        return `<odac:js>${placeholder}</odac:js>`
       })
 
       content = this.#parseOdacTag(content)
@@ -527,7 +536,7 @@ class View {
         }
       }
 
-      // Restore <script:odac> JS bodies after function processing so the regex
+      // Restore backend JS bodies after function processing so the regex
       // pipeline above never sees user JS as template syntax. Use a function
       // replacer to keep $-sequences in the JS literal (e.g. $$, $&) intact.
       jsBlocks.forEach((jsContent, index) => {
