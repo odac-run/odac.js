@@ -74,5 +74,7 @@ Odac.get('/api/status', data => {
 ## Response Handling Contract
 - **Success**: `response.result.success === true`
 - **Redirect**: `response.result.redirect` exists when server wants navigation
+- **Action data**: `response.result.data` holds whatever the controller passed to `form.success(msg, {data})`
 - **Form errors**: `response.errors.{fieldName}` maps to `odac-form-error="fieldName"`
 - **Global form error**: `response.errors._odac_form`
+- **Transport failure**: the callback also runs on 5xx/timeout/dropped connection with `{result: {success: false}, errors: {_odac_form: 'Request failed'}, status, xhr}` — no watchdog needed for stuck loading state

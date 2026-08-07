@@ -71,4 +71,30 @@ describe('View.#render()', () => {
     const output = await renderContent('dollar', '<p>Price: ${amount}</p>')
     expect(output).toContain('${amount}')
   })
+
+  // The HTML escaping pass doubles backslashes so raw markup is safe inside the
+  // generated backtick string. <odac:js> bodies are emitted as JS, not as string
+  // content, so they must be lifted out before that pass runs: otherwise
+  // /^\/assets\// compiled to /^\\/assets\\// and threw "Invalid regular
+  // expression flags".
+  it('keeps backslash escapes inside an <odac:js> regex intact', async () => {
+    const output = await renderContent(
+      'js-regex',
+      "<odac:js>const re = /^\\/assets\\//; html += re.test('/assets/app.css') ? 'MATCH' : 'MISS';</odac:js>"
+    )
+    expect(output).toBe('MATCH')
+  })
+
+  it('keeps backticks and ${} interpolation inside an <odac:js> body intact', async () => {
+    const output = await renderContent('js-template', '<odac:js>const n = 2; html += `n=${n}`;</odac:js>')
+    expect(output).toBe('n=2')
+  })
+
+  it('keeps backslash escapes inside a <script:odac> regex intact', async () => {
+    const output = await renderContent(
+      'script-regex',
+      "<script:odac>const re = /^\\/assets\\//; html += re.test('/assets/app.css') ? 'MATCH' : 'MISS';</script:odac>"
+    )
+    expect(output).toBe('MATCH')
+  })
 })

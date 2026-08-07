@@ -715,7 +715,23 @@ if (typeof window !== 'undefined') {
             )
             return xhr
           },
-          error: () => console.error('Odac:', 'Request failed', '\nForm: ' + obj.form + '\nRequest: ' + formElement.getAttribute('action')),
+          // Transport failures (5xx, timeout, dropped connection, unparsable JSON)
+          // must reach the callback too — otherwise the app never learns the
+          // submit ended and stays stuck in its own busy state, while `complete`
+          // silently re-enables the inputs. Shaped like a server failure response
+          // so existing callbacks, which branch on `result.success`, take their
+          // error path unchanged.
+          error: (xhr, status) => {
+            console.error('Odac:', 'Request failed', '\nForm: ' + obj.form + '\nRequest: ' + formElement.getAttribute('action'))
+            if (typeof callback === 'function') {
+              callback({
+                result: {success: false},
+                errors: {_odac_form: 'Request failed'},
+                status: status,
+                xhr: xhr
+              })
+            }
+          },
           complete: () => {
             submitButtons.forEach(btn => {
               btn.disabled = false

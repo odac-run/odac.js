@@ -214,9 +214,27 @@ Odac.Route.ws('/path', handler, {
   rateLimit: {                  // Message rate limiting
     max: 50,                    // Max messages allowed per window (default: 50)
     window: 1000                // Time window in ms (default: 1000ms)
-  }
+  },
+  parseJson: true               // Auto-parse text messages as JSON (default: true)
 })
 ```
+
+#### `parseJson`
+
+By default, incoming **text** messages are handed to `JSON.parse()` and the
+handler receives the parsed value; payloads that are not valid JSON are passed
+through as strings. Binary messages are never parsed — they always arrive as a
+`Buffer`.
+
+Turn this off when the payload is text but is not meant as JSON — otherwise a
+message of `1` is delivered as the number `1` rather than the string `"1"`:
+
+```javascript
+Odac.Route.ws('/stream', handler, {parseJson: false})
+```
+
+With `parseJson: false` every payload is delivered untouched — text as a
+string, binary as a `Buffer`.
 
 **Examples:**
 

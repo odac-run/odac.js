@@ -300,6 +300,37 @@ module.exports = class Contact {
 }
 ```
 
+### Returning Data to the Client
+
+`form.success()` takes a redirect string **or** an options object
+`{redirect, data}`. Anything you put in `data` is echoed back to the browser as
+`response.result.data`, which is how an action hands computed values (a new id,
+a generated file name, a total) to the client:
+
+```javascript
+async updateAvatar(form) {
+  const stored = await this.storeAvatar(await form.file('avatar'))
+
+  return form.success('Avatar updated.', {data: {avatar: stored.publicPath}})
+}
+```
+
+```javascript
+Odac.form('#avatar-form', function(response) {
+  if (response.result.success) {
+    document.querySelector('#avatar').src = response.result.data.avatar
+  }
+})
+```
+
+Both forms of the second argument work, so `form.success('Saved.', '/profile')`
+is unchanged, and `{redirect: '/profile', data: {...}}` combines the two.
+
+> Always return data this way rather than building your own `Odac.return()`.
+> The helper also rotates the form token (returned as `result._token`) for forms
+> that stay on the page; a hand-written response omits it and the **next** submit
+> fails with "Form session expired".
+
 ### Error Handling
 
 Return errors using the helper method:
@@ -321,6 +352,21 @@ module.exports = class Contact {
     
     return form.success('Success!')
   }
+}
+```
+
+A response can only be returned once, so pass an object when more than one field
+is invalid — every entry is rendered next to its own input:
+
+```javascript
+async submit(form) {
+  const errors = {}
+  if (!form.data.email.includes('@')) errors.email = 'Invalid email address'
+  if (form.data.message.length < 10) errors.message = 'Message is too short'
+
+  if (Object.keys(errors).length) return form.error(errors)
+
+  return form.success('Success!')
 }
 ```
 
