@@ -1,5 +1,21 @@
 ### ✨ What's New
 
+- return action data from form.success and surface transport failures
+
+### 🛠️ Fixes & Improvements
+
+- preserve backslashes and backticks inside <odac:js> blocks
+- remove unnecessary release rules from commit-analyzer configuration
+- skip JSON.parse for binary WebSocket frames, add parseJson opt-out
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### ✨ What's New
+
 - add automatic downsampling (rollup) support for ClickHouse
 
 
