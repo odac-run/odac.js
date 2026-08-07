@@ -100,6 +100,12 @@ module.exports = class Contact {
 }
 ```
 
+## Form Helper API
+- **`form.data`**: validated payload.
+- **`form.file(name)`**: uploaded file(s).
+- **`form.error(field, message)`** or **`form.error({field: message, ...})`**: fail with one or many field errors.
+- **`form.success(message, redirect?)`** / **`form.success(message, {redirect, data})`**: `data` is returned to the client as `response.result.data`. Never hand-roll `Odac.return()` for a form action — `success()` also rotates the form token and a manual response breaks the next submit.
+
 ## Field-Level Variants
 - **Input types**: `text`, `email`, `password`, `number`, `url`, `textarea`, `checkbox`, `file`.
 - **Validation mapping**: `required|minlen|maxlen|min|max|alpha|alphanumeric|numeric|email|url|accepted|maxsize|minsize|mimetype|ext|maxfiles`.

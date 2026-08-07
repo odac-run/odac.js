@@ -90,7 +90,36 @@ Odac.form('#contact-form', function(data) {
 Calling `Odac.form()` on an already-registered `<odac:form>` **re-binds** the
 same form instead of adding a second handler, so it still submits only once.
 
+### Reading Data Returned by the Action
+
+A controller action can send values back with
+`form.success('...', {data: {...}})`. They arrive as `data.result.data`:
+
+```javascript
+Odac.form('#avatar-form', function(data) {
+  if (data.result.success) {
+    document.querySelector('#avatar').src = data.result.data.avatar
+  }
+})
+```
+
+See [Custom Forms](../../backend/05-forms/01-custom-forms.md) for the server side.
+
 ## Error Handling
+
+### The Callback Always Runs
+
+The callback fires on transport failures too — a 5xx, a timeout, a dropped
+connection or an unparsable response. Those get a server-shaped payload, so a
+single `data.result.success` check covers every outcome and your own loading
+state never hangs:
+
+```javascript
+{result: {success: false}, errors: {_odac_form: 'Request failed'}, status, xhr}
+```
+
+The `status` and `xhr` fields are present only on transport failures, if you need
+to distinguish them from a rejection by the server.
 
 ### Automatic Error Display
 

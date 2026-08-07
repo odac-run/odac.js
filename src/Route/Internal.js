@@ -591,15 +591,30 @@ class Internal {
                 return Odac.file(name)
               },
 
+              // Accepts either a single field (`error('email', 'msg')`) or a map
+              // (`error({email: 'msg', name: 'msg'})`). The response can only be
+              // sent once, so the map form is the only way to surface every
+              // invalid field of a multi-field form in one round trip; the client
+              // already iterates `errors` and renders each entry.
               error: (field, message) => {
+                const errors = field !== null && typeof field === 'object' ? field : {[field]: message}
+
                 return Odac.return({
                   result: {success: false},
-                  errors: {[field]: message}
+                  errors
                 })
               },
 
-              success: (message, redirect = null) => {
-                const finalRedirect = redirect || Odac.formConfig.redirect
+              // `options` is a redirect string (legacy signature) or
+              // `{redirect, data}`. `data` is echoed to the client as
+              // `result.data` and is the only supported way for an action to hand
+              // computed values (a new id, a stored file path, a total) back to
+              // the caller: token rotation lives in this closure, so a hand-rolled
+              // Odac.return() would omit `_token` and the next submit on a
+              // redirect-less form would fail with "Form session expired".
+              success: (message, options = null) => {
+                const opts = options === null || typeof options === 'string' ? {redirect: options} : options
+                const finalRedirect = opts.redirect || Odac.formConfig.redirect
                 let newToken = null
 
                 // Only rotate token if we are staying on the page (no redirect)
@@ -624,7 +639,8 @@ class Internal {
                     success: true,
                     message: message,
                     redirect: finalRedirect,
-                    _token: newToken
+                    _token: newToken,
+                    ...(opts.data !== undefined && {data: opts.data})
                   }
                 })
               }
