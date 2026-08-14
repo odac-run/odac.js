@@ -365,12 +365,50 @@ class Internal {
     })
   }
 
+  // Mail clients, chat apps and corporate link scanners fetch a link's target to
+  // build a preview or check it for malware, long before the recipient taps it.
+  // A one-shot magic link consumed by such a fetch leaves the human with "Link
+  // expired or invalid" — which is how magic-link login broke on mobile. These
+  // requests are answered with a neutral page and the token is left untouched;
+  // only a genuine top-level navigation may consume it.
+  static #isMachineFetch(Odac) {
+    const header = name => Odac.Request.header(name) || ''
+
+    // Explicitly declared prefetch / prerender / preview (Chrome, Firefox, Safari).
+    const purpose = `${header('sec-purpose')} ${header('purpose')} ${header('x-purpose')} ${header('x-moz')}`.toLowerCase()
+    if (/prefetch|prerender|preview/.test(purpose)) return true
+
+    // Fetch metadata: opening a link is a top-level document navigation.
+    // Anything else (sub-resource, no-cors probe) is a machine reading the page.
+    const dest = header('sec-fetch-dest')
+    if (dest) return dest !== 'document'
+    const mode = header('sec-fetch-mode')
+    if (mode) return mode !== 'navigate'
+
+    // No fetch metadata: browsers predating it (and in-app webviews that strip
+    // it) still have to work, so fall back to the user agent rather than
+    // treating the request as a machine by default.
+    const ua = header('user-agent').toLowerCase()
+    if (!ua) return true
+    return /bot|crawl|spider|preview|scan|slurp|curl|wget|python-requests|okhttp|java\/|libwww|headless|phantom|proofpoint|mimecast|barracuda|symantec|safelinks|linkprotect/.test(
+      ua
+    )
+  }
+
   static async magicVerify(Odac) {
     const token = await Odac.request('token')
     const email = await Odac.request('email')
 
     if (!token || !email) {
       return Odac.Request.end('Invalid verification link.')
+    }
+
+    // 200, not an error: scanners flag failing links, and the recipient's own
+    // tap arrives later on this same URL.
+    if (this.#isMachineFetch(Odac)) {
+      return Odac.Request.end(
+        '<!doctype html><meta charset="utf-8"><title>Sign in</title><p>Open this link in your browser to sign in.</p>'
+      )
     }
 
     const result = await Odac.Auth.verifyMagicLink(token, email)
