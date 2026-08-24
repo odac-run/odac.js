@@ -1,3 +1,17 @@
+### doc
+
+- update database agnostic description for clarity and accuracy
+
+### 🛠️ Fixes & Improvements
+
+- keep magic links usable on mobile mail clients
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - return action data from form.success and surface transport failures
