@@ -57,4 +57,42 @@ describe('Request.end()', () => {
     request.end('hello')
     expect(req.connection.destroy).not.toHaveBeenCalled()
   })
+
+  // A body sent without Content-Type is sniffed by desktop browsers but handed
+  // to the download manager by Android Chrome / iOS Safari — which is how plain
+  // string responses (magic-link verify errors, abort() pages) turned into file
+  // downloads on mobile.
+  it('defaults string bodies to text/html so mobile browsers render instead of download', () => {
+    const {res, request} = build({})
+    request.end('Verification failed')
+    expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBe('text/html; charset=utf-8')
+  })
+
+  it('does not override a Content-Type the caller already set', () => {
+    const {res, request} = build({})
+    request.header('Content-Type', 'text/csv')
+    request.end('a,b,c')
+    expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBe('text/csv')
+  })
+
+  it('does not override a differently-cased Content-Type', () => {
+    const {res, request} = build({})
+    request.header('content-type', 'text/plain')
+    request.end('hello')
+    const headers = res.writeHead.mock.calls[0][1]
+    expect(headers['content-type']).toBe('text/plain')
+    expect(headers['Content-Type']).toBeUndefined()
+  })
+
+  it('keeps the JSON content type for object bodies', () => {
+    const {res, request} = build({})
+    request.end({ok: true})
+    expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBe('application/json')
+  })
+
+  it('leaves buffer bodies untyped', () => {
+    const {res, request} = build({})
+    request.end(Buffer.from([1, 2, 3]))
+    expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBeUndefined()
+  })
 })

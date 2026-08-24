@@ -11,7 +11,7 @@
 *   ✨ **Seamless SPA Experience:** Automatic AJAX handling for forms and page transitions with native **View Transition API** support. Add a single HTML attribute for smooth, browser-native animations — no client-side code required.
 *   🛡️ **Built-in Security:** Enterprise-grade security out of the box. Includes secure default headers and a **Multi-tab Safe, Single-Use CSRF Protection (Nonce)**. Tokens self-replenish in the background, ensuring maximum defense without ever interrupting the user experience.
 *   🔐 **Authentication:** Ready-to-use session management with enterprise-grade **Refresh Token Rotation**, secure password hashing, and authentication helpers.
-*   🗄️ **Database Agnostic:** Integrated support for major databases (PostgreSQL, MySQL, SQLite) and Redis via Knex.js.
+*   🗄️ **Database Agnostic:** The same query API and schema-first migrations across PostgreSQL, MySQL, SQLite, and ClickHouse. Add or switch a connection with a single config change.
 *   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
 *   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.
 *   ⚡ **Zero-Config Early Hints:** Intelligent HTTP 103 implementation that requires **no setup**. ODAC automatically analyzes your views and serves assets instantly, drastically improving load times without a single line of code.

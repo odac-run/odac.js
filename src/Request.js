@@ -348,6 +348,14 @@ class OdacRequest {
         this.header('Content-Type', 'application/json')
       }
     }
+    // A body without Content-Type is MIME-sniffed by desktop browsers, but
+    // Android Chrome / iOS Safari hand it to the download manager instead of
+    // rendering it. Plain string responses (magic-link verify errors, abort()
+    // pages, controllers returning text) therefore downloaded as a file on
+    // mobile. Buffers are left alone: there is nothing to guess from.
+    if (typeof data === 'string' && data.length > 0 && !this.#hasHeader('Content-Type')) {
+      this.header('Content-Type', 'text/html; charset=utf-8')
+    }
     clearTimeout(this.#timeout)
     this.print()
     this.res.end(data)
@@ -382,6 +390,14 @@ class OdacRequest {
   // - GET
   get(key) {
     return this.variables[key] ? this.variables[key].value : null
+  }
+
+  // Response headers are set with mixed casing across the framework, so the
+  // presence check must be case-insensitive to avoid emitting a duplicate.
+  #hasHeader(key) {
+    const lower = key.toLowerCase()
+    for (const name of Object.keys(this.#headers)) if (name.toLowerCase() === lower) return true
+    return false
   }
 
   // - SET HEADER
