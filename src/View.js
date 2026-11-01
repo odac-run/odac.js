@@ -534,8 +534,12 @@ class View {
       // Restore backend JS bodies after function processing so the regex
       // pipeline above never sees user JS as template syntax. Use a function
       // replacer to keep $-sequences in the JS literal (e.g. $$, $&) intact.
+      // The block is followed by generated code, so terminate its last statement.
+      // ';' keeps compiled lines aligned with the view for error reporting; only a
+      // possible trailing // comment needs a real newline to end it.
       jsBlocks.forEach((jsContent, index) => {
-        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent)
+        const terminator = jsContent.slice(jsContent.lastIndexOf('\n') + 1).includes('//') ? '\n' : ';'
+        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent + terminator)
       })
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`

@@ -138,4 +138,38 @@ describe('View.#render()', () => {
     )
     expect(output).toBe('MATCH')
   })
+
+  // Generated code appends `html += ...` right after a JS block, so the block's
+  // last statement must be terminated or the whole view fails to compile.
+  describe('JS block termination', () => {
+    let errorSpy
+
+    beforeEach(() => {
+      errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    it.each([
+      ['odac_no_semi', '<odac:js>const a = 1</odac:js>[{!! a !!}]', '[1]'],
+      ['script_no_semi', '<script:odac>const a = 1</script:odac>[{!! a !!}]', '[1]'],
+      ['two_blocks', '<odac:js>const a = 1</odac:js><odac:js>const b = 2</odac:js>[{!! a + b !!}]', '[3]'],
+      ['line_comment', '<odac:js>const a = 1 // note</odac:js>[{!! a !!}]', '[1]'],
+      ['url_string', '<odac:js>const a = "http://x"</odac:js>[{!! a !!}]', '[http://x]'],
+      ['multiline', '<odac:js>\nconst a = 1\nconst b = 2</odac:js>[{!! a + b !!}]', '[3]'],
+      ['split_if', '<odac:js>if (true) {</odac:js>in<odac:js>}</odac:js>', 'in'],
+      ['split_if_else', '<odac:js>if (false) {</odac:js>a<odac:js>} else {</odac:js>b<odac:js>}</odac:js>', 'b']
+    ])('compiles %s', async (name, html, expected) => {
+      const output = await renderContent(name, html)
+      expect(output).toBe(expected)
+      expect(errorSpy).not.toHaveBeenCalled()
+    })
+
+    it.each([
+      ['single_line', 'L1\n<odac:js>const a = 1</odac:js>\nL3\n{!! boom() !!}\n', 4],
+      ['terminated', 'L1\n<odac:js>const a = 1;</odac:js>\nL3\n{!! boom() !!}\n', 4],
+      ['multi_line', 'L1\n<odac:js>\nconst a = 1\n</odac:js>\nL5\n{!! boom() !!}\n', 6]
+    ])('keeps reported line numbers aligned after a %s block', async (name, html, line) => {
+      await renderContent(`line_${name}`, html)
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining(`in line ${line}\n`))
+    })
+  })
 })
