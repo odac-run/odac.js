@@ -62,6 +62,47 @@ describe('View.#render()', () => {
     return payload.output.content
   }
 
+  describe('loop source validation', () => {
+    let errorSpy
+
+    beforeEach(() => {
+      errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    it.each(['for', 'list'])('renders <odac:%s in="..."> without a missing-argument error', async tag => {
+      const html = `<odac:js>const items = ['a', 'b'];</odac:js><odac:${tag} in="items" value="item">[{!! item !!}]</odac:${tag}>`
+      const output = await renderContent(`${tag}_in`, html)
+      expect(output).toContain('[a][b]')
+      expect(errorSpy).not.toHaveBeenCalled()
+    })
+
+    it('renders <odac:for in="a.b"> with a dotted path and key without a missing-argument error', async () => {
+      const html = `<odac:js>const post = {tags: ['x']};</odac:js><odac:for in="post.tags" key="i" value="tag">{!! i !!}={!! tag !!}</odac:for>`
+      const output = await renderContent('for_in_path', html)
+      expect(output).toContain('0=x')
+      expect(errorSpy).not.toHaveBeenCalled()
+    })
+
+    it('renders <odac:for var="..."> without a missing-argument error', async () => {
+      const html = `<odac:js>const items = ['a'];</odac:js><odac:for var="items" value="item">[{!! item !!}]</odac:for>`
+      const output = await renderContent('for_var', html)
+      expect(output).toContain('[a]')
+      expect(errorSpy).not.toHaveBeenCalled()
+    })
+
+    it('does not corrupt an in expression that contains the literal "$in"', async () => {
+      const html = `<odac:js>const $index = ['a'];</odac:js><odac:for in="$index" value="item">[{!! item !!}]</odac:for>`
+      const output = await renderContent('for_in_dollar', html)
+      expect(output).toContain('[a]')
+      expect(errorSpy).not.toHaveBeenCalled()
+    })
+
+    it('still reports a loop with no source at all', async () => {
+      await renderContent('for_no_source', '<odac:for value="item">x</odac:for>')
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('"var", "get" or "in" is required'))
+    })
+  })
+
   it('renders a literal backtick without breaking the template literal', async () => {
     const output = await renderContent('backtick', '<code>const x = `hello`</code>')
     expect(output).toContain('`hello`')
