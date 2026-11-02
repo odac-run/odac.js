@@ -508,23 +508,18 @@ class View {
             let constructor
             if (vars.in) {
               constructor = `await ${vars.in}`
-              delete vars.in
             } else if (vars.var) {
               constructor = `await ${vars.var}`
-              delete vars.var
             } else if (vars.get) {
               constructor = `get('${vars.get}')`
-              delete vars.get
             }
             fun = fun.replace(/\$constructor/g, constructor)
           }
 
           for (let argKey in func.arguments) {
-            if (argKey === 'var' || argKey === 'get') continue
-            if (vars[argKey] === undefined) {
-              if (func.arguments[argKey] === null) console.error(`"${argKey}" is required for "${match}"\n  in "${file}"`)
-              vars[argKey] = func.arguments[argKey]
-            }
+            // Loop sources are validated and consumed above as $constructor, not as $-placeholders.
+            if (argKey === 'in' || argKey === 'var' || argKey === 'get') continue
+            if (vars[argKey] === undefined) vars[argKey] = func.arguments[argKey]
             fun = fun.replace(new RegExp(`\\$${argKey}`, 'g'), vars[argKey])
           }
           if (func.close) {
@@ -539,8 +534,12 @@ class View {
       // Restore backend JS bodies after function processing so the regex
       // pipeline above never sees user JS as template syntax. Use a function
       // replacer to keep $-sequences in the JS literal (e.g. $$, $&) intact.
+      // The block is followed by generated code, so terminate its last statement.
+      // ';' keeps compiled lines aligned with the view for error reporting; only a
+      // possible trailing // comment needs a real newline to end it.
       jsBlocks.forEach((jsContent, index) => {
-        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent)
+        const terminator = jsContent.slice(jsContent.lastIndexOf('\n') + 1).includes('//') ? '\n' : ';'
+        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent + terminator)
       })
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
