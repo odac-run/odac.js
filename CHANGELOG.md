@@ -1,3 +1,15 @@
+### 🛠️ Fixes & Improvements
+
+- **deps:** patch high severity vulnerabilities in sharp and source-map-js
+- stop false "in is required" errors on odac:for and odac:list loops
+- terminate backend JS blocks so unterminated statements compile
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### doc
 
 - update database agnostic description for clarity and accuracy
