@@ -38,4 +38,39 @@ describe('Route.request()', () => {
 
     expect(param.Request.abort).toHaveBeenCalledWith(404)
   })
+
+  // A HEAD response carries no body. Piping a stream result (image route, user
+  // controllers) would read the whole source only for Node to discard it.
+  describe('stream results', () => {
+    const createStream = () => ({pipe: jest.fn(), destroy: jest.fn()})
+
+    beforeEach(() => {
+      route.routes = {unknown: {}}
+    })
+
+    it('releases the stream instead of piping it on HEAD', async () => {
+      const stream = createStream()
+      route.check = jest.fn().mockResolvedValue(stream)
+      param.Request.method = 'head'
+
+      await route.request({}, {})
+
+      expect(stream.pipe).not.toHaveBeenCalled()
+      expect(stream.destroy).toHaveBeenCalled()
+      expect(param.Request.end).toHaveBeenCalledWith()
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    it('pipes the stream into the response on GET', async () => {
+      const stream = createStream()
+      route.check = jest.fn().mockResolvedValue(stream)
+      param.Request.method = 'get'
+
+      await route.request({}, {})
+
+      expect(param.Request.print).toHaveBeenCalled()
+      expect(stream.pipe).toHaveBeenCalledWith(param.Request.res)
+      expect(stream.destroy).not.toHaveBeenCalled()
+    })
+  })
 })

@@ -22,6 +22,8 @@ Defines a route that responds to `GET` requests. This is ideal for API endpoints
 
 -   `options`: By default, Odac protects routes from CSRF attacks by checking for a token. For a public API or stateless endpoint, you must disable this by passing `{ token: false }`. If you don't, the server will expect a token and will not return a response if one isn't provided.
 
+`HEAD` requests are answered by the same `get` route, with the same auth and token checks, and the response body is dropped automatically. The controller still runs, so keep `GET` controllers free of side effects. Check `Odac.Request.method === 'head'` if you want to skip expensive work.
+
 ```javascript
 // An API endpoint at GET /api/users/123
 // We disable the token check as this is a public API.

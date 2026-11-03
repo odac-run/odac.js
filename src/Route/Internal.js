@@ -374,6 +374,9 @@ class Internal {
   static #isMachineFetch(Odac) {
     const header = name => Odac.Request.header(name) || ''
 
+    // Browsers never navigate with HEAD; link scanners probe with it.
+    if (Odac.Request.method === 'head') return true
+
     // Explicitly declared prefetch / prerender / preview (Chrome, Firefox, Safari).
     const purpose = `${header('sec-purpose')} ${header('purpose')} ${header('x-purpose')} ${header('x-moz')}`.toLowerCase()
     if (/prefetch|prerender|preview/.test(purpose)) return true
