@@ -1,5 +1,15 @@
 ### 🛠️ Fixes & Improvements
 
+- serve HEAD requests on GET routes without bypassing CSRF
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
+### 🛠️ Fixes & Improvements
+
 - **deps:** patch high severity vulnerabilities in sharp and source-map-js
 - stop false "in is required" errors on odac:for and odac:list loops
 - terminate backend JS blocks so unterminated statements compile
