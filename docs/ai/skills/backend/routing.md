@@ -15,7 +15,7 @@ Routes are defined in the `route/` directory. ODAC uses a two-phase routing stra
 ## Core Rules
 1.  **Methods**: 
     -   `Odac.Route.page(url, controller)`: For HTML views (GET).
-    -   `Odac.Route.get(url, controller)`: Targeted GET requests.
+    -   `Odac.Route.get(url, controller)`: Targeted GET requests. Also serves HEAD (same auth/token gates, body dropped; `Odac.Request.method` is `'head'`).
     -   `Odac.Route.post(url, controller)`: Sensitive POST requests (CSRF enabled by default).
     -   `Odac.Route.ws(url, controller)`: Bidirectional and persistent WebSocket connections.
     -   `Odac.Route.authWs(url, controller)`: Authenticated WebSocket connections.

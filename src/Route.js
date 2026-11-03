@@ -176,39 +176,45 @@ class Route {
       // PROD CACHE HIT
       if (!Odac.Config.debug && this.#configCache[url]) {
         const cached = this.#configCache[url]
-        Odac.Request.header('Content-Type', cached.type)
-        Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-        Odac.Request.header('Content-Length', cached.size)
-        return cached.content
+        return this.#asset(Odac, cached.type, cached.size, () => cached.content)
       }
 
       const filePath = Odac.Config.route[url]
       try {
-        const content = await fsPromises.readFile(filePath)
         let type = 'text/html'
         if (filePath.includes('.')) {
           let arr = filePath.split('.')
           type = mime[arr[arr.length - 1]]
         }
 
-        // PROD CACHE SET
-        if (!Odac.Config.debug) {
-          this.#configCache[url] = {
-            content,
-            type,
-            size: content.length
-          }
-        }
+        // HEAD needs only the size. The prod cache holds file content, so it is
+        // left for the next GET to fill.
+        if (Odac.Request.method === 'head') {
+          const stat = await fsPromises.stat(filePath)
+          if (stat.isFile()) return this.#asset(Odac, type, stat.size)
+        } else {
+          const content = await fsPromises.readFile(filePath)
 
-        Odac.Request.header('Content-Type', type)
-        Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-        Odac.Request.header('Content-Length', content.length)
-        return content
+          // PROD CACHE SET
+          if (!Odac.Config.debug) {
+            this.#configCache[url] = {
+              content,
+              type,
+              size: content.length
+            }
+          }
+
+          return this.#asset(Odac, type, content.length, () => content)
+        }
       } catch {
         // File not found or error, continue routing
       }
     }
-    for (let method of ['#' + Odac.Request.method, Odac.Request.method]) {
+    // HEAD is GET without a body (RFC 9110 §9.3.2): it resolves GET routes and
+    // passes through the same auth and CSRF gates. Request.method stays 'head'
+    // so user code can still tell the two apart; Node drops the body itself.
+    const routeMethod = Odac.Request.method === 'head' ? 'get' : Odac.Request.method
+    for (let method of ['#' + routeMethod, routeMethod]) {
       let controller = this.#controller(Odac.Request.route, method, url)
       if (controller) {
         if (!method.startsWith('#') || (await Odac.Auth.check())) {
@@ -221,11 +227,9 @@ class Route {
           const page = controller.cache?.file || controller.file
           if (typeof page === 'string') Odac.Request.page = page
 
-          if (
-            ['post', 'get', 'put', 'patch', 'delete'].includes(Odac.Request.method) &&
-            controller.token &&
-            (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token')))
-          )
+          // Keyed on the route's own flag, never on a verb allowlist: any verb
+          // missing from such a list (HEAD, OPTIONS, ...) would skip the check.
+          if (controller.token && (!(await Odac.request('_token')) || !Odac.token(await Odac.Request.request('_token'))))
             return Odac.Request.abort(401)
 
           return await this.#executeController(Odac, controller)
@@ -266,10 +270,7 @@ class Route {
         // PROD CACHE HIT (Metadata)
         if (!Odac.Config.debug && this.#publicCache[publicPath]) {
           const cached = this.#publicCache[publicPath]
-          Odac.Request.header('Content-Type', cached.type)
-          Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-          Odac.Request.header('Content-Length', cached.size)
-          return fs.createReadStream(publicPath)
+          return this.#asset(Odac, cached.type, cached.size, () => fs.createReadStream(publicPath))
         }
 
         try {
@@ -286,10 +287,7 @@ class Route {
               }
             }
 
-            Odac.Request.header('Content-Type', type)
-            Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-            Odac.Request.header('Content-Length', stat.size)
-            return fs.createReadStream(publicPath)
+            return this.#asset(Odac, type, stat.size, () => fs.createReadStream(publicPath))
           }
         } catch {
           // File not found in public
@@ -302,6 +300,17 @@ class Route {
     // exists so plain asset 404s never touch the token table.
     if (Odac.Auth && this.routes[Odac.Request.route]?.error?.[404]) await Odac.Auth.check()
     return Odac.Request.abort(404)
+  }
+
+  // Shared response for config-route and public files. HEAD gets the headers
+  // only: the body is never produced, so no file is read or stream opened just
+  // for Node to discard it.
+  #asset(Odac, type, size, body) {
+    Odac.Request.header('Content-Type', type)
+    Odac.Request.header('Cache-Control', 'public, max-age=31536000')
+    Odac.Request.header('Content-Length', size)
+    if (Odac.Request.method === 'head') return Odac.Request.end()
+    return body()
   }
 
   /**
@@ -663,6 +672,13 @@ class Route {
       const Stream = require('./Stream.js')
       if (result instanceof Stream) return
       if (result && typeof result.pipe === 'function') {
+        // HEAD has no body: release the source (image route, user controllers)
+        // instead of reading it to the end only for Node to drop every chunk.
+        if (param.Request.method === 'head') {
+          result.destroy?.()
+          param.Request.end()
+          return param.cleanup()
+        }
         param.Request.print()
         result.pipe(param.Request.res)
         return

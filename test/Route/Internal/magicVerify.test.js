@@ -86,6 +86,16 @@ describe('Internal.magicVerify() prefetch protection', () => {
     'no user agent at all': {}
   }
 
+  // HEAD resolves GET routes, and link scanners probe with HEAD. Browsers never
+  // navigate with HEAD, so even browser-like headers mark a machine fetch.
+  it('does not consume the token for a HEAD request with browser headers', async () => {
+    const Odac = makeOdac('/dashboard')
+    Odac.Request.method = 'head'
+    await Internal.magicVerify(Odac)
+    expect(Odac.Auth.verifyMagicLink).not.toHaveBeenCalled()
+    expect(Odac._captured.redirect).toBeNull()
+  })
+
   for (const [label, headers] of Object.entries(machineFetches)) {
     it(`does not consume the token for a ${label}`, async () => {
       const Odac = makeOdac('/dashboard', headers)

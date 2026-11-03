@@ -482,6 +482,259 @@ describe('Route.check()', () => {
         expect(handler).not.toHaveBeenCalled()
       })
     }
+
+    // Route.set() accepts any verb; a fixed allowlist in the check left every
+    // other verb's token:true routes unprotected.
+    it('aborts 401 on a token route registered under a verb outside the common set', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {
+        test_route: {
+          options: {
+            '/secure': {cache: handler, file: handler, token: true, mtime: Date.now()}
+          }
+        }
+      }
+
+      const mockOdac = createMockOdac('options', '/secure')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(401)
+      expect(handler).not.toHaveBeenCalled()
+    })
+  })
+
+  // RFC 9110 §9.3.2: HEAD is GET without a body. HEAD resolves GET routes, and
+  // every GET guard (auth gate, CSRF token) must apply to it unchanged —
+  // otherwise HEAD becomes a token-free way to run GET controller side effects.
+  describe('HEAD requests', () => {
+    const createMockOdac = (url, {token = null, authed = true} = {}) => ({
+      Auth: {check: jest.fn().mockResolvedValue(authed)},
+      Config: {},
+      Request: {
+        abort: jest.fn().mockReturnValue('aborted'),
+        cookie: jest.fn(() => null),
+        data: {url: {}},
+        header: jest.fn(() => ''),
+        host: 'example.com',
+        isAjaxLoad: false,
+        method: 'head',
+        page: null,
+        request: jest.fn(async key => (key === '_token' ? token : null)),
+        res: {finished: false, writableEnded: false},
+        route: 'test_route',
+        setSession: jest.fn(),
+        ssl: false,
+        url
+      },
+      request: jest.fn(async key => (key === '_token' ? token : null)),
+      token: jest.fn(value => value === 'valid')
+    })
+
+    const getRoute = (handler, token) => ({cache: handler, file: handler, token, mtime: Date.now()})
+
+    it('dispatches to the GET controller', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {get: {'/status': getRoute(handler, false)}}}
+
+      const mockOdac = createMockOdac('/status')
+      const result = await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(result).toEqual({ok: true})
+      expect(mockOdac.Request.abort).not.toHaveBeenCalled()
+    })
+
+    it('keeps Request.method as head so user code can tell it apart from GET', async () => {
+      let seenMethod
+      const handler = jest.fn(Odac => (seenMethod = Odac.Request.method))
+      route.routes = {test_route: {get: {'/status': getRoute(handler, false)}}}
+
+      await route.check(createMockOdac('/status'))
+
+      expect(seenMethod).toBe('head')
+    })
+
+    it('resolves parametric GET routes', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      global.Odac.Route.buff = 'test_route'
+      route.set('get', '/users/{id}', handler, {token: false})
+      await Promise.all(route._pendingRouteLoads)
+
+      const mockOdac = createMockOdac('/users/42')
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.id).toBe('42')
+    })
+
+    it('aborts 401 on a token GET route when no token is supplied', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {get: {'/secure': getRoute(handler, true)}}}
+
+      const mockOdac = createMockOdac('/secure')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(401)
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('aborts 401 on a token GET route when the token is invalid', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {get: {'/secure': getRoute(handler, true)}}}
+
+      const mockOdac = createMockOdac('/secure', {token: 'forged'})
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(401)
+      expect(handler).not.toHaveBeenCalled()
+    })
+
+    it('runs a token GET route when a valid token is supplied', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {get: {'/secure': getRoute(handler, true)}}}
+
+      const mockOdac = createMockOdac('/secure', {token: 'valid'})
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.abort).not.toHaveBeenCalledWith(401)
+    })
+
+    it('does not run an auth-only GET route for an unauthenticated request', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {'#get': {'/account': getRoute(handler, false)}}}
+
+      const mockOdac = createMockOdac('/account', {authed: false})
+      await route.check(mockOdac)
+
+      expect(handler).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    it('runs an auth-only GET route for an authenticated request', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {'#get': {'/account': getRoute(handler, false)}}}
+
+      await route.check(createMockOdac('/account'))
+
+      expect(handler).toHaveBeenCalled()
+    })
+
+    it('does not run POST controllers', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      route.routes = {test_route: {post: {'/submit': getRoute(handler, false)}}}
+
+      const mockOdac = createMockOdac('/submit')
+      await route.check(mockOdac)
+
+      expect(handler).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+  })
+
+  // A HEAD response carries no body, so asset paths must answer from file
+  // metadata alone: no file read, no read stream opened only to be discarded.
+  describe('HEAD on assets', () => {
+    const fs = require('fs')
+    const path = require('path')
+
+    const createMockOdac = (url, {method = 'head', debug = true} = {}) => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {debug},
+      Request: {
+        url,
+        method,
+        route: 'test_route',
+        header: jest.fn(),
+        cookie: jest.fn(() => null),
+        abort: jest.fn(),
+        end: jest.fn(),
+        setSession: jest.fn(),
+        data: {url: {}}
+      },
+      request: jest.fn().mockResolvedValue(null)
+    })
+
+    beforeEach(() => {
+      global.__dir = '/app'
+    })
+
+    afterEach(() => {
+      jest.restoreAllMocks()
+    })
+
+    it('answers a public file from stat without opening a read stream', async () => {
+      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 1024})
+      const createReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('stream')
+
+      const mockOdac = createMockOdac('/style.css')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/css')
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 1024)
+      expect(createReadStream).not.toHaveBeenCalled()
+      expect(mockOdac.Request.end).toHaveBeenCalledWith()
+    })
+
+    it('answers a prod-cached public file without opening a read stream', async () => {
+      const stat = jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 2048})
+      const createReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('stream')
+
+      const mockOdac = createMockOdac('/script.js', {debug: false})
+      await route.check(mockOdac) // cache miss: fills the metadata cache
+      mockOdac.Request.header.mockClear()
+      await route.check(mockOdac) // cache hit
+
+      expect(stat).toHaveBeenCalledTimes(1)
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 2048)
+      expect(createReadStream).not.toHaveBeenCalled()
+      expect(mockOdac.Request.end).toHaveBeenCalledTimes(2)
+    })
+
+    it('answers a config-route file from stat without reading it', async () => {
+      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 50176})
+      const readFile = jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from(''))
+
+      const mockOdac = createMockOdac('/assets/js/odac.js')
+      mockOdac.Config.route = {'/assets/js/odac.js': '/framework/client/odac.js'}
+      await route.check(mockOdac)
+
+      expect(readFile).not.toHaveBeenCalled()
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
+      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 50176)
+      expect(mockOdac.Request.end).toHaveBeenCalledWith()
+    })
+
+    it('continues routing when a config-route target is not a file', async () => {
+      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => false, size: 0})
+
+      const mockOdac = createMockOdac('/assets/js/odac.js')
+      mockOdac.Config.route = {'/assets/js/odac.js': '/framework/client'}
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.end).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    // The prod config cache stores file content. HEAD never reads it, so it must
+    // not fill the cache, or the next GET would be served an empty body.
+    it('leaves the prod config cache for the next GET to fill', async () => {
+      const filePath = path.normalize('/framework/client/odac.js')
+      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 4})
+      const readFile = jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('ok()'))
+
+      const head = createMockOdac('/assets/js/odac.js', {debug: false})
+      head.Config.route = {'/assets/js/odac.js': filePath}
+      await route.check(head)
+
+      const get = createMockOdac('/assets/js/odac.js', {method: 'get', debug: false})
+      get.Config.route = {'/assets/js/odac.js': filePath}
+      const result = await route.check(get)
+
+      expect(readFile).toHaveBeenCalledTimes(1)
+      expect(result.toString()).toBe('ok()')
+      expect(get.Request.header).toHaveBeenCalledWith('Content-Length', 4)
+    })
   })
 
   // See IMPROVEMENT-PLAN 3.3: Auth.check() ran unconditionally at the top of
