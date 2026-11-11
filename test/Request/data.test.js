@@ -69,4 +69,40 @@ describe('Request.#data()', () => {
       expect(request.data.post.a).toBe('%ZZ')
     })
   })
+
+  // A body-less POST/DELETE must still release callers waiting on the body;
+  // otherwise Route.check() awaits forever and the request dies at 408.
+  describe('empty body', () => {
+    it.each(['POST', 'PUT', 'PATCH', 'DELETE'])('resolves pending request() waiters for a body-less %s', async method => {
+      const {req, request} = build({method})
+      const pending = request.request('_odac_form_token')
+      req.end()
+      await expect(pending).resolves.toBeUndefined()
+    })
+
+    it('resolves pending file() waiters for a body-less request', async () => {
+      const {req, request} = build({method: 'POST'})
+      const pending = request.file('avatar')
+      req.end()
+      await expect(pending).resolves.toBeNull()
+    })
+
+    it('resolves request() immediately once the empty body has ended', async () => {
+      const {req, request} = build({method: 'DELETE'})
+      req.end()
+      await new Promise(resolve => setImmediate(resolve))
+      await expect(request.request('x')).resolves.toBeUndefined()
+    })
+  })
+
+  describe('oversized body', () => {
+    it('releases pending waiters when the body exceeds maxBodySize', async () => {
+      global.Odac.Config.request.maxBodySize = 4
+      const {req, res, request} = build({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      const pending = request.request('a')
+      req.write('a=123456789')
+      await expect(pending).resolves.toBeUndefined()
+      expect(res.writeHead).toHaveBeenCalledWith(413, expect.anything())
+    })
+  })
 })

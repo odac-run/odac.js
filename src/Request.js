@@ -150,7 +150,7 @@ class OdacRequest {
         this.end()
         this.req.removeAllListeners('data')
         this.req.resume()
-        this.#complete = true
+        this.#finish()
         return
       }
 
@@ -161,7 +161,8 @@ class OdacRequest {
     })
 
     this.req.on('end', () => {
-      if (!body) return (this.#complete = true)
+      if (this.#complete) return
+      if (!body) return this.#finish()
       if (body.startsWith('{') && body.endsWith('}')) {
         try {
           this.data.post = JSON.parse(body)
@@ -177,9 +178,25 @@ class OdacRequest {
           this.data.post[key] = val
         }
       }
-      this.#complete = true
-      for (const event of this.#event.end) event.callback()
+      this.#finish()
     })
+  }
+
+  /**
+   * Marks the body as fully parsed and releases every request()/file() waiter.
+   *
+   * Why: Route.check() awaits the body for every POST/PUT/PATCH/DELETE. Any
+   * completion path that flips #complete without draining the queue (empty
+   * body, 413, upload-dir failure) leaves those promises pending forever and
+   * the request dies at the idle timeout. Idempotent so racing paths (busboy
+   * error vs. close) cannot fire callbacks twice.
+   */
+  #finish() {
+    if (this.#complete) return
+    this.#complete = true
+    const waiters = this.#event.end
+    this.#event.end = []
+    for (const event of waiters) event.callback()
   }
 
   async #multipart() {
@@ -193,7 +210,7 @@ class OdacRequest {
       console.error('Failed to create upload directory:', err.message)
       this.status(500)
       this.end()
-      this.#complete = true
+      this.#finish()
       return
     }
 
@@ -208,9 +225,8 @@ class OdacRequest {
     // Otherwise req.file() could resolve before #files is populated.
     let bbClosed = false
     const finalize = () => {
-      if (this.#complete || !bbClosed || this.#activeWrites.size > 0) return
-      this.#complete = true
-      for (const event of this.#event.end) event.callback()
+      if (!bbClosed || this.#activeWrites.size > 0) return
+      this.#finish()
     }
 
     bb.on('field', (name, val) => {
@@ -289,8 +305,7 @@ class OdacRequest {
     bb.on('error', err => {
       if (this.#complete) return
       console.error('Busboy error:', err.message)
-      this.#complete = true
-      for (const event of this.#event.end) event.callback()
+      this.#finish()
       // Malformed multipart body: send 400 instead of letting the handler run on
       // partial data. #complete is already set so any pending req.file()/request()
       // pollers resolve, and res.finished blocks any later controller response.
