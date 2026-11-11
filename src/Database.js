@@ -190,6 +190,80 @@ const normalizeCountResult = result => {
 }
 
 /**
+ * Purges a table's read cache after a write.
+ * Why: a failed invalidation is logged, never surfaced. The write has already happened, and
+ * rejecting would make callers retry it.
+ */
+const invalidateTable = (connectionKey, table) =>
+  readCache.invalidate(connectionKey, table).catch(error => {
+    console.error(`\x1b[31m[ODAC ReadCache]\x1b[0m Failed to invalidate "${table}" after a write:`, error?.message)
+  })
+
+// Knex builder `_method` values that change rows. increment/decrement compile to 'update'.
+const TRX_WRITE_METHODS = new Set(['insert', 'update', 'del', 'truncate', 'upsert'])
+const trackedTransactions = new WeakSet()
+
+const writtenTables = builder => {
+  if (!builder || !TRX_WRITE_METHODS.has(builder._method)) return []
+  const table = builder._single?.table
+  if (typeof table === 'string') return [table.split(/\s+as\s+/i)[0].trim()]
+  if (table && typeof table === 'object' && !table.isRawInstance) return Object.values(table).filter(t => typeof t === 'string')
+  return []
+}
+
+/**
+ * Invalidates the read cache for every table a transaction wrote to, once it commits.
+ * Why: writes made through `trx('posts')` bypass the ODAC builder wrappers, and wrapped
+ * builders used with `.transacting(trx)` invalidate before the commit, so a concurrent read
+ * could cache the pre-commit rows again. Knex forwards `query-response` from nested
+ * transactions to their parent, so listening on the outermost transaction covers savepoints.
+ * Raw SQL inside a transaction is not tracked; clear the cache explicitly for those.
+ * @param {string} connectionKey
+ * @param {object} trx Knex transactor.
+ * @returns {object} The same transactor.
+ */
+const trackTransaction = (connectionKey, trx) => {
+  if (!trx || trx.parentTransaction || trackedTransactions.has(trx)) return trx
+  trackedTransactions.add(trx)
+
+  const tables = new Set()
+  const onResponse = (_response, _query, builder) => {
+    for (const table of writtenTables(builder)) tables.add(table)
+  }
+  trx.on('query-response', onResponse)
+
+  const settle = committed => {
+    trx.removeListener('query-response', onResponse)
+    if (!committed) return
+    for (const table of tables) invalidateTable(connectionKey, table)
+  }
+  // A rollback rejects executionPromise unless doNotRejectOnRollback is set; in that case the
+  // tables are invalidated anyway, which costs a cache refill but never serves stale data.
+  trx.executionPromise?.then(
+    () => settle(true),
+    () => settle(false)
+  )
+  return trx
+}
+
+/**
+ * Wraps `knex.transaction()` so writes made inside it reach the read cache after commit.
+ * Supports both the callback form and the promise-returning form (`await Odac.DB.transaction()`).
+ */
+const wrapTransaction = (knexInstance, connectionKey) =>
+  function transaction(container, config) {
+    if (typeof container === 'function') {
+      return knexInstance.transaction(trx => container(trackTransaction(connectionKey, trx)), config)
+    }
+    return knexInstance.transaction(container, config).then(trx => trackTransaction(connectionKey, trx))
+  }
+
+const wrapTransactionProvider = (knexInstance, connectionKey) => config => {
+  const provider = knexInstance.transactionProvider(config)
+  return () => provider().then(trx => trackTransaction(connectionKey, trx))
+}
+
+/**
  * Builds an ODAC-enriched Knex query builder for a table.
  * Why: Both `Odac.DB.apps` and `Odac.DB.table('apps')` must return the SAME object —
  * one carrying .cache()/.buffer and the write-invalidation wrappers. Sharing one
@@ -255,12 +329,8 @@ const buildQueryBuilder = (knexInstance, tableName) => {
   // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
   // The write methods return the Knex builder itself with only its .then() wrapped, so the
   // full chain keeps working (.update().where(), .returning(), .transacting(), .finally()).
-  // A failed invalidation is logged, never surfaced: the write has already happened, and
-  // rejecting would make callers retry it.
-  const invalidate = () =>
-    readCache.invalidate(connectionKey, prop).catch(error => {
-      console.error(`\x1b[31m[ODAC ReadCache]\x1b[0m Failed to invalidate "${prop}" after a write:`, error?.message)
-    })
+  // Inside a transaction trackTransaction() invalidates again after the commit.
+  const invalidate = () => invalidateTable(connectionKey, prop)
 
   const withInvalidation = original =>
     function (...args) {
@@ -401,6 +471,10 @@ const tableProxyHandler = {
     // 1. Check for legacy/alias methods
     if (prop === 'run') return knexInstance.raw.bind(knexInstance)
     if (prop === 'table') return tableName => buildQueryBuilder(knexInstance, tableName)
+    if (prop === 'transaction') return wrapTransaction(knexInstance, knexInstance._odacConnectionKey || 'default')
+    if (prop === 'transactionProvider') {
+      return wrapTransactionProvider(knexInstance, knexInstance._odacConnectionKey || 'default')
+    }
 
     // 2. Pass through Knex instance methods (raw, schema, fn, destroy, etc.)
     if (typeof knexInstance[prop] === 'function') {

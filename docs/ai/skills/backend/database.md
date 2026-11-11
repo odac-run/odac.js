@@ -127,7 +127,7 @@ await Odac.DB.cache.clear('default', 'posts')
 
 ### Automatic Invalidation
 
-`insert()`, `update()`, `delete()`, `del()`, and `truncate()` automatically purge all cached queries for that table. No manual `.cache.clear()` needed after writes.
+`insert()`, `update()`, `delete()`, `del()`, `truncate()`, `increment()` and `decrement()` automatically purge all cached queries for that table. No manual `.cache.clear()` needed after writes. Writes inside `Odac.DB.transaction()` (via `trx('table')`, `.transacting(trx)` or nested transactions) are invalidated after the outermost commit, never on rollback. Raw SQL is not tracked; clear those tables manually.
 
 ```javascript
 // This update automatically clears all cached queries on 'posts'

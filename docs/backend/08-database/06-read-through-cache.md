@@ -132,7 +132,12 @@ You do not need to call `.cache.clear()` after writes. ODAC intercepts all write
 | `delete()` | ✅ Yes |
 | `del()` | ✅ Yes |
 | `truncate()` | ✅ Yes |
+| `increment()` / `decrement()` | ✅ Yes |
+| Writes inside `Odac.DB.transaction()` | ✅ Yes, after the transaction commits; nothing on rollback |
+| Raw SQL (`Odac.DB.run()`, `trx.raw()`) | ❌ No — call `.cache.clear()` yourself |
 | `buffer.insert()` | ❌ No — buffer writes are deferred; invalidate manually if needed |
+
+> **Transactions:** Inside `Odac.DB.transaction(async trx => ...)` (or `await Odac.DB.transaction()` followed by `trx.commit()`), every table written through `trx('table')`, `.transacting(trx)` or a nested `trx.transaction()` is invalidated once the outermost transaction commits. Invalidating earlier would let a concurrent read re-cache the rows the transaction is about to replace. A transaction started from the raw Knex instance (`Odac.DB.connections.default.transaction()`) is not tracked.
 
 > **Note on `buffer` + `cache`:** If you use the Write-Behind Cache (`buffer`) alongside the Read-Through Cache, the buffer's deferred writes do not trigger automatic invalidation. Call `Odac.DB.posts.cache.clear()` after a `buffer.flush()` if you need the cache to reflect the latest state immediately.
 
