@@ -78,5 +78,5 @@ Odac.Ipc.subscribe('lobby', (msg) => {
 
 ## Security Best Practices
 -   **CSRF Protection**: Native `Odac.form` and `Odac.post` handle CSRF tokens automatically using `{{ TOKEN }}` in views.
--   **Brute Force**: Always use `validator.brute()` on authentication endpoints.
+-   **Brute Force**: `Odac.Auth.login()` throttles wrong passwords (5 per account+IP, 50 per IP, 15 min window; `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP`, `auth.loginWindow` in ms). Use `Odac.Auth.loginThrottled(credentials)` to show a lockout message, and `validator.brute()` for other sensitive forms.
 -   **Passwordless Preference**: Consider using Magic Links for enhanced security and better user experience.

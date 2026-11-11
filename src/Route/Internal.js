@@ -251,8 +251,15 @@ class Internal {
     // Auth.login() returns a truthy value on success and a falsy value on
     // invalid credentials (its documented boolean contract). A thrown error
     // means the login could not be evaluated at all (e.g. DB unreachable).
+    const tooManyAttempts = () =>
+      Odac.return({
+        result: {success: false},
+        errors: {_odac_form: 'Too many failed attempts. Please try again later.'}
+      })
+
     let loginResult
     try {
+      if (await Odac.Auth.loginThrottled(credentials)) return tooManyAttempts()
       loginResult = await Odac.Auth.login(credentials)
     } catch (e) {
       console.error(e)
@@ -263,6 +270,8 @@ class Internal {
     }
 
     if (!loginResult) {
+      // This failure may have been the one that reached the limit.
+      if (await Odac.Auth.loginThrottled(credentials).catch(() => false)) return tooManyAttempts()
       return Odac.return({
         result: {success: false},
         errors: {_odac_form: 'Invalid credentials'}

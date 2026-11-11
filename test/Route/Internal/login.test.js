@@ -7,7 +7,7 @@ const Internal = require('../../../src/Route/Internal')
 
 const TOKEN = 'tok123'
 
-function makeOdac(loginImpl) {
+function makeOdac(loginImpl, throttled = async () => false) {
   const session = {
     _client: 'client-1',
     [`_login_form_${TOKEN}`]: {
@@ -34,7 +34,7 @@ function makeOdac(loginImpl) {
   return {
     request: jest.fn(async key => requestValues[key]),
     return: jest.fn(data => data),
-    Auth: {login: jest.fn(loginImpl)},
+    Auth: {login: jest.fn(loginImpl), loginThrottled: jest.fn(throttled)},
     validator: () => ({error: async () => false, result: () => ({})}),
     Request: {
       ip: '127.0.0.1',
@@ -75,5 +75,26 @@ describe('Internal.login()', () => {
     const out = await Internal.login(Odac)
     expect(out.result.success).toBe(false)
     expect(out.errors._odac_form).toMatch(/temporarily unavailable/i)
+  })
+
+  it('reports a lockout instead of trying the credentials once the limit is reached', async () => {
+    const Odac = makeOdac(
+      async () => true,
+      async () => true
+    )
+    const out = await Internal.login(Odac)
+    expect(out.result.success).toBe(false)
+    expect(out.errors._odac_form).toMatch(/too many failed attempts/i)
+    expect(Odac.Auth.login).not.toHaveBeenCalled()
+  })
+
+  it('reports the lockout on the failure that reaches the limit', async () => {
+    let checks = 0
+    const Odac = makeOdac(
+      async () => false,
+      async () => ++checks > 1
+    )
+    const out = await Internal.login(Odac)
+    expect(out.errors._odac_form).toMatch(/too many failed attempts/i)
   })
 })

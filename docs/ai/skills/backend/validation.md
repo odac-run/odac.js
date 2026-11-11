@@ -43,7 +43,7 @@ module.exports = async Odac => {
 - `error()`: Runs validation and returns `true` if any error exists.
 - `result(message?, data?)`: Returns ODAC-standard response object.
 - `success(dataOrMessage?)`: Convenience wrapper for success payload.
-- `brute(maxAttempts = 5)`: Tracks failed attempts per hour/page/ip.
+- `brute(maxAttempts = 5, windowSeconds = 3600)`: Counts validation failures per page/ip in a window that starts at the first failure; once the limit is reached every submission is rejected until the window ends. `Odac.Auth.login()` throttles wrong passwords on its own.
 
 ## Rule Catalog
 

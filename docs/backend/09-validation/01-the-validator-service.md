@@ -27,7 +27,7 @@ if (await validator.error()) {
 - `error()` - Returns true if validation failed (async)
 - `result(message, data)` - Returns formatted result object (async)
 - `success(callback)` - Returns success result with data
-- `brute(maxAttempts)` - Enable brute force protection (default: 5 attempts)
+- `brute(maxAttempts, windowSeconds)` - Brute force protection: counts submissions that fail validation per IP and page; after `maxAttempts` (default 5) every submission is rejected until the window (default 3600 s, starting at the first failure) ends. Call it after defining the checks and `await` it.
 
 #### Validation Rules
 
@@ -116,7 +116,7 @@ module.exports = async function (Odac) {
 
   validator.post('email').check('required|email').message('Email required')
   validator.post('password').check('required').message('Password required')
-  validator.brute(5)
+  await validator.brute(5)
 
   if (await validator.error()) {
     return validator.result('Login failed')

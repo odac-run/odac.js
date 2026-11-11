@@ -72,15 +72,23 @@ class Ipc extends EventEmitter {
    * where concurrent workers must not cause lost updates (get→modify→set race).
    * Redis: INCRBYFLOAT. Memory: single-threaded Primary guarantees atomicity.
    *
+   * A `ttl` makes the counter a fixed window: the expiry is set when the key is created and
+   * not extended by later increments, so short-lived counters (rate limits) clean themselves up
+   * instead of accumulating one key per client forever.
+   *
    * @param {string} key
    * @param {number} delta - Amount to add (can be negative)
+   * @param {number} [ttl=0] - Seconds until a newly created counter expires; 0 keeps it forever
    * @returns {Promise<number>} New value after increment
    */
-  async incrBy(key, delta) {
+  async incrBy(key, delta, ttl = 0) {
     if (this.config.driver === 'redis') {
-      return Number(await this.redis.incrByFloat(key, delta))
+      const value = Number(await this.redis.incrByFloat(key, delta))
+      // The first increment is the one that created the key.
+      if (ttl > 0 && value === delta) await this.redis.expire(key, ttl)
+      return value
     }
-    return this._sendMemory('incrBy', {key, delta})
+    return this._sendMemory('incrBy', {key, delta, ttl})
   }
 
   /**
@@ -533,7 +541,10 @@ class Ipc extends EventEmitter {
 
       // --- Atomic Counter ---
       case 'incrBy': {
-        const data = this._memoryStore.get(msg.key) || {value: 0, expireAt: Infinity}
+        let data = this._memoryStore.get(msg.key)
+        if (!data || (data.expireAt !== Infinity && Date.now() > data.expireAt)) {
+          data = {value: 0, expireAt: msg.ttl > 0 ? Date.now() + msg.ttl * 1000 : Infinity}
+        }
         data.value = (typeof data.value === 'number' ? data.value : 0) + msg.delta
         this._memoryStore.set(msg.key, data)
         return data.value

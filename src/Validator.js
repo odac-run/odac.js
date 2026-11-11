@@ -483,30 +483,30 @@ class Validator {
     return this
   }
 
-  async brute(maxAttempts = 5) {
+  /**
+   * Limits failed submissions of this form per client IP.
+   * Why: forms that check secrets need a ceiling on guesses. Each submission that fails
+   * validation counts; once `maxAttempts` is reached every submission from that IP to this
+   * page is rejected, valid or not, until the window (`windowSeconds`, starting at the first
+   * failure) expires. Counters carry a TTL, so idle clients leave nothing behind.
+   * @param {number} [maxAttempts=5]
+   * @param {number} [windowSeconds=3600]
+   * @returns {Promise<Validator>}
+   */
+  async brute(maxAttempts = 5, windowSeconds = 3600) {
     this.#name = '_odac_form'
-
-    // Only a request that actually failed validation counts toward the limit.
-    if (Object.keys(this.#message).length === 0) return this
 
     const ipc = this.#odac.Ipc
     if (!ipc) return this
 
-    const ip = this.#request.ip
-    const page = this.#request.url.split('?')[0]
-    // The hour bucket lives in the KEY, so each hour starts fresh instead of
-    // accumulating buckets forever under one blob. Ipc.incrBy is atomic across
-    // workers, eliminating the old get→modify→put lost-update race.
-    const hour = new Date().toISOString().slice(0, 13) // YYYY-MM-DDTHH
-    const base = `brute:${page}:${ip}`
-    const count = await ipc.incrBy(`${base}:${hour}`, 1)
+    // brute() may be called before error(); the outcome of this submission must be known.
+    if (!this.#completed) await this.#validate()
 
-    // On the first hit of a new bucket, drop this ip+page's previous-hour bucket
-    // so stale counters can't pile up unbounded.
-    if (count === 1) {
-      const prevHour = new Date(Date.now() - 3600000).toISOString().slice(0, 13)
-      ipc.del(`${base}:${prevHour}`).catch(() => {})
-    }
+    const page = this.#request.url.split('?')[0]
+    const key = `brute:${page}:${this.#request.ip}`
+    const failed = Object.keys(this.#message).length > 0
+    // Ipc.incrBy is atomic across workers, so concurrent failures cannot be lost.
+    const count = failed ? await ipc.incrBy(key, 1, windowSeconds) : Number((await ipc.get(key)) ?? 0)
 
     if (count >= maxAttempts) {
       this.#message['_odac_form'] = this.#odac.Lang

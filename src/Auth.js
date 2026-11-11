@@ -6,6 +6,10 @@ const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 const TOKEN_ROTATION_GRACE_PERIOD_MS = 30 * 1000
 const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 const TOKEN_SWEEP_BOOT_DELAY_MS = 5 * 60 * 1000
+// Password login throttling defaults (see #loginThrottleKeys).
+const LOGIN_WINDOW_SECONDS = 15 * 60
+const LOGIN_MAX_ATTEMPTS = 5
+const LOGIN_MAX_ATTEMPTS_PER_IP = 50
 // hostname or IPv4 with optional port, or a bracketed IPv6 literal with optional port. Anything
 // else (userinfo `@`, paths, whitespace) could redirect a generated absolute URL elsewhere.
 const SAFE_HOST = /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i
@@ -305,6 +309,58 @@ class Auth {
   }
 
   /**
+   * Reports whether password logins with these credentials are currently blocked.
+   * Why: lets login UIs tell a locked-out user to wait instead of reporting bad credentials.
+   * @param {object} where Same shape as login().
+   * @returns {Promise<boolean>}
+   */
+  async loginThrottled(where) {
+    const throttle = this.#loginThrottleKeys(await Auth.#resolveCriteria(where))
+    return !!throttle && (await this.#isThrottled(throttle))
+  }
+
+  static async #resolveCriteria(where) {
+    if (!where || typeof where !== 'object') return where
+    const entries = await Promise.all(Object.entries(where).map(async ([key, value]) => [key, await value]))
+    return Object.fromEntries(entries)
+  }
+
+  // Failed password logins are counted per account and client IP (stops guessing one account
+  // without letting others lock it out from elsewhere) and per IP across all accounts (stops
+  // credential stuffing). Each counter is a fixed window that starts at the first failure.
+  #loginThrottleKeys(where) {
+    if (!where || typeof where !== 'object' || !Odac.Ipc) return null
+    const secrets = Auth.#secretFields()
+    const keys = Object.keys(where)
+    if (!keys.some(key => secrets.includes(key))) return null
+
+    const identity = keys
+      .filter(key => !secrets.includes(key))
+      .sort()
+      .map(key => `${key}=${where[key]}`)
+      .join('&')
+    const account = nodeCrypto.createHash('sha256').update(identity).digest('hex')
+    const ip = this.#request.ip || 'unknown'
+    const config = Odac.Config.auth || {}
+    return {
+      account: `auth:login:account:${account}:${ip}`,
+      ip: `auth:login:ip:${ip}`,
+      maxAccount: config.loginMaxAttempts || LOGIN_MAX_ATTEMPTS,
+      maxIp: config.loginMaxAttemptsPerIP || LOGIN_MAX_ATTEMPTS_PER_IP,
+      window: Math.ceil((config.loginWindow || LOGIN_WINDOW_SECONDS * 1000) / 1000)
+    }
+  }
+
+  async #isThrottled(throttle) {
+    const [account, ip] = await Promise.all([Odac.Ipc.get(throttle.account), Odac.Ipc.get(throttle.ip)])
+    return Number(account ?? 0) >= throttle.maxAccount || Number(ip ?? 0) >= throttle.maxIp
+  }
+
+  async #recordLoginFailure(throttle) {
+    await Promise.all([Odac.Ipc.incrBy(throttle.account, 1, throttle.window), Odac.Ipc.incrBy(throttle.ip, 1, throttle.window)])
+  }
+
+  /**
    * Columns that hold password hashes.
    * Why: these must never appear in a WHERE clause or be compared by equality; a plaintext
    * comparison accepts plaintext-stored passwords and lets a leaked hash act as the password.
@@ -360,10 +416,26 @@ class Auth {
     }
   }
 
+  /**
+   * Signs the user in and issues the auth cookies.
+   * Why: password logins are throttled here, not in each caller, so the built-in form and
+   * custom controllers share one limit. A throttled attempt returns false without touching the
+   * database, exactly like wrong credentials.
+   * @param {object} where Identity fields plus, for password logins, the password field(s).
+   * @returns {Promise<boolean>}
+   */
   async login(where) {
     this.#user = null
+    where = await Auth.#resolveCriteria(where)
+    const throttle = this.#loginThrottleKeys(where)
+    if (throttle && (await this.#isThrottled(throttle))) return false
+
     let user = await this.check(where)
-    if (!user) return false
+    if (!user) {
+      if (throttle) await this.#recordLoginFailure(throttle)
+      return false
+    }
+    if (throttle) await Odac.Ipc.del(throttle.account).catch(() => {})
 
     let key = Odac.Config.auth.key || 'id'
     let token = Odac.Config.auth.token || 'odac_auth'

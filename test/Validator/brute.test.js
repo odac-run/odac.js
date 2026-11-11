@@ -1,14 +1,15 @@
 const Validator = require('../../src/Validator')
 
-// brute() rate-limits failed form submissions per ip+page+hour. It must:
+// brute() rate-limits failed form submissions per ip+page. It must:
 //  - use an ATOMIC counter (Ipc.incrBy) so concurrent workers don't lose
-//    updates via a get→modify→put race, and
-//  - bound storage growth (no ever-accumulating hour buckets under one key).
-// See IMPROVEMENT-PLAN 2.6.
+//    updates via a get→modify→put race,
+//  - give the counter a TTL so idle clients leave no keys behind, and
+//  - keep rejecting submissions, valid or not, once the limit is reached.
 
 function makeIpc(counterValue) {
   return {
     incrBy: jest.fn().mockResolvedValue(counterValue),
+    get: jest.fn().mockResolvedValue(counterValue),
     del: jest.fn().mockResolvedValue(true)
   }
 }
@@ -40,16 +41,21 @@ async function failedValidator(odac) {
 }
 
 describe('Validator.brute()', () => {
-  it('atomically increments an hour-bucketed key for a failed attempt', async () => {
+  it('atomically increments a windowed key for a failed attempt', async () => {
     const ipc = makeIpc(1)
     const v = await failedValidator(makeOdac(ipc))
     await v.brute(5)
 
     expect(ipc.incrBy).toHaveBeenCalledTimes(1)
-    const [key, delta] = ipc.incrBy.mock.calls[0]
-    // brute:<page>:<ip>:<YYYY-MM-DDTHH>
-    expect(key).toMatch(/^brute:\/login:9\.9\.9\.9:\d{4}-\d{2}-\d{2}T\d{2}$/)
-    expect(delta).toBe(1)
+    expect(ipc.incrBy).toHaveBeenCalledWith('brute:/login:9.9.9.9', 1, 3600)
+  })
+
+  it('uses a custom window length as the counter TTL', async () => {
+    const ipc = makeIpc(1)
+    const v = await failedValidator(makeOdac(ipc))
+    await v.brute(5, 600)
+
+    expect(ipc.incrBy).toHaveBeenCalledWith('brute:/login:9.9.9.9', 1, 600)
   })
 
   it('blocks once the counter reaches maxAttempts', async () => {
@@ -78,14 +84,27 @@ describe('Validator.brute()', () => {
     await v.brute(5)
 
     expect(ipc.incrBy).not.toHaveBeenCalled()
+    expect((await v.result()).result.success).toBe(true)
   })
 
-  it('bounds growth by clearing the previous hour bucket on a fresh bucket', async () => {
-    const ipc = makeIpc(1) // count === 1 means a brand-new hour bucket
-    const v = await failedValidator(makeOdac(ipc))
+  it('rejects a valid submission while the limit is reached', async () => {
+    const ipc = makeIpc(5)
+    const v = new Validator(makeReq(), makeOdac(ipc))
+    v.var('field', 'ok').check('required')
     await v.brute(5)
 
-    expect(ipc.del).toHaveBeenCalledTimes(1)
-    expect(ipc.del.mock.calls[0][0]).toMatch(/^brute:\/login:9\.9\.9\.9:\d{4}-\d{2}-\d{2}T\d{2}$/)
+    expect(ipc.incrBy).not.toHaveBeenCalled()
+    expect(await v.error()).toBe(true)
+    expect((await v.result()).errors._odac_form).toMatch(/Too many failed attempts/)
+  })
+
+  it('counts a failure when called before error()', async () => {
+    const ipc = makeIpc(1)
+    const v = new Validator(makeReq(), makeOdac(ipc))
+    v.var('field', '').check('required').message('required')
+    await v.brute(5)
+
+    expect(ipc.incrBy).toHaveBeenCalledTimes(1)
+    expect(await v.error()).toBe(true)
   })
 })
