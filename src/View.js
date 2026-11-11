@@ -158,8 +158,6 @@ class View {
   async print() {
     if (this.#odac.Request.res.finished) return
 
-    const routePath = this.#odac.Request.req.url.split('?')[0]
-
     // Handle AJAX load requests
     if (this.#odac.Request.isAjaxLoad === true && this.#odac.Request.ajaxLoad && this.#odac.Request.ajaxLoad.length > 0) {
       let output = {}
@@ -292,7 +290,7 @@ class View {
         const detectedResources = this.#earlyHints.extractFromHtml(result)
 
         if (detectedResources && detectedResources.length > 0) {
-          this.#earlyHints.cacheHints(routePath, detectedResources)
+          this.#earlyHints.cacheHints(this.#hintCacheKey(), detectedResources)
         }
       }
 
@@ -674,10 +672,20 @@ class View {
     return skeleton
   }
 
+  // The <head> resources of a page are determined by the views it is assembled from, so that
+  // combination identifies a hint set. Dots and slashes are equivalent in view names.
+  #hintCacheKey() {
+    const entries = []
+    for (const key of Object.keys(this.#part).sort()) {
+      const value = this.#part[key]
+      if (typeof value === 'string' && value) entries.push(`${key}=${value.replace(/\./g, '/')}`)
+    }
+    return entries.join('|')
+  }
+
   #sendEarlyHintsIfAvailable() {
     if (this.#odac.Request.res.headersSent) return
 
-    const routePath = this.#odac.Request.req.url.split('?')[0]
     const viewPaths = []
 
     if (this.#part.skeleton) {
@@ -692,7 +700,7 @@ class View {
       }
     }
 
-    let hints = this.#earlyHints.getHints(null, routePath)
+    let hints = this.#earlyHints.getHints(null, this.#hintCacheKey())
 
     if (!hints && viewPaths.length > 0) {
       hints = this.#earlyHints.getHintsForViewFiles(viewPaths)

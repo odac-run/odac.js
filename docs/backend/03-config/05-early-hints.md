@@ -101,6 +101,9 @@ Maximum number of resources to include in Early Hints. Limiting this prevents ov
 }
 ```
 
+#### `maxCacheEntries` (number, default: `1000`)
+Maximum number of learned hint sets kept per worker. Hints are learned per view combination (skeleton + parts), not per URL, so a typical app stays far below this limit; the least recently used set is dropped when it is reached.
+
 ## What Gets Preloaded?
 
 The framework intelligently selects only **critical resources** from the `<head>` section:

@@ -107,4 +107,39 @@ describe('View.print()', () => {
       expect(html.endsWith('</body></html>')).toBe(true)
     })
   })
+  describe('Early hints learning', () => {
+    const renderAt = async (View, earlyHints, url) => {
+      mockOdac.Request.req.url = url
+      mockOdac.Request.end = jest.fn()
+      global.Odac = {View: {EarlyHints: earlyHints}}
+      const instance = new View(mockOdac)
+      instance.set({skeleton: 'main', content: 'user.profile'})
+      await instance.print()
+    }
+
+    beforeEach(async () => {
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.mkdir(path.join(global.__dir, 'view/content/user'), {recursive: true})
+      await fs.writeFile(
+        path.join(global.__dir, 'skeleton/main.html'),
+        '<html><head><link rel="stylesheet" href="/app.css"></head><body>{{ CONTENT }}</body></html>'
+      )
+      await fs.writeFile(path.join(global.__dir, 'view/content/user/profile.html'), '<h1>Profile</h1>')
+    })
+
+    it('keys learned hints by the views of the page, not by its URL', async () => {
+      const EarlyHints = require('../../src/View/EarlyHints')
+      const earlyHints = new EarlyHints({enabled: true, auto: true, maxResources: 5})
+      const cacheHints = jest.spyOn(earlyHints, 'cacheHints')
+      mockOdac.Request.setEarlyHints = jest.fn()
+
+      for (let id = 1; id <= 3; id++) await renderAt(View, earlyHints, `/user/${id}?tab=info`)
+
+      const keys = new Set(cacheHints.mock.calls.map(([key]) => key))
+      expect(keys.size).toBe(1)
+      expect([...keys][0]).not.toContain('/user/')
+      expect(mockOdac.Request.setEarlyHints).toHaveBeenLastCalledWith([{href: '/app.css', as: 'style'}])
+      delete global.Odac
+    })
+  })
 })

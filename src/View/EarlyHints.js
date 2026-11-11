@@ -1,6 +1,10 @@
 const fs = require('fs').promises
 const path = require('path')
 
+// Upper bound for learned hint sets. Keys are view combinations, which are finite in a normal
+// app; the cap only guards against apps that build view names from request input.
+const DEFAULT_MAX_CACHE_ENTRIES = 1000
+
 class EarlyHints {
   #manifest = {}
   #cache = new Map()
@@ -127,13 +131,18 @@ class EarlyHints {
     return resources.slice(0, this.#config.maxResources)
   }
 
-  getHints(viewPath, routePath) {
+  getHints(viewPath, cacheKey) {
     if (!this.#config.enabled || !this.#config.auto) return null
 
     let hints = this.#manifest[viewPath]
 
-    if (!hints && routePath) {
-      hints = this.#cache.get(routePath)
+    if (!hints && cacheKey) {
+      hints = this.#cache.get(cacheKey)
+      if (hints) {
+        // Refresh recency for the LRU.
+        this.#cache.delete(cacheKey)
+        this.#cache.set(cacheKey, hints)
+      }
     }
 
     return hints || null
@@ -152,12 +161,24 @@ class EarlyHints {
     return null
   }
 
-  cacheHints(routePath, resources) {
+  /**
+   * Remembers the preload resources detected in a rendered page.
+   * Why: hints are only useful if they are known before rendering starts. The key must
+   * identify the views that produced the HTML (see View), not the request URL; URL keys
+   * add one permanent entry per distinct path and let any client grow worker memory.
+   * The cache is an LRU bounded by `maxCacheEntries`.
+   * @param {string} key View-combination key.
+   * @param {Array<{href: string, as: string}>} resources
+   */
+  cacheHints(key, resources) {
     if (!this.#config.enabled || !this.#config.auto) return
+    if (!key || !resources || resources.length === 0) return
 
-    if (resources && resources.length > 0) {
-      this.#cache.set(routePath, resources)
-    }
+    this.#cache.delete(key)
+    this.#cache.set(key, resources)
+
+    const limit = this.#config.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES
+    while (this.#cache.size > limit) this.#cache.delete(this.#cache.keys().next().value)
   }
 
   extractFromHtml(html) {
