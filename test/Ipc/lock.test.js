@@ -60,3 +60,29 @@ describe('Ipc - lock()', () => {
     expect(result).toBe(true)
   })
 })
+
+describe('Ipc - lock ownership', () => {
+  it('releases a lock only for its owner', async () => {
+    await Ipc.lock('lock:own', 5, 'owner-a')
+
+    expect(await Ipc.unlock('lock:own', 'owner-b')).toBe(false)
+    expect(await Ipc.lock('lock:own', 5, 'owner-b')).toBe(false)
+    expect(await Ipc.unlock('lock:own', 'owner-a')).toBe(true)
+    expect(await Ipc.lock('lock:own', 5, 'owner-b')).toBe(true)
+  })
+
+  it('extends a lock only for its owner', async () => {
+    await Ipc.lock('lock:ext', 1, 'owner-a')
+
+    expect(await Ipc.extendLock('lock:ext', 'owner-b', 5)).toBe(false)
+    expect(await Ipc.extendLock('lock:ext', 'owner-a', 5)).toBe(true)
+    await new Promise(r => setTimeout(r, 1100))
+    expect(await Ipc.lock('lock:ext', 5, 'owner-b')).toBe(false)
+  })
+
+  it('force-releases without an owner', async () => {
+    await Ipc.lock('lock:force', 5, 'owner-a')
+    await Ipc.unlock('lock:force')
+    expect(await Ipc.lock('lock:force', 5, 'owner-b')).toBe(true)
+  })
+})

@@ -242,26 +242,49 @@ class Ipc extends EventEmitter {
 
   /**
    * Why: Horizontal scaling requires exactly ONE server to run flush at a time.
-   * Redis: SET NX EX (atomic test-and-set with TTL). Memory: Primary-local boolean.
-   * TTL prevents deadlocks if the lock holder crashes mid-flush.
+   * Redis: SET NX EX (atomic test-and-set with TTL). Memory: Primary-local entry.
+   * TTL prevents deadlocks if the lock holder crashes mid-flush. The stored owner token lets
+   * the holder release or extend only its own lock: without it, a holder that outlived the TTL
+   * would delete the lock a second process had acquired meanwhile.
    *
    * @param {string} key
    * @param {number} [ttl=10] - Lock time-to-live in seconds
+   * @param {string} [owner='1'] - Token identifying the holder
    * @returns {Promise<boolean>} true if lock acquired
    */
-  async lock(key, ttl = 10) {
+  async lock(key, ttl = 10, owner = '1') {
     if (this.config.driver === 'redis') {
-      const result = await this.redis.set(key, '1', {NX: true, EX: ttl})
+      const result = await this.redis.set(key, String(owner), {NX: true, EX: ttl})
       return result === 'OK'
     }
-    return this._sendMemory('lock', {key, ttl})
+    return this._sendMemory('lock', {key, ttl, owner: String(owner)})
   }
 
   /**
    * Why: Release flush lock after completion so the next cycle can proceed.
+   * With an owner, the lock is released only if that owner still holds it; without one it is
+   * removed unconditionally (used to break a stale lock at shutdown).
+   * @returns {Promise<boolean>} true if a lock was released
    */
-  async unlock(key) {
-    return this.del(key)
+  async unlock(key, owner) {
+    if (owner === undefined) return this.del(key)
+    if (this.config.driver === 'redis') {
+      const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+      return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner)]})) === 1
+    }
+    return this._sendMemory('unlock', {key, owner: String(owner)})
+  }
+
+  /**
+   * Why: Lets a long-running holder keep its lock alive instead of losing it at the TTL.
+   * @returns {Promise<boolean>} false if the lock is no longer held by `owner`
+   */
+  async extendLock(key, owner, ttl = 10) {
+    if (this.config.driver === 'redis') {
+      const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+      return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner), String(ttl)]})) === 1
+    }
+    return this._sendMemory('extendLock', {key, ttl, owner: String(owner)})
   }
 
   async publish(channel, message) {
@@ -627,7 +650,19 @@ class Ipc extends EventEmitter {
         const existing = this._memoryStore.get(msg.key)
         if (existing && existing.expireAt > Date.now()) return false
         const expireAt = Date.now() + (msg.ttl || 10) * 1000
-        this._memoryStore.set(msg.key, {value: '1', expireAt})
+        this._memoryStore.set(msg.key, {value: msg.owner ?? '1', expireAt})
+        return true
+      }
+      case 'unlock': {
+        const existing = this._memoryStore.get(msg.key)
+        if (!existing || existing.expireAt <= Date.now() || existing.value !== msg.owner) return false
+        this._memoryStore.delete(msg.key)
+        return true
+      }
+      case 'extendLock': {
+        const existing = this._memoryStore.get(msg.key)
+        if (!existing || existing.expireAt <= Date.now() || existing.value !== msg.owner) return false
+        existing.expireAt = Date.now() + (msg.ttl || 10) * 1000
         return true
       }
 

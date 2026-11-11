@@ -110,6 +110,16 @@ class OdacStorage {
     return true
   }
 
+  /**
+   * Runs synchronous puts/removes in one committed transaction.
+   * Why: a checkpoint writes many keys; one commit is far cheaper than one per key, and the
+   * snapshot is applied atomically.
+   */
+  transactionSync(callback) {
+    if (!this.ready) return undefined
+    return this.db.transactionSync(callback)
+  }
+
   #queue(key, value, written) {
     const entry = {value}
     this.#pending.set(key, entry)

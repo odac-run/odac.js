@@ -21,9 +21,11 @@ const nanoid = require('./nanoid')
  *   wb:b:{connection}:{table}:{where}:{column} — counter base from DB (number via set)
  *   wb:u:{connection}:{table}:{where}          — update fields (hash via hset)
  *   wb:q:{connection}:{table}                  — insert queue (list via rpush)
+ *   wb:dlq:{connection}:{table}                — rows that kept failing to insert (dead letters)
  *   wb:idx:counters                            — set of active counter keys
  *   wb:idx:updates                             — set of active update keys
  *   wb:idx:queues                              — set of active queue keys
+ *   wb:idx:dlq                                 — set of queue keys with dead letters
  *   wb:lock:flush                              — distributed flush lock
  *
  * API (exposed via Database.js proxy):
@@ -37,11 +39,24 @@ const nanoid = require('./nanoid')
 
 const DEFAULT_CONFIG = {
   flushInterval: 5000,
-  checkpointInterval: 30000,
+  // Defaults to half the flush interval (see init) so every flush window is checkpointed.
+  checkpointInterval: null,
   maxQueueSize: 10000,
   primaryKey: 'id',
-  insertBatchSize: 1000
+  insertBatchSize: 1000,
+  // Flush cycles a row may fail on its own (while the database is reachable) before it is
+  // moved to the dead-letter list instead of blocking its queue.
+  maxInsertAttempts: 3,
+  // Seconds a cached counter base stays valid before it is re-read from the database.
+  baseTtl: 300
 }
+
+const LOCK_KEY = 'wb:lock:flush'
+const LOCK_TTL = 10
+// Envelope marker for re-queued rows; carries the number of failed attempts.
+const ATTEMPTS = '__odac_wb_attempts'
+// Checkpoint prefixes in Storage: counters, updates, queues, dead letters.
+const CHECKPOINT_PREFIXES = ['wb:c:', 'wb:u:', 'wb:q:', 'wb:d:']
 
 class WriteBuffer {
   constructor() {
@@ -67,6 +82,7 @@ class WriteBuffer {
     this._connections = connections
     this._nanoidColumns = nanoidColumns
     this._config = {...DEFAULT_CONFIG, ...Odac.Config.buffer}
+    if (!this._config.checkpointInterval) this._config.checkpointInterval = Math.max(500, Math.floor(this._config.flushInterval / 2))
 
     if (cluster.isPrimary) {
       await this._recoverFromCheckpoint()
@@ -145,9 +161,13 @@ class WriteBuffer {
     const length = await Odac.Ipc.rpush(`wb:q:${queueKey}`, row)
     await Odac.Ipc.sadd('wb:idx:queues', queueKey)
 
-    // Auto-flush when queue exceeds threshold
-    if (length >= this._config.maxQueueSize) {
-      void this._flushQueues(connection, table).catch(() => {})
+    // Auto-flush when queue exceeds threshold. One at a time per process: while the database
+    // rejects the batch, every further insert would otherwise start another full attempt.
+    if (length >= this._config.maxQueueSize && !this._autoFlushing) {
+      this._autoFlushing = true
+      void this._flushQueues(connection, table)
+        .catch(() => {})
+        .finally(() => (this._autoFlushing = false))
     }
 
     return true
@@ -160,22 +180,49 @@ class WriteBuffer {
    * preventing duplicate writes in horizontal scaling scenarios.
    */
   async flush(connection, table) {
-    const acquired = await Odac.Ipc.lock('wb:lock:flush', 10)
+    const owner = nanoid(21)
+    const acquired = await Odac.Ipc.lock(LOCK_KEY, LOCK_TTL, owner)
     if (!acquired) return
 
+    // Keep the lock while flushing. If it is lost anyway (e.g. a stalled process), stop before
+    // the next group so two flushers never apply the same counter delta twice.
+    const guard = {lost: false}
+    const renew = setInterval(
+      () => {
+        Odac.Ipc.extendLock(LOCK_KEY, owner, LOCK_TTL)
+          .then(held => {
+            if (!held) guard.lost = true
+          })
+          .catch(() => {})
+      },
+      (LOCK_TTL * 1000) / 3
+    )
+    renew.unref?.()
+
     try {
-      await this._flushCounters(connection, table)
-      await this._flushUpdates(connection, table)
-      await this._flushQueues(connection, table)
-      this._clearCheckpoint(connection, table)
+      await this._flushCounters(connection, table, guard)
+      await this._flushUpdates(connection, table, guard)
+      await this._flushQueues(connection, table, guard)
+      if (guard.lost) console.error('\x1b[31m[WriteBuffer]\x1b[0m Flush lock was lost; remaining groups are left for the next cycle.')
     } finally {
-      await Odac.Ipc.unlock('wb:lock:flush')
+      clearInterval(renew)
+      await Odac.Ipc.unlock(LOCK_KEY, owner)
     }
+  }
+
+  /**
+   * Returns rows that could not be inserted after `maxInsertAttempts` flush cycles.
+   * Why: a row the database keeps rejecting (constraint violation, bad type) must not block the
+   * rows queued after it; it is set aside here for inspection or manual replay.
+   * @returns {Promise<Array<{row: object, error: string, at: number}>>}
+   */
+  async deadLetters(connection, table) {
+    return Odac.Ipc.lrange(`wb:dlq:${connection}:${table}`, 0, -1)
   }
 
   // ─── Flush Logic ───────────────────────────────────────────
 
-  async _flushCounters(filterConnection, filterTable) {
+  async _flushCounters(filterConnection, filterTable, guard = {lost: false}) {
     const keys = await Odac.Ipc.smembers('wb:idx:counters')
     if (keys.length === 0) return
 
@@ -196,6 +243,7 @@ class WriteBuffer {
     }
 
     for (const [, group] of grouped) {
+      if (guard.lost) return
       const knex = this._connections[group.connection]
       if (!knex) continue
 
@@ -224,14 +272,12 @@ class WriteBuffer {
           }
         })
 
-        // After successful commit: subtract flushed deltas, update bases
+        // After successful commit: subtract flushed deltas. The cached base is dropped rather
+        // than adjusted, so the next read takes the committed value from the database; this
+        // also picks up changes made to the row outside the buffer.
         for (const [entryKey, entry] of deltas) {
           await Odac.Ipc.decrBy(`wb:c:${entryKey}`, entry.delta)
-
-          // Update cached base: base += flushed delta
-          const baseKey = `wb:b:${entryKey}`
-          const currentBase = (await Odac.Ipc.get(baseKey)) || 0
-          await Odac.Ipc.set(baseKey, currentBase + entry.delta)
+          await Odac.Ipc.del(`wb:b:${entryKey}`)
 
           // If counter is now 0, clean up
           const remaining = (await Odac.Ipc.get(`wb:c:${entryKey}`)) || 0
@@ -240,6 +286,8 @@ class WriteBuffer {
             await Odac.Ipc.srem('wb:idx:counters', entryKey)
           }
         }
+        // The checkpointed delta is now in the database; replaying it would count it twice.
+        this._dropCheckpoint([...deltas.keys()].map(key => `wb:c:${key}`))
       } catch (err) {
         // Keep deltas in Ipc on failure — will retry next cycle
         console.error(`\x1b[31m[WriteBuffer]\x1b[0m Counter flush failed for ${group.table}:`, err.message)
@@ -247,7 +295,7 @@ class WriteBuffer {
     }
   }
 
-  async _flushUpdates(filterConnection, filterTable) {
+  async _flushUpdates(filterConnection, filterTable, guard = {lost: false}) {
     const keys = await Odac.Ipc.smembers('wb:idx:updates')
     if (keys.length === 0) return
 
@@ -267,6 +315,7 @@ class WriteBuffer {
     }
 
     for (const [, group] of grouped) {
+      if (guard.lost) return
       const knex = this._connections[group.connection]
       if (!knex) continue
 
@@ -297,17 +346,19 @@ class WriteBuffer {
           await Odac.Ipc.del(`wb:u:${entryKey}`)
           await Odac.Ipc.srem('wb:idx:updates', entryKey)
         }
+        this._dropCheckpoint([...updates.keys()].map(key => `wb:u:${key}`))
       } catch (err) {
         console.error(`\x1b[31m[WriteBuffer]\x1b[0m Update flush failed for ${group.table}:`, err.message)
       }
     }
   }
 
-  async _flushQueues(filterConnection, filterTable) {
+  async _flushQueues(filterConnection, filterTable, guard = {lost: false}) {
     const queueKeys = await Odac.Ipc.smembers('wb:idx:queues')
     if (queueKeys.length === 0) return
 
     for (const queueKey of queueKeys) {
+      if (guard.lost) return
       const [connection, table] = queueKey.split(':')
       if (filterConnection && connection !== filterConnection) continue
       if (filterTable && table !== filterTable) continue
@@ -316,36 +367,116 @@ class WriteBuffer {
       if (!knex) continue
 
       // Atomic drain — reads all rows and clears the list in one step
-      const rows = await Odac.Ipc.lrangeAndDel(`wb:q:${queueKey}`)
-      if (rows.length === 0) continue
+      const items = (await Odac.Ipc.lrangeAndDel(`wb:q:${queueKey}`)).map(item => this._unwrapQueued(item))
+      if (items.length === 0) continue
 
+      let failed
       try {
-        if (this._dialect(knex) === 'clickhouse') {
-          // ClickHouse has no multi-statement transactions; batch inserts are already atomic
-          // per request and the drain above prevents duplicates. Insert chunks directly.
-          for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
-            const chunk = rows.slice(i, i + this._config.insertBatchSize)
-            await knex.insert(table, chunk)
-          }
-        } else {
-          // Wrap all chunks in a single transaction to prevent partial-insert duplicates
-          await knex.transaction(async trx => {
-            for (let i = 0; i < rows.length; i += this._config.insertBatchSize) {
-              const chunk = rows.slice(i, i + this._config.insertBatchSize)
-              await trx(table).insert(chunk)
-            }
-          })
-        }
-
-        // Clean up index after successful insert
-        await Odac.Ipc.srem('wb:idx:queues', queueKey)
+        failed = await this._insertItems(knex, table, items)
       } catch (err) {
-        // Re-queue failed rows by pushing them back
-        for (const row of rows) {
-          await Odac.Ipc.rpush(`wb:q:${queueKey}`, row)
-        }
-        console.error(`\x1b[31m[WriteBuffer]\x1b[0m Queue flush failed for ${table}:`, err.message)
+        // Not even row-by-row inserts could run: keep everything for the next cycle.
+        failed = items.map(item => ({item, error: err}))
       }
+
+      if (failed.length === 0) {
+        await Odac.Ipc.srem('wb:idx:queues', queueKey)
+        this._dropCheckpoint([`wb:q:${queueKey}`])
+        continue
+      }
+
+      // Every row failing while the database answers points at the rows; otherwise it is an
+      // outage, which must not use up the rows' attempts.
+      const rowsAtFault = failed.length < items.length || (await this._reachable(knex))
+      const dead = []
+      for (const {item, error} of failed) {
+        const attempts = rowsAtFault ? item.attempts + 1 : item.attempts
+        if (attempts >= this._config.maxInsertAttempts) dead.push({row: item.row, error: String(error?.message ?? error), at: Date.now()})
+        else await Odac.Ipc.rpush(`wb:q:${queueKey}`, {[ATTEMPTS]: attempts, row: item.row})
+      }
+
+      if (dead.length > 0) {
+        for (const letter of dead) await Odac.Ipc.rpush(`wb:dlq:${queueKey}`, letter)
+        await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
+        console.error(
+          `\x1b[31m[WriteBuffer]\x1b[0m ${dead.length} row(s) for ${table} failed ${this._config.maxInsertAttempts} times and were moved to the dead-letter list (wb:dlq:${queueKey}). Last error: ${dead[dead.length - 1].error}`
+        )
+      }
+
+      const requeued = failed.length - dead.length
+      if (requeued > 0) {
+        console.error(`\x1b[31m[WriteBuffer]\x1b[0m Queue flush failed for ${table} (${requeued} row(s) kept):`, failed[0].error?.message)
+      } else {
+        await Odac.Ipc.srem('wb:idx:queues', queueKey)
+      }
+      // Some rows may have been inserted: the old checkpoint would replay them.
+      if (failed.length < items.length || dead.length > 0) await this._rewriteQueueCheckpoint(queueKey)
+    }
+  }
+
+  /**
+   * Inserts queued rows, isolating the ones the database rejects.
+   * @returns {Promise<Array<{item, error}>>} Rows that could not be inserted.
+   */
+  async _insertItems(knex, table, items) {
+    const size = this._config.insertBatchSize
+    const isClickHouse = this._dialect(knex) === 'clickhouse'
+    const insertOne = item => (isClickHouse ? knex.insert(table, [item.row]) : knex(table).insert(item.row))
+    const isolate = async (chunk, error) => {
+      // During an outage every single-row attempt would wait for its own connection timeout.
+      if (!(await this._reachable(knex))) return chunk.map(item => ({item, error}))
+      const failed = []
+      for (const item of chunk) {
+        try {
+          await insertOne(item)
+        } catch (error) {
+          failed.push({item, error})
+        }
+      }
+      return failed
+    }
+
+    if (isClickHouse) {
+      // No multi-statement transactions; each chunk insert is atomic on its own, so only a
+      // failing chunk is retried row by row.
+      const failed = []
+      for (let i = 0; i < items.length; i += size) {
+        const chunk = items.slice(i, i + size)
+        try {
+          await knex.insert(
+            table,
+            chunk.map(item => item.row)
+          )
+        } catch (error) {
+          failed.push(...(await isolate(chunk, error)))
+        }
+      }
+      return failed
+    }
+
+    try {
+      // One transaction for all chunks so a failure leaves nothing half-inserted.
+      await knex.transaction(async trx => {
+        for (let i = 0; i < items.length; i += size) {
+          await trx(table).insert(items.slice(i, i + size).map(item => item.row))
+        }
+      })
+      return []
+    } catch (error) {
+      return isolate(items, error)
+    }
+  }
+
+  _unwrapQueued(item) {
+    if (item && typeof item === 'object' && ATTEMPTS in item && 'row' in item) return {row: item.row, attempts: item[ATTEMPTS]}
+    return {row: item, attempts: 0}
+  }
+
+  async _reachable(knex) {
+    try {
+      await knex.raw(this._dialect(knex) === 'clickhouse' ? 'SELECT 1' : 'select 1')
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -373,7 +504,7 @@ class WriteBuffer {
       const whereClause = this._normalizeWhere(where)
       const row = await knex(table).where(whereClause).select(column).first()
       const value = row ? Number(row[column]) || 0 : 0
-      await Odac.Ipc.set(baseKey, value)
+      await Odac.Ipc.set(baseKey, value, this._config.baseTtl)
       return value
     } catch (err) {
       console.error(`\x1b[31m[WriteBuffer]\x1b[0m Base fetch failed for ${table}.${column}:`, err.message)
@@ -393,65 +524,71 @@ class WriteBuffer {
     if (Odac.Ipc?.config?.driver === 'redis') return
     if (!Odac.Storage?.isReady()) return
 
-    // Counters
-    const counterKeys = await Odac.Ipc.smembers('wb:idx:counters')
-    for (const key of counterKeys) {
+    // Read everything first, then write one consistent snapshot in a single transaction.
+    const snapshot = new Map()
+
+    for (const key of await Odac.Ipc.smembers('wb:idx:counters')) {
       const delta = (await Odac.Ipc.get(`wb:c:${key}`)) || 0
       if (delta === 0) continue
       const base = (await Odac.Ipc.get(`wb:b:${key}`)) || 0
-      Odac.Storage.putSync(`wb:c:${key}`, {delta, base})
+      snapshot.set(`wb:c:${key}`, {delta, base})
     }
 
-    // Updates
-    const updateKeys = await Odac.Ipc.smembers('wb:idx:updates')
-    for (const key of updateKeys) {
+    for (const key of await Odac.Ipc.smembers('wb:idx:updates')) {
       const data = await Odac.Ipc.hgetall(`wb:u:${key}`)
-      if (data && Object.keys(data).length > 0) {
-        Odac.Storage.putSync(`wb:u:${key}`, data)
-      }
+      if (data && Object.keys(data).length > 0) snapshot.set(`wb:u:${key}`, data)
     }
 
-    // Queues
-    const queueKeys = await Odac.Ipc.smembers('wb:idx:queues')
-    for (const key of queueKeys) {
+    for (const key of await Odac.Ipc.smembers('wb:idx:queues')) {
       const rows = await Odac.Ipc.lrange(`wb:q:${key}`, 0, -1)
-      if (rows.length > 0) {
-        Odac.Storage.putSync(`wb:q:${key}`, rows)
-      }
+      if (rows.length > 0) snapshot.set(`wb:q:${key}`, rows)
     }
+
+    for (const key of await Odac.Ipc.smembers('wb:idx:dlq')) {
+      const rows = await Odac.Ipc.lrange(`wb:dlq:${key}`, 0, -1)
+      if (rows.length > 0) snapshot.set(`wb:d:${key}`, rows)
+    }
+
+    this._storageTransaction(() => {
+      // Entries no longer pending (flushed elsewhere) must not be replayed on recovery.
+      for (const prefix of CHECKPOINT_PREFIXES) {
+        for (const {key} of Odac.Storage.getRange({start: prefix, end: prefix + '~'})) {
+          if (!snapshot.has(key)) Odac.Storage.removeSync(key)
+        }
+      }
+      for (const [key, value] of snapshot) Odac.Storage.putSync(key, value)
+    })
   }
 
-  _clearCheckpoint(filterConnection, filterTable) {
+  _storageTransaction(callback) {
+    if (typeof Odac.Storage.transactionSync === 'function') return Odac.Storage.transactionSync(callback)
+    return callback()
+  }
+
+  /**
+   * Removes checkpoint entries whose data has reached the database.
+   * Why: only entries that were actually written may go; a failed group's checkpoint is the
+   * copy that survives a crash while the database is unavailable.
+   */
+  _dropCheckpoint(keys) {
+    if (keys.length === 0) return
     if (Odac.Ipc?.config?.driver === 'redis') return
     if (!Odac.Storage?.isReady()) return
+    this._storageTransaction(() => {
+      for (const key of keys) Odac.Storage.removeSync(key)
+    })
+  }
 
-    for (const {key} of Odac.Storage.getRange({start: 'wb:c:', end: 'wb:c:~'})) {
-      if (filterConnection || filterTable) {
-        const parsed = this._parseCounterKey(key.slice(5))
-        if (parsed && filterConnection && parsed.connection !== filterConnection) continue
-        if (parsed && filterTable && parsed.table !== filterTable) continue
-      }
-      Odac.Storage.removeSync(key)
-    }
-
-    for (const {key} of Odac.Storage.getRange({start: 'wb:u:', end: 'wb:u:~'})) {
-      if (filterConnection || filterTable) {
-        const parsed = this._parseUpdateKey(key.slice(5))
-        if (parsed && filterConnection && parsed.connection !== filterConnection) continue
-        if (parsed && filterTable && parsed.table !== filterTable) continue
-      }
-      Odac.Storage.removeSync(key)
-    }
-
-    for (const {key} of Odac.Storage.getRange({start: 'wb:q:', end: 'wb:q:~'})) {
-      if (filterConnection || filterTable) {
-        const queueMeta = key.slice(5)
-        const [conn, tbl] = queueMeta.split(':')
-        if (filterConnection && conn !== filterConnection) continue
-        if (filterTable && tbl !== filterTable) continue
-      }
-      Odac.Storage.removeSync(key)
-    }
+  async _rewriteQueueCheckpoint(queueKey) {
+    if (Odac.Ipc?.config?.driver === 'redis') return
+    if (!Odac.Storage?.isReady()) return
+    const rows = await Odac.Ipc.lrange(`wb:q:${queueKey}`, 0, -1)
+    const dead = await Odac.Ipc.lrange(`wb:dlq:${queueKey}`, 0, -1)
+    this._storageTransaction(() => {
+      if (rows.length > 0) Odac.Storage.putSync(`wb:q:${queueKey}`, rows)
+      else Odac.Storage.removeSync(`wb:q:${queueKey}`)
+      if (dead.length > 0) Odac.Storage.putSync(`wb:d:${queueKey}`, dead)
+    })
   }
 
   /**
@@ -495,6 +632,14 @@ class WriteBuffer {
       }
       await Odac.Ipc.sadd('wb:idx:queues', queueKey)
       queueCount++
+    }
+
+    // Recover dead letters
+    for (const {key, value} of Odac.Storage.getRange({start: 'wb:d:', end: 'wb:d:~'})) {
+      if (!Array.isArray(value)) continue
+      const queueKey = key.slice(5)
+      for (const letter of value) await Odac.Ipc.rpush(`wb:dlq:${queueKey}`, letter)
+      await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
     }
 
     if (counterCount > 0 || updateCount > 0 || queueCount > 0) {
@@ -628,7 +773,7 @@ class WriteBuffer {
     } else if (cluster.isPrimary) {
       try {
         // Force-acquire lock for final flush (bypass distributed lock)
-        await Odac.Ipc.unlock('wb:lock:flush')
+        await Odac.Ipc.unlock(LOCK_KEY)
         await this.flush()
         console.log('\x1b[32m[WriteBuffer]\x1b[0m Final flush completed.')
       } catch (err) {

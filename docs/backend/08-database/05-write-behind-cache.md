@@ -146,8 +146,10 @@ Add a `buffer` section to your `odac.json`:
 {
   "buffer": {
     "flushInterval": 5000,
-    "checkpointInterval": 30000,
+    "checkpointInterval": 2500,
     "maxQueueSize": 10000,
+    "maxInsertAttempts": 3,
+    "baseTtl": 300,
     "primaryKey": "id"
   }
 }
@@ -156,9 +158,15 @@ Add a `buffer` section to your `odac.json`:
 | Option | Default | Description |
 |---|---|---|
 | `flushInterval` | `5000` | How often (ms) to flush pending data to the database |
-| `checkpointInterval` | `30000` | How often (ms) to write a crash-recovery checkpoint to LMDB *(memory driver only)* |
+| `checkpointInterval` | half of `flushInterval` | How often (ms) to write a crash-recovery checkpoint to LMDB *(memory driver only)*. Checkpoint entries are removed once their data is in the database. |
 | `maxQueueSize` | `10000` | Auto-flush the insert queue when it reaches this many rows |
+| `maxInsertAttempts` | `3` | Flush cycles a queued row may be rejected by the database (while other rows or a probe query succeed) before it is moved to the dead-letter list |
+| `baseTtl` | `300` | Seconds a counter's base value read from the database is cached |
 | `primaryKey` | `"id"` | Default primary key column name for scalar `where()` values |
+
+### Rejected rows
+
+If a batch insert fails, ODAC retries its rows one by one so a single bad row (constraint violation, wrong type) does not hold back the rest. A row that keeps failing is moved to a dead-letter list instead of blocking the queue; read it with `await Odac.DB.posts.buffer.deadLetters()`. While the database is unreachable, rows are kept and their attempts are not counted.
 
 ---
 
