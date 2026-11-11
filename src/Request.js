@@ -45,13 +45,16 @@ class OdacRequest {
     this.#odac = odac
     this.method = req.method.toLowerCase()
     this.url = req.url
-    this.host = req.headers.host
+    // HTTP/1.0 does not require Host, and a socket reset before construction
+    // drops remoteAddress; neither may throw on the upgrade path, which runs
+    // outside Route.request()'s 500 guard.
+    this.host = req.headers.host ?? ''
     this.ssl = this.header('x-odac-connection-ssl') === 'true'
-    this.ip = (this.header('x-odac-connection-remoteaddress') ?? req.connection.remoteAddress).replace('::ffff:', '')
+    this.ip = (this.header('x-odac-connection-remoteaddress') ?? req.connection?.remoteAddress ?? '').replace('::ffff:', '')
     this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'
     delete this.req.headers['x-odac-connection-ssl']
     delete this.req.headers['x-odac-connection-remoteaddress']
-    let route = req.headers.host.split('.')[0]
+    let route = this.host.split('.')[0]
     if (!global.Odac.Route.routes[route]) route = 'www'
     this.route = route
     if (this.res) {

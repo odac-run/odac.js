@@ -142,10 +142,22 @@ module.exports = {
        */
       server.requestTimeout = 30000 // 30 seconds
 
+      /**
+       * 5. WebSocket upgrades run outside Route.request()'s try/catch, and Node
+       *    strips its own socket error handler before emitting 'upgrade'. Any
+       *    throw or socket reset here would otherwise escape as an uncaught
+       *    exception and take down every connection on this worker.
+       */
       server.on('upgrade', (req, socket, head) => {
-        const id = nodeCrypto.randomBytes(16).toString('hex')
-        const param = Odac.instance(id, req, null)
-        Odac.Route.handleWebSocketUpgrade(req, socket, head, param)
+        socket.on('error', () => socket.destroy())
+        try {
+          const id = nodeCrypto.randomBytes(16).toString('hex')
+          const param = Odac.instance(id, req, null)
+          Odac.Route.handleWebSocketUpgrade(req, socket, head, param)
+        } catch (e) {
+          console.error(JSON.stringify({level: 'ERROR', message: 'WebSocket upgrade failed', error: e.message}))
+          socket.destroy()
+        }
       })
 
       server.listen(port)
