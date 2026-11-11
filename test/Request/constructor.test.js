@@ -44,4 +44,38 @@ describe('Request.constructor()', () => {
     expect(request.route).toBe('api')
     expect(request.host).toBe('api.example.com')
   })
+  describe('proxy connection headers', () => {
+    const proxyHeaders = {host: 'example.com', 'x-odac-connection-remoteaddress': '1.2.3.4', 'x-odac-connection-ssl': 'true'}
+
+    it('uses the client address and TLS state set by a local proxy', () => {
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '::ffff:127.0.0.1'}), null, {})
+      expect(request.ip).toBe('1.2.3.4')
+      expect(request.ssl).toBe(true)
+    })
+
+    it('uses the headers from a proxy on a container network', () => {
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '172.18.0.2'}), null, {})
+      expect(request.ip).toBe('1.2.3.4')
+    })
+
+    it('ignores the headers when the peer is a public address', () => {
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '::ffff:198.51.100.7'}), null, {})
+      expect(request.ip).toBe('198.51.100.7')
+      expect(request.ssl).toBe(false)
+    })
+
+    it('honours an explicit trustedProxies list', () => {
+      global.Odac.Config.request.trustedProxies = []
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '127.0.0.1'}), null, {})
+      expect(request.ip).toBe('127.0.0.1')
+      expect(request.ssl).toBe(false)
+    })
+
+    it('strips the headers from the request either way', () => {
+      const req = makeReq({...proxyHeaders}, {remoteAddress: '198.51.100.7'})
+      new OdacRequest('id', req, null, {})
+      expect(req.headers['x-odac-connection-remoteaddress']).toBeUndefined()
+      expect(req.headers['x-odac-connection-ssl']).toBeUndefined()
+    })
+  })
 })
