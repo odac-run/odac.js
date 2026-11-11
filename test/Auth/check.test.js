@@ -331,6 +331,41 @@ describe('Auth.check()', () => {
     expect(setCalls.length).toBe(0)
   })
 
+  it('should skip rotation once the response headers are already sent (open SSE stream)', async () => {
+    const createdAt = Date.now() - 20 * 60 * 1000
+
+    const sseReqMock = {
+      cookie: jest.fn((name, value) => {
+        if (value !== undefined) return
+        return {odac_x: 'old_x', odac_y: 'old_y'}[name] || null
+      }),
+      header: jest.fn(name => (name === 'user-agent' ? 'TestBrowser' : null)),
+      ip: '127.0.0.1',
+      res: {headersSent: true}
+    }
+
+    const dbMock = createDbMock([
+      {
+        active: new Date(),
+        browser: 'TestBrowser',
+        date: new Date(createdAt),
+        id: 'token_sse',
+        ip: '127.0.0.1',
+        token_x: 'old_x',
+        token_y: HASHED_OLD_Y,
+        user: 'user_11'
+      }
+    ])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    await expect(new Auth(sseReqMock).check()).resolves.toBe(true)
+
+    expect(dbMock.insert).not.toHaveBeenCalled()
+    expect(dbMock.tracker.updateCalls.length).toBe(1)
+    expect(sseReqMock.cookie.mock.calls.filter(c => c.length >= 2)).toHaveLength(0)
+  })
+
   it('should skip recovery rotation for WebSocket connections (res === null)', async () => {
     const maxAge = 30 * 24 * 60 * 60 * 1000
     const timeSinceRotation = 10000 // 10 seconds since original rotation

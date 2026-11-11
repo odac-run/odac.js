@@ -204,10 +204,10 @@ class Auth {
       let triggerRotation = false
       let isRecoveryRotation = false
 
-      // WebSocket connections (res === null) cannot deliver Set-Cookie headers.
-      // Rotating a token during a WS upgrade would invalidate the browser's cookies
-      // with no way to deliver replacements, causing silent logout on the next HTTP request.
-      const canDeliverCookies = !!this.#request.res
+      // WebSocket connections (res === null) and responses whose headers are already out (an
+      // open SSE stream) cannot deliver Set-Cookie headers. Rotating then would invalidate the
+      // browser's cookies with no way to deliver replacements, causing a silent logout.
+      const canDeliverCookies = !!this.#request.res && !this.#request.res.headersSent
 
       if (!isRotated) {
         if (shouldRotate && tokenAge > rotationAge) {

@@ -39,9 +39,7 @@ class Stream {
     this.#res.setTimeout(0)
     Stream.#open.add(this)
 
-    this.#res.setHeader('Content-Type', 'text/event-stream')
-    this.#res.setHeader('Cache-Control', 'no-cache')
-    this.#res.setHeader('Connection', 'keep-alive')
+    this.#writeHead()
 
     this.#heartbeat = setInterval(() => {
       if (!this.#closed) {
@@ -55,6 +53,24 @@ class Stream {
 
     this.#req.on('close', handleClose)
     this.#res.on('close', handleClose)
+  }
+
+  // Headers go out through the Request so everything queued on it before the stream opened
+  // (status, custom headers and Set-Cookie, e.g. rotated auth tokens) reaches the client.
+  // Writing them on the raw response would bypass that queue and silently drop it.
+  #writeHead() {
+    const request = this.#odac?.Request
+    if (!request || typeof request.print !== 'function') {
+      this.#res.setHeader('Content-Type', 'text/event-stream')
+      this.#res.setHeader('Cache-Control', 'no-cache')
+      this.#res.setHeader('Connection', 'keep-alive')
+      return
+    }
+
+    request.header('Content-Type', 'text/event-stream')
+    request.header('Cache-Control', 'no-cache')
+    request.header('Connection', 'keep-alive')
+    request.print()
   }
 
   #handleInput(input) {
