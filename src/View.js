@@ -9,6 +9,29 @@ const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 
 const CACHE_DIR = './storage/.cache'
 
+// Characters that can terminate or confuse an inline <script> block once JSON is embedded in HTML.
+// `<`/`>` close the element (`</script>`, `<!--`), `&` matters for XHTML parsers and U+2028/U+2029
+// are line terminators in pre-ES2019 engines. The escaped form parses to the identical value.
+const SCRIPT_UNSAFE_CHARS = /[<>&\u2028\u2029]/g
+const SCRIPT_ESCAPES = {
+  '<': '\\u003c',
+  '>': '\\u003e',
+  '&': '\\u0026',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029'
+}
+
+/**
+ * Serializes a value as JSON that is safe to embed inside an HTML `<script>` element.
+ * Why: `Odac.share()` data routinely contains user input; plain `JSON.stringify` leaves
+ * `</script>` intact, letting that input break out of the data block and execute script.
+ * @param {*} value
+ * @returns {string}
+ */
+function serializeForScript(value) {
+  return JSON.stringify(value).replace(SCRIPT_UNSAFE_CHARS, char => SCRIPT_ESCAPES[char])
+}
+
 class View {
   #earlyHints = null
   #functions = {
@@ -274,9 +297,10 @@ class View {
       }
 
       // Inject Shared Data
-      const sharedScript = `<script type="application/json" id="odac-data">${JSON.stringify(this.#odac.Request.sharedData || {})}</script>`
+      const sharedScript = `<script type="application/json" id="odac-data">${serializeForScript(this.#odac.Request.sharedData || {})}</script>`
       if (result.includes('</body>')) {
-        result = result.replace('</body>', `${sharedScript}</body>`)
+        // Function replacer: the payload may contain `$&`/`$'` sequences that a string replacement would expand.
+        result = result.replace('</body>', () => `${sharedScript}</body>`)
       } else {
         result += sharedScript
       }

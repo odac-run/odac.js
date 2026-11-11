@@ -69,4 +69,42 @@ describe('View.print()', () => {
       expect(payload.title).toBe('Dynamic Title')
     })
   })
+  describe('Shared data injection', () => {
+    const renderWithSharedData = async sharedData => {
+      const skeletonDir = path.join(global.__dir, 'skeleton')
+      await fs.mkdir(skeletonDir, {recursive: true})
+      await fs.writeFile(path.join(skeletonDir, 'main.html'), '<html><body><main></main></body></html>')
+      mockOdac.Request.sharedData = sharedData
+      view.set({skeleton: 'main'})
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    const extractPayload = html => html.match(/<script type="application\/json" id="odac-data">([\s\S]*?)<\/script>/)[1]
+
+    it('should not let shared strings close the data script element', async () => {
+      const html = await renderWithSharedData({name: '</script><script>alert(1)</script><!--'})
+
+      expect(html).not.toContain('<script>alert(1)')
+      expect(html.match(/<\/script>/g)).toHaveLength(1)
+      expect(JSON.parse(extractPayload(html))).toEqual({name: '</script><script>alert(1)</script><!--'})
+    })
+
+    it('should escape ampersands and JavaScript line terminators while preserving the value', async () => {
+      const value = {text: 'a & b \u2028 c \u2029 d > e'}
+      const html = await renderWithSharedData(value)
+      const payload = extractPayload(html)
+
+      expect(payload).not.toMatch(/[<>&\u2028\u2029]/)
+      expect(JSON.parse(payload)).toEqual(value)
+    })
+
+    it('should not expand replacement patterns contained in shared data', async () => {
+      const value = {price: "$& $' $` $$"}
+      const html = await renderWithSharedData(value)
+
+      expect(JSON.parse(extractPayload(html))).toEqual(value)
+      expect(html.endsWith('</body></html>')).toBe(true)
+    })
+  })
 })
