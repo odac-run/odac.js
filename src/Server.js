@@ -2,6 +2,12 @@ const http = require('http')
 const nodeCrypto = require('crypto')
 const cluster = require('node:cluster')
 const os = require('node:os')
+const Stream = require('./Stream.js')
+
+// How long a worker lets in-flight requests (downloads, slow uploads) finish
+// after shutdown starts before cutting them. Kept well under the primary's
+// 30s hard timeout so the final write-buffer flush still runs afterwards.
+const SHUTDOWN_GRACE = 10000
 
 module.exports = {
   init: function () {
@@ -169,28 +175,42 @@ module.exports = {
        * GRACEFUL SHUTDOWN — WORKER PROCESS
        * ──────────────────────────────────
        * 1. Stop accepting new connections  (server.close)
-       * 2. Release worker-scoped resources (IPC pending requests, DB pools)
-       * 3. Exit 0
+       * 2. End connections that never finish on their own: idle keep-alive
+       *    sockets, WebSocket clients (1001) and SSE streams. Any of them
+       *    would keep server.close() from calling back until the primary's
+       *    hard timeout, which skips the final write-buffer flush.
+       * 3. Give in-flight requests SHUTDOWN_GRACE to finish, then cut them
+       * 4. Release worker-scoped resources (IPC pending requests, DB pools)
+       * 5. Exit 0
        */
-      process.on('message', async msg => {
-        if (msg === 'shutdown') {
-          console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Closing server...`)
+      let isShuttingDown = false
+      process.on('message', msg => {
+        if (msg !== 'shutdown' || isShuttingDown) return
+        isShuttingDown = true
+        console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Closing server...`)
 
-          server.close(async () => {
-            try {
-              await Odac.Ipc.close()
-            } catch {
-              /* best-effort */
-            }
-            try {
-              await Odac.Database.close()
-            } catch {
-              /* best-effort */
-            }
-            console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Server closed.`)
-            process.exit(0)
-          })
-        }
+        const graceTimer = setTimeout(() => server.closeAllConnections?.(), SHUTDOWN_GRACE)
+        graceTimer.unref()
+
+        server.close(async () => {
+          clearTimeout(graceTimer)
+          try {
+            await Odac.Ipc.close()
+          } catch {
+            /* best-effort */
+          }
+          try {
+            await Odac.Database.close()
+          } catch {
+            /* best-effort */
+          }
+          console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Server closed.`)
+          process.exit(0)
+        })
+
+        server.closeIdleConnections?.()
+        Odac.Route.wsServer.closeAll(1001, 'Server shutting down')
+        Stream.closeAll()
       })
     }
   }

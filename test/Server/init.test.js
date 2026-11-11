@@ -17,11 +17,14 @@ jest.mock('node:cluster', () => {
 const http = require('http')
 const cluster = require('node:cluster')
 const Server = require('../../src/Server.js')
+const Stream = require('../../src/Stream.js')
 
 function makeFakeServer() {
   const server = new EventEmitter()
   server.listen = jest.fn()
   server.close = jest.fn()
+  server.closeIdleConnections = jest.fn()
+  server.closeAllConnections = jest.fn()
   return server
 }
 
@@ -104,6 +107,77 @@ describe('Server.init()', () => {
       await shutdown()
 
       expect(order).toEqual(['database', 'ipc', 'storage'])
+    })
+  })
+
+  // Open WebSocket and SSE connections keep server.close() from calling back.
+  // The primary then kills the worker at its 30s hard timeout, and its final
+  // flush never runs. The worker must end long-lived connections itself.
+  describe('worker graceful shutdown', () => {
+    let server
+
+    beforeEach(() => {
+      jest.useFakeTimers()
+      cluster.isPrimary = false
+      server = makeFakeServer()
+      http.createServer.mockReturnValue(server)
+      global.Odac = {
+        Config: {debug: true},
+        Route: {wsServer: {closeAll: jest.fn()}},
+        Ipc: {close: jest.fn(async () => {})},
+        Database: {close: jest.fn(async () => {})}
+      }
+      jest.spyOn(Stream, 'closeAll').mockImplementation(() => {})
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+      Server.init()
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    function shutdown() {
+      const listener = process.listeners('message').find(l => !processListeners.message.includes(l))
+      return listener('shutdown')
+    }
+
+    it('stops accepting connections and drops idle keep-alive sockets', () => {
+      shutdown()
+
+      expect(server.close).toHaveBeenCalledTimes(1)
+      expect(server.closeIdleConnections).toHaveBeenCalled()
+    })
+
+    it('closes WebSocket clients with 1001 and ends SSE streams', () => {
+      shutdown()
+
+      expect(global.Odac.Route.wsServer.closeAll).toHaveBeenCalledWith(1001, expect.any(String))
+      expect(Stream.closeAll).toHaveBeenCalled()
+    })
+
+    it('force-closes connections still busy after the grace period', () => {
+      shutdown()
+      expect(server.closeAllConnections).not.toHaveBeenCalled()
+
+      jest.advanceTimersByTime(10000)
+
+      expect(server.closeAllConnections).toHaveBeenCalled()
+    })
+
+    it('releases resources and exits once the server has closed', async () => {
+      shutdown()
+      await server.close.mock.calls[0][0]()
+
+      expect(global.Odac.Database.close).toHaveBeenCalled()
+      expect(global.Odac.Ipc.close).toHaveBeenCalled()
+      expect(process.exit).toHaveBeenCalledWith(0)
+    })
+
+    it('ignores a repeated shutdown message', () => {
+      shutdown()
+      shutdown()
+
+      expect(server.close).toHaveBeenCalledTimes(1)
     })
   })
 

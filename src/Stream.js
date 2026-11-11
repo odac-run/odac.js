@@ -1,4 +1,20 @@
 class Stream {
+  // Open streams on this worker. An SSE response never ends on its own, so it
+  // keeps server.close() from calling back; shutdown ends them through here.
+  static #open = new Set()
+
+  /**
+   * Ends every open SSE stream on this worker.
+   *
+   * Why: graceful shutdown waits for server.close(), which waits for every
+   * socket. A live event stream would hold the worker until the primary's
+   * hard timeout kills it and skips the final write-buffer flush. EventSource
+   * clients reconnect on their own, reaching a live worker.
+   */
+  static closeAll() {
+    for (const stream of [...Stream.#open]) stream.close()
+  }
+
   #heartbeat
   #req
   #res
@@ -21,6 +37,7 @@ class Stream {
 
     this.#req.setTimeout(0)
     this.#res.setTimeout(0)
+    Stream.#open.add(this)
 
     this.#res.setHeader('Content-Type', 'text/event-stream')
     this.#res.setHeader('Cache-Control', 'no-cache')
@@ -129,6 +146,7 @@ class Stream {
     if (this.#closed) return
     this.#closed = true
     clearInterval(this.#heartbeat)
+    Stream.#open.delete(this)
     if (!this.#res.writableEnded) {
       this.#res.end()
     }

@@ -568,6 +568,20 @@ class WebSocketServer {
     this.#clients.delete(id)
   }
 
+  /**
+   * Closes every client on this worker.
+   *
+   * Why: upgraded sockets are outside the HTTP server's connection list, so
+   * server.closeAllConnections() cannot reach them, yet they keep
+   * server.close() from calling back. Shutdown closes them here; a peer that
+   * never answers the close frame is destroyed after CLOSE_TIMEOUT.
+   * @param {number} [code=1001] Going Away: tells clients to reconnect elsewhere
+   * @param {string} [reason='Server shutting down']
+   */
+  closeAll(code = 1001, reason = 'Server shutting down') {
+    for (const client of [...this.#clients.values()]) client.close(code, reason)
+  }
+
   joinRoom(clientId, room) {
     if (!this.#rooms.has(room)) this.#rooms.set(room, new Set())
     this.#rooms.get(room).add(clientId)
