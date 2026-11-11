@@ -73,6 +73,8 @@ class Auth {
 
       if (!candidates || candidates.length === 0) return false
 
+      const passwordField = Odac.Config.auth.passwordField || 'password'
+
       // Iterate candidates to find the exact match
       candidateLoop: for (const user of candidates) {
         for (const key of keys) {
@@ -81,8 +83,10 @@ class Auth {
 
           if (!userValue) continue candidateLoop
 
-          // Strict equality check
-          if (userValue === targetValue) continue
+          // The password column only matches through hash verification. Plain
+          // equality would accept a password stored in plaintext and would let
+          // a leaked hash be replayed as the password itself.
+          if (key !== passwordField && userValue === targetValue) continue
 
           // Security: Check hashed fields (Bcrypt/MD5)
           const valueHandler = Odac.Var(userValue)

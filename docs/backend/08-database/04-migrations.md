@@ -162,6 +162,8 @@ module.exports = {
 
 **Behavior:** If the row exists (matched by `seedKey`), it updates if values differ. If not, it inserts. Safe to run repeatedly.
 
+> **Do not seed credentials.** Seeds are reapplied on every startup, so a seeded row is reset to its seed values each time the app boots. A seeded account would ship with a password everyone knows, and users could not change it. Create accounts at runtime with `Odac.Auth.register()`.
+
 ---
 
 ## Data Migrations

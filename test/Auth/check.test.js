@@ -628,4 +628,68 @@ describe('Auth.check()', () => {
     expect(upgrade).toBeDefined()
     expect(upgrade.token_y).toBe(HASHED_OLD_Y)
   })
+
+  // check(where) is the credential lookup behind login(). The password column
+  // must only ever match through hash verification: plain equality accepted a
+  // plaintext-stored password (the template's seeded admin) and the stored hash
+  // itself as a valid password.
+  describe('credential lookup', () => {
+    const Var = require('../../src/Var.js')
+
+    const usersTable = rows => {
+      const query = {
+        orWhere: jest.fn(() => query),
+        then: (resolve, reject) => Promise.resolve(rows).then(resolve, reject)
+      }
+      return query
+    }
+
+    beforeEach(() => {
+      global.Odac.Var = value => new Var(value)
+    })
+
+    it('accepts the correct password against a scrypt hash', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      const user = await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(user).toMatchObject({id: 1})
+    })
+
+    it('rejects a wrong password', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: 'nope'})).resolves.toBe(false)
+    })
+
+    it('rejects the stored hash submitted as the password', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: stored})).resolves.toBe(false)
+    })
+
+    it('rejects a password stored in plaintext even when it matches exactly', async () => {
+      global.Odac.DB.users = usersTable([{id: 1, email: 'admin@example.com', password: 'changeme'}])
+
+      await expect(authInstance.check({email: 'admin@example.com', password: 'changeme'})).resolves.toBe(false)
+    })
+
+    it('applies the same rule to a custom passwordField', async () => {
+      global.Odac.Config.auth.passwordField = 'pass'
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', pass: 'plain'}])
+
+      await expect(authInstance.check({email: 'a@example.com', pass: 'plain'})).resolves.toBe(false)
+    })
+
+    it('still matches non-password fields by equality', async () => {
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', api_key: 'k-123'}])
+
+      const user = await authInstance.check({email: 'a@example.com', api_key: 'k-123'})
+
+      expect(user).toMatchObject({id: 1})
+    })
+  })
 })
