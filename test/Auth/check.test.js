@@ -638,7 +638,8 @@ describe('Auth.check()', () => {
 
     const usersTable = rows => {
       const query = {
-        orWhere: jest.fn(() => query),
+        update: jest.fn(() => Promise.resolve(1)),
+        where: jest.fn(() => query),
         then: (resolve, reject) => Promise.resolve(rows).then(resolve, reject)
       }
       return query
@@ -690,6 +691,85 @@ describe('Auth.check()', () => {
       const user = await authInstance.check({email: 'a@example.com', api_key: 'k-123'})
 
       expect(user).toMatchObject({id: 1})
+    })
+    it('never sends the password to the database', async () => {
+      const stored = new Var('s3cret').hash()
+      const table = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+      global.Odac.DB.users = table
+
+      await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(table.where.mock.calls).toEqual([['email', 'a@example.com']])
+    })
+
+    it('requires every identity field to match (AND, not OR)', async () => {
+      const table = usersTable([])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', tenant: 't1', password: 'x'})).resolves.toBe(false)
+
+      expect(table.where.mock.calls).toEqual([
+        ['email', 'a@example.com'],
+        ['tenant', 't1']
+      ])
+    })
+
+    it('refuses a lookup that only carries the password', async () => {
+      const table = usersTable([{id: 1, password: new Var('s3cret').hash()}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({password: 's3cret'})).resolves.toBe(false)
+      expect(table.where).not.toHaveBeenCalled()
+    })
+
+    it('rejects a row whose identity only matches case-insensitively', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'A@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret'})).resolves.toBe(false)
+    })
+
+    it('runs a scrypt verification even when the account does not exist', async () => {
+      global.Odac.DB.users = usersTable([])
+      const hashCheck = jest.spyOn(Var.prototype, 'hashCheck')
+
+      await expect(authInstance.check({email: 'ghost@example.com', password: 'guess'})).resolves.toBe(false)
+
+      expect(hashCheck).toHaveBeenCalledTimes(1)
+      hashCheck.mockRestore()
+    })
+
+    it('accepts a legacy MD5 password once and upgrades it to scrypt', async () => {
+      const md5 = nodeCrypto.createHash('md5').update('s3cret').digest('hex')
+      const table = usersTable([{id: 7, email: 'a@example.com', password: md5}])
+      global.Odac.DB.users = table
+
+      const user = await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(user).toMatchObject({id: 7})
+      expect(table.where).toHaveBeenCalledWith('id', 7)
+      const [[update]] = table.update.mock.calls
+      expect(update.password.startsWith('$scrypt$')).toBe(true)
+      expect(new Var(update.password).hashCheck('s3cret')).toBe(true)
+    })
+
+    it('rejects a wrong password against a legacy MD5 hash without upgrading', async () => {
+      const md5 = nodeCrypto.createHash('md5').update('s3cret').digest('hex')
+      const table = usersTable([{id: 7, email: 'a@example.com', password: md5}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', password: 'nope'})).resolves.toBe(false)
+      expect(table.update).not.toHaveBeenCalled()
+    })
+
+    it('treats every column listed in passwordField as a secret', async () => {
+      global.Odac.Config.auth.passwordField = ['password', 'pin']
+      const table = usersTable([{id: 1, email: 'a@example.com', password: new Var('s3cret').hash(), pin: new Var('1234').hash()}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret', pin: '1234'})).resolves.toMatchObject({id: 1})
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret', pin: '0000'})).resolves.toBe(false)
+      expect(table.where.mock.calls.every(([column]) => column === 'email')).toBe(true)
     })
   })
 })

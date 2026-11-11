@@ -58,10 +58,13 @@ If you want to customize table names or primary key:
   "auth": {
     "table": "users",           // Optional: User table name (default: "users")
     "key": "id",                // Optional: Primary key (default: "id")
-    "token": "candy_auth"       // Optional: Token table (default: "candy_auth")
+    "token": "candy_auth",      // Optional: Token table (default: "candy_auth")
+    "passwordField": "password" // Optional: Hashed column(s), a string or an array (default: "password")
   }
 }
 ```
+
+Columns listed in `passwordField` are verified only against their stored scrypt hash and are never sent to the database; the user is looked up by the remaining fields (e.g. `email`), all of which must match. Accounts that still have an MD5 password are upgraded to scrypt on their next successful login.
 
 ## Form Attributes
 

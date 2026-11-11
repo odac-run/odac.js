@@ -43,7 +43,6 @@ class Auth {
     if (where) {
       if (!this.#validateInput(where)) return false
 
-      // Using new DB API
       let query = Odac.DB[this.#table]
 
       if (!query) {
@@ -51,8 +50,6 @@ class Auth {
         return false
       }
 
-      // Knex build queries differently than previous builder
-      // Need to chain where clauses
       // Resolve input promises upfront to avoid side effects and race conditions
       const criteria = {}
       const keys = Object.keys(where)
@@ -63,46 +60,29 @@ class Auth {
         criteria[key] = where[key] instanceof Promise ? await where[key] : where[key]
       }
 
-      // Chain where clauses
-      for (const key in criteria) {
-        query = query.orWhere(key, criteria[key])
-      }
+      const secretFields = Auth.#secretFields()
+      const identityKeys = keys.filter(key => !secretFields.includes(key))
+      const secretKeys = keys.filter(key => secretFields.includes(key))
 
-      // Execute query
-      const candidates = await query
+      // Secrets are never sent to the database: the row is located by its identity
+      // fields alone and the secret is verified against the stored hash in-process.
+      if (identityKeys.length === 0) return false
+      for (const key of identityKeys) query = query.where(key, criteria[key])
 
-      if (!candidates || candidates.length === 0) return false
+      const candidates = (await query) || []
+      let verified = false
 
-      const passwordField = Odac.Config.auth.passwordField || 'password'
-
-      // Iterate candidates to find the exact match
-      candidateLoop: for (const user of candidates) {
-        for (const key of keys) {
-          const userValue = user[key]
-          const targetValue = criteria[key]
-
-          if (!userValue) continue candidateLoop
-
-          // The password column only matches through hash verification. Plain
-          // equality would accept a password stored in plaintext and would let
-          // a leaked hash be replayed as the password itself.
-          if (key !== passwordField && userValue === targetValue) continue
-
-          // Security: Check hashed fields (Bcrypt/MD5)
-          const valueHandler = Odac.Var(userValue)
-          let hashMatch = false
-
-          if (valueHandler.is('hash')) {
-            hashMatch = valueHandler.hashCheck(targetValue)
-          } else if (valueHandler.is('md5')) {
-            hashMatch = Odac.Var(targetValue).md5() === userValue
-          }
-
-          if (!hashMatch) continue candidateLoop
-        }
-
+      for (const user of candidates) {
+        const result = this.#matchCredentials(user, criteria, identityKeys, secretKeys)
+        if (result.verified) verified = true
+        if (!result.match) continue
+        await Promise.all(result.legacyKeys.map(key => this.#upgradeLegacyHash(user, key, criteria[key])))
         return user
       }
+
+      // Unknown identities would otherwise answer without running scrypt, revealing which
+      // accounts exist through response time.
+      if (secretKeys.length > 0 && !verified) Odac.Var(Auth.#dummyHash()).hashCheck(String(criteria[secretKeys[0]]))
 
       return false
     } else if (this.#user) {
@@ -321,6 +301,62 @@ class Auth {
     }
   }
 
+  /**
+   * Columns that hold password hashes.
+   * Why: these must never appear in a WHERE clause or be compared by equality; a plaintext
+   * comparison accepts plaintext-stored passwords and lets a leaked hash act as the password.
+   * @returns {string[]}
+   */
+  static #secretFields() {
+    const configured = Odac.Config.auth?.passwordField || 'password'
+    return Array.isArray(configured) ? configured : [configured]
+  }
+
+  // A real scrypt hash of a random value, computed once, so a failed lookup costs the same
+  // as a failed password check.
+  static #dummyHashValue = null
+  static #dummyHash() {
+    if (!Auth.#dummyHashValue) Auth.#dummyHashValue = Odac.Var(nodeCrypto.randomBytes(16).toString('hex')).hash()
+    return Auth.#dummyHashValue
+  }
+
+  #matchCredentials(user, criteria, identityKeys, secretKeys) {
+    const outcome = {match: false, verified: false, legacyKeys: []}
+    for (const key of identityKeys) {
+      // The database may compare case- or type-insensitively; require an exact match.
+      if (user[key] === null || user[key] === undefined || String(user[key]) !== String(criteria[key])) return outcome
+    }
+    for (const key of secretKeys) {
+      const result = this.#verifySecret(user[key], criteria[key])
+      if (result.verified) outcome.verified = true
+      if (!result.match) return outcome
+      if (result.legacy) outcome.legacyKeys.push(key)
+    }
+    outcome.match = true
+    return outcome
+  }
+
+  #verifySecret(stored, candidate) {
+    if (typeof stored !== 'string' || stored === '' || candidate === null || candidate === undefined) return {match: false}
+    const handler = Odac.Var(stored)
+    if (handler.is('hash')) return {match: handler.hashCheck(String(candidate)), verified: true}
+    // Unsalted MD5 is accepted only so existing accounts can sign in once and be migrated to scrypt.
+    if (handler.is('md5')) return {match: Odac.Var(String(candidate)).md5() === stored.toLowerCase(), legacy: true}
+    return {match: false}
+  }
+
+  async #upgradeLegacyHash(user, field, password) {
+    const primaryKey = Odac.Config.auth.key || 'id'
+    if (user[primaryKey] === undefined || user[primaryKey] === null) return
+    const hash = Odac.Var(String(password)).hash()
+    try {
+      await Odac.DB[this.#table].where(primaryKey, user[primaryKey]).update({[field]: hash})
+      user[field] = hash
+    } catch (e) {
+      console.error('Odac Auth Error: Failed to upgrade legacy password hash:', e.message)
+    }
+  }
+
   async login(where) {
     this.#user = null
     let user = await this.check(where)
@@ -389,7 +425,7 @@ class Auth {
 
     this.#table = Odac.Config.auth.table || 'users'
     const primaryKey = Odac.Config.auth.key || 'id'
-    const passwordField = options.passwordField || 'password'
+    const passwordField = options.passwordField || Auth.#secretFields()[0]
     const uniqueFields = options.uniqueFields || ['email']
 
     try {
@@ -460,11 +496,9 @@ class Auth {
         data[primaryKey] = Odac.DB.nanoid()
       }
 
-      await Odac.DB[this.#table].insert(data)
+      const userId = await this.#insertUser(data, primaryKey, uniqueFields)
 
-      let userId = data[primaryKey]
-
-      if (!userId) {
+      if (userId === undefined || userId === null) {
         console.error('Odac Auth Error: Could not determine new user ID')
         return {success: false, error: 'Failed to create user'}
       }
@@ -493,6 +527,34 @@ class Auth {
       console.error('Error:', error.message)
       return {success: false, error: error.message || 'Registration failed'}
     }
+  }
+
+  /**
+   * Inserts the user row and resolves its primary key.
+   * Why: with database-generated keys (auto-increment) the id is not in `data`; it has to come
+   * from the insert itself, or registration fails after the row was already written.
+   */
+  async #insertUser(data, primaryKey, uniqueFields) {
+    if (data[primaryKey] !== undefined && data[primaryKey] !== null) {
+      await Odac.DB[this.#table].insert(data)
+      return data[primaryKey]
+    }
+
+    let insert = Odac.DB[this.#table].insert(data)
+    // MySQL has no RETURNING (Knex warns and ignores it) but resolves to [insertId] on its own.
+    const client = String(insert.client?.config?.client || '')
+    if (!client.startsWith('mysql') && typeof insert.returning === 'function') insert = insert.returning(primaryKey)
+
+    const result = await insert
+    const first = Array.isArray(result) ? result[0] : result
+    const id = first !== null && typeof first === 'object' ? first[primaryKey] : first
+    if (id !== undefined && id !== null && id !== 0) return id
+
+    // Drivers that report nothing usable: locate the row through a unique field instead.
+    const field = uniqueFields.find(name => data[name] !== undefined && data[name] !== null)
+    if (!field) return undefined
+    const row = await Odac.DB[this.#table].where(field, data[field]).first()
+    return row?.[primaryKey]
   }
 
   async logout() {
@@ -681,7 +743,7 @@ class Auth {
     if (!user) {
       // Auto-Register the user
 
-      const passwordField = Odac.Config.auth?.passwordField || 'password'
+      const passwordField = Auth.#secretFields()[0]
       // Optimization: If explicitly configured as passwordless, skip password generation overhead
       const isPasswordless = Odac.Config.auth?.passwordless === true
 
