@@ -7,6 +7,7 @@ const {execSync, spawn} = require('node:child_process')
 const cluster = require('node:cluster')
 const Env = require('../src/Env')
 const {buildConnections} = require('../src/Database/ConnectionFactory')
+const {copyTemplate} = require('../src/Cli/Scaffold')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -626,7 +627,7 @@ async function run() {
     const templateDir = path.resolve(__dirname, '../template')
 
     try {
-      fs.cpSync(templateDir, targetDir, {recursive: true})
+      await copyTemplate(templateDir, targetDir)
 
       const pkgPath = path.join(targetDir, 'package.json')
       const frameworkPkg = require('../package.json')
