@@ -238,7 +238,7 @@ await Odac.DB.users.buffer.where(userId).update({last_ip: req.ip})
 ```
 
 ### 3. Batch Insert (Queue)
-Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueueSize` is reached.
+Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueueSize` is reached. Past `maxQueueLength` (default 10 × `maxQueueSize`, `0` = no cap) `buffer.insert()` writes directly to the DB and **rejects** on failure — handle the error like a normal insert.
 ```javascript
 await Odac.DB.activity_log.buffer.insert({user_id: userId, action: 'page_view', meta: url})
 ```
@@ -266,6 +266,7 @@ await Odac.DB.buffer.flush()         // flush everything
     "flushInterval": 5000,
     "checkpointInterval": 30000,
     "maxQueueSize": 10000,
+    "maxQueueLength": 100000,
     "primaryKey": "id"
   }
 }

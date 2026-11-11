@@ -175,6 +175,16 @@ class Ipc extends EventEmitter {
   }
 
   /**
+   * Why: WriteBuffer checks whether a full insert queue has drained without copying it.
+   * @param {string} key
+   * @returns {Promise<number>} List length (0 when missing)
+   */
+  async llen(key) {
+    if (this.config.driver === 'redis') return this.redis.lLen(key)
+    return this._sendMemory('llen', {key})
+  }
+
+  /**
    * Why: Atomic read-and-clear for queue flush. Prevents data loss caused by
    * non-atomic lrange() + del() where new rpush() arrivals between the two
    * calls would be silently deleted. Redis: MULTI/EXEC pipeline.
@@ -600,6 +610,10 @@ class Ipc extends EventEmitter {
         const data = this._memoryStore.get(msg.key)
         if (!data || !Array.isArray(data.value)) return []
         return msg.stop === -1 ? data.value.slice(msg.start) : data.value.slice(msg.start, msg.stop + 1)
+      }
+      case 'llen': {
+        const data = this._memoryStore.get(msg.key)
+        return data && Array.isArray(data.value) ? data.value.length : 0
       }
       case 'lrangeAndDel': {
         const data = this._memoryStore.get(msg.key)

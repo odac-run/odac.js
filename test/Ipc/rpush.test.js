@@ -66,3 +66,24 @@ describe('Ipc - lrange()', () => {
     expect(result).toEqual([])
   })
 })
+
+describe('Ipc - llen()', () => {
+  it('returns the list length without draining it', async () => {
+    expect(await Ipc.llen('list:len')).toBe(0)
+    await Ipc.rpush('list:len', {a: 1}, {a: 2})
+    expect(await Ipc.llen('list:len')).toBe(2)
+    expect(await Ipc.lrange('list:len', 0, -1)).toHaveLength(2)
+  })
+
+  it('uses LLEN on the redis driver', async () => {
+    Ipc.config.driver = 'redis'
+    Ipc.redis = {lLen: jest.fn().mockResolvedValue(7)}
+    try {
+      expect(await Ipc.llen('list:r')).toBe(7)
+      expect(Ipc.redis.lLen).toHaveBeenCalledWith('list:r')
+    } finally {
+      Ipc.config.driver = 'memory'
+      Ipc.redis = null
+    }
+  })
+})

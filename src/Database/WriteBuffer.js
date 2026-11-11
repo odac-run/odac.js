@@ -42,6 +42,9 @@ const DEFAULT_CONFIG = {
   // Defaults to half the flush interval (see init) so every flush window is checkpointed.
   checkpointInterval: null,
   maxQueueSize: 10000,
+  // Hard cap on queued rows per table; defaults to 10 × maxQueueSize (see init). Past it,
+  // inserts go straight to the database. 0 disables the cap.
+  maxQueueLength: null,
   primaryKey: 'id',
   insertBatchSize: 1000,
   // Flush cycles a row may fail on its own (while the database is reachable) before it is
@@ -64,6 +67,8 @@ class WriteBuffer {
     this._checkpointTimer = null
     this._config = {}
     this._initialized = false
+    // Queues this process saw at or above maxQueueLength.
+    this._overflowing = new Set()
   }
 
   // ─── Lifecycle ──────────────────────────────────────────────
@@ -83,6 +88,9 @@ class WriteBuffer {
     this._nanoidColumns = nanoidColumns
     this._config = {...DEFAULT_CONFIG, ...Odac.Config.buffer}
     if (!this._config.checkpointInterval) this._config.checkpointInterval = Math.max(500, Math.floor(this._config.flushInterval / 2))
+    if (this._config.maxQueueLength === null || this._config.maxQueueLength === undefined) {
+      this._config.maxQueueLength = this._config.maxQueueSize * 10
+    }
 
     if (cluster.isPrimary) {
       await this._recoverFromCheckpoint()
@@ -145,6 +153,10 @@ class WriteBuffer {
    *
    * Why: Ipc.rpush appends to a shared list — multiple workers/servers contribute rows
    * that are drained to the database in a single INSERT batch.
+   * Once the queue reaches maxQueueLength (the flush is failing or cannot keep up), rows
+   * are inserted directly instead: the queue stops growing, no row is dropped, and an
+   * outage surfaces to the caller as a rejected insert rather than silent memory growth.
+   * @throws When the queue is full and the direct insert fails.
    */
   async insert(connection, table, row) {
     // Auto-generate nanoid values for columns defined as type 'nanoid' in schema.
@@ -158,8 +170,21 @@ class WriteBuffer {
     }
 
     const queueKey = `${connection}:${table}`
+    if (this._overflowing.has(queueKey)) {
+      if ((await Odac.Ipc.llen(`wb:q:${queueKey}`)) >= this._config.maxQueueLength) return this._insertDirect(connection, table, row)
+      this._overflowing.delete(queueKey)
+    }
+
     const length = await Odac.Ipc.rpush(`wb:q:${queueKey}`, row)
     await Odac.Ipc.sadd('wb:idx:queues', queueKey)
+    if (this._config.maxQueueLength > 0 && length >= this._config.maxQueueLength) {
+      if (!this._overflowing.has(queueKey)) {
+        console.error(
+          `\x1b[31m[WriteBuffer]\x1b[0m Insert queue for ${table} reached maxQueueLength (${length} rows); inserting directly until it drains.`
+        )
+      }
+      this._overflowing.add(queueKey)
+    }
 
     // Auto-flush when queue exceeds threshold. One at a time per process: while the database
     // rejects the batch, every further insert would otherwise start another full attempt.
@@ -170,6 +195,24 @@ class WriteBuffer {
         .finally(() => (this._autoFlushing = false))
     }
 
+    return true
+  }
+
+  /**
+   * Inserts one row past the queue cap, so neither a dead database nor a lagging flush
+   * grows the queue further. Buffering resumes once the queue length drops below the cap.
+   */
+  async _insertDirect(connection, table, row) {
+    const knex = this._connections?.[connection]
+    if (!knex) throw new Error(`[WriteBuffer] Unknown connection "${connection}"`)
+    try {
+      if (this._dialect(knex) === 'clickhouse') await knex.insert(table, [row])
+      else await knex(table).insert(row)
+    } catch (error) {
+      throw new Error(`[WriteBuffer] Insert queue for ${table} is full and the direct insert failed: ${error?.message ?? error}`, {
+        cause: error
+      })
+    }
     return true
   }
 
@@ -786,6 +829,7 @@ class WriteBuffer {
       }
     }
 
+    this._overflowing.clear()
     this._initialized = false
   }
 }
