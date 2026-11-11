@@ -83,7 +83,9 @@ Magic links usage is configured in your `odac.json` file under the `auth` object
 
 ```json
 {
+  "url": "https://example.com",         // Public address used in the emailed link (recommended)
   "auth": {
+    "magicLinkUrl": "https://example.com", // Optional: overrides "url" for magic links only
     "table": "users",                   // Table where users are stored
     "magicTable": "magic_links",        // Table to store tokens (auto-created)
     "magicLinkRateLimit": 3600000,      // Rate limit window in ms (Default: 1 hour)
@@ -95,6 +97,10 @@ Magic links usage is configured in your `odac.json` file under the `auth` object
   }
 }
 ```
+
+### Link address
+
+The emailed link is built from `auth.magicLinkUrl`, then `url` (both may include a path prefix), or the `url` option of `Odac.Auth.magic()`. Without either, ODAC uses the request's `Host` only when the request came through a trusted proxy (see `request.trustedProxies`) and the host is a plain `host[:port]`; otherwise `magic()` returns `{success: false}` and logs why. This stops an attacker from requesting a link for someone else's address with a forged `Host` header so that the login token is delivered to the attacker's domain. Set `url` in production.
 
 ## Auto-Registration & Passwordless Mode
  

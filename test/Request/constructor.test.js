@@ -51,6 +51,7 @@ describe('Request.constructor()', () => {
       const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '::ffff:127.0.0.1'}), null, {})
       expect(request.ip).toBe('1.2.3.4')
       expect(request.ssl).toBe(true)
+      expect(request.fromTrustedProxy).toBe(true)
     })
 
     it('uses the headers from a proxy on a container network', () => {
@@ -62,6 +63,7 @@ describe('Request.constructor()', () => {
       const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: '::ffff:198.51.100.7'}), null, {})
       expect(request.ip).toBe('198.51.100.7')
       expect(request.ssl).toBe(false)
+      expect(request.fromTrustedProxy).toBe(false)
     })
 
     it('honours an explicit trustedProxies list', () => {

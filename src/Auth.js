@@ -6,6 +6,9 @@ const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 const TOKEN_ROTATION_GRACE_PERIOD_MS = 30 * 1000
 const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 const TOKEN_SWEEP_BOOT_DELAY_MS = 5 * 60 * 1000
+// hostname or IPv4 with optional port, or a bracketed IPv6 literal with optional port. Anything
+// else (userinfo `@`, paths, whitespace) could redirect a generated absolute URL elsewhere.
+const SAFE_HOST = /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i
 class Auth {
   #request = null
   #table = null
@@ -557,6 +560,31 @@ class Auth {
     return row?.[primaryKey]
   }
 
+  /**
+   * Public base URL that magic links point to.
+   * Why: the link carries a login token. Building it from a client-supplied Host header lets an
+   * attacker request a link for the victim's address that points at the attacker's domain. A
+   * configured URL is always preferred; the request's own Host is used only when it arrived
+   * through a trusted proxy (which only routes the app's domains) and is a plain host[:port].
+   * @returns {string|null} Origin plus optional path prefix, without a trailing slash.
+   */
+  #magicLinkBase(options) {
+    const configured = options.url || Odac.Config.auth?.magicLinkUrl || Odac.Config.url
+    if (configured) {
+      try {
+        const url = new URL(configured)
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+        return url.origin + url.pathname.replace(/\/+$/, '')
+      } catch {
+        return null
+      }
+    }
+
+    const host = this.#request.host
+    if (!this.#request.fromTrustedProxy || typeof host !== 'string' || !SAFE_HOST.test(host)) return null
+    return (this.#request.ssl ? 'https://' : 'http://') + host
+  }
+
   async logout() {
     if (!this.#user) return false
 
@@ -663,6 +691,14 @@ class Auth {
     // If user doesn't exist, we still proceed to send the link to allow for "Sign Up via Magic Link" (Passwordless Signup)
     // The user will be created upon verification.
 
+    const baseUrl = this.#magicLinkBase(options)
+    if (!baseUrl) {
+      console.error(
+        'Odac Auth Error: cannot build a trusted magic link URL for this request. Set "url" (or "auth.magicLinkUrl") in odac.json to the public address of the app.'
+      )
+      return {success: false, error: 'Magic link login is not available.'}
+    }
+
     // 2. Generate secure token
     const tokenRaw = nodeCrypto.randomBytes(32).toString('hex')
     const tokenHash = Odac.Var(tokenRaw).hash() // Hash it for DB storage
@@ -677,7 +713,7 @@ class Auth {
     })
 
     // 4. Send Email
-    let link = `${(this.#request.ssl ? 'https://' : 'http://') + this.#request.host}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
+    let link = `${baseUrl}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
     if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
 
     try {
@@ -693,7 +729,7 @@ class Auth {
       await mail.send({
         link: link,
         magic_link: link,
-        network: this.#request.host,
+        network: new URL(baseUrl).host,
         ip: this.#request.ip
       })
     } catch (e) {

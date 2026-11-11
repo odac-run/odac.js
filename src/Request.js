@@ -55,6 +55,9 @@ class OdacRequest {
     // is a trusted proxy; anyone else could set them to impersonate another client.
     const peer = (req.socket ?? req.connection)?.remoteAddress
     const fromProxy = isTrustedProxy(peer, global.Odac.Config.request?.trustedProxies)
+    // Whether the peer is the proxy (or a local client). Only then has the Host header passed
+    // through something that routes configured domains; a direct client can send any Host.
+    this.fromTrustedProxy = fromProxy
     this.ssl = fromProxy ? this.header('x-odac-connection-ssl') === 'true' : !!(req.socket ?? req.connection)?.encrypted
     this.ip = ((fromProxy && this.header('x-odac-connection-remoteaddress')) || peer || '').replace('::ffff:', '')
     this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'
