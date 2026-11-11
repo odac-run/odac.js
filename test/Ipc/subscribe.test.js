@@ -74,6 +74,40 @@ describe('Ipc - subscribe()', () => {
   })
 })
 
+// Subscriber callbacks are user code invoked from the worker's process
+// 'message' listener: a throw or rejection there must stay contained.
+describe('Ipc - subscribe() callback failures', () => {
+  beforeEach(() => jest.spyOn(console, 'error').mockImplementation(() => {}))
+  afterEach(() => console.error.mockRestore())
+
+  it('should contain a throwing subscriber and still deliver to the others', async () => {
+    const healthy = jest.fn()
+    await Ipc.subscribe('chan', () => {
+      throw new Error('subscriber bug')
+    })
+    await Ipc.subscribe('chan', healthy)
+
+    expect(() => deliver('chan', 'tick')).not.toThrow()
+    expect(healthy).toHaveBeenCalledWith('tick')
+    expect(console.error).toHaveBeenCalled()
+  })
+
+  it('should contain a rejecting async subscriber', async () => {
+    const onUnhandled = jest.fn()
+    process.on('unhandledRejection', onUnhandled)
+    await Ipc.subscribe('chan', async () => {
+      throw new Error('async subscriber bug')
+    })
+
+    deliver('chan', 'tick')
+    await new Promise(resolve => setImmediate(resolve))
+    process.removeListener('unhandledRejection', onUnhandled)
+
+    expect(onUnhandled).not.toHaveBeenCalled()
+    expect(console.error).toHaveBeenCalled()
+  })
+})
+
 describe('Ipc - unsubscribe()', () => {
   it('should stop delivering to the removed callback', async () => {
     const cb = jest.fn()

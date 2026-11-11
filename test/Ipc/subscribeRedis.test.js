@@ -59,6 +59,36 @@ describe('Ipc redis - subscribe()', () => {
     expect(cb).toHaveBeenCalledWith({hello: 'world'})
   })
 
+  it('should contain a throwing consumer and still deliver to the others', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const healthy = jest.fn()
+    await Ipc.subscribe('chan', () => {
+      throw new Error('subscriber bug')
+    })
+    await Ipc.subscribe('chan', healthy)
+
+    expect(() => deliver('chan', 'tick')).not.toThrow()
+    expect(healthy).toHaveBeenCalledWith('tick')
+    errorSpy.mockRestore()
+  })
+
+  it('should contain a rejecting async consumer', async () => {
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+    const onUnhandled = jest.fn()
+    process.on('unhandledRejection', onUnhandled)
+    await Ipc.subscribe('chan', async () => {
+      throw new Error('async subscriber bug')
+    })
+
+    deliver('chan', 'tick')
+    await new Promise(resolve => setImmediate(resolve))
+    process.removeListener('unhandledRejection', onUnhandled)
+
+    expect(onUnhandled).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalled()
+    errorSpy.mockRestore()
+  })
+
   it('should subscribe to a channel only once, however many consumers join', async () => {
     await Ipc.subscribe('stream', jest.fn())
     await Ipc.subscribe('stream', jest.fn())

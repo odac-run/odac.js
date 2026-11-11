@@ -291,11 +291,14 @@ class Ipc extends EventEmitter {
       // down the Redis subscription the other consumers still depend on.
       if (!this._redisBridges.has(channel)) {
         const bridge = raw => {
+          let message
           try {
-            this.emit(channel, JSON.parse(raw))
+            message = JSON.parse(raw)
           } catch (err) {
             console.error('[Odac Ipc] Failed to parse message on channel "' + channel + '":', err)
+            return
           }
+          for (const listener of this.listeners(channel)) this._deliver(channel, listener, message)
         }
         this._redisBridges.set(channel, bridge)
         try {
@@ -445,10 +448,30 @@ class Ipc extends EventEmitter {
           // Pub/Sub message received from Primary
           const subs = this._subs.get(msg.channel)
           if (subs) {
-            subs.forEach(cb => cb(msg.message))
+            for (const cb of subs) this._deliver(msg.channel, cb, msg.message)
           }
         }
       })
+    }
+  }
+
+  /**
+   * Invokes one subscriber callback in isolation.
+   *
+   * Why: callbacks are user code running inside the worker's process 'message'
+   * listener (memory) or the Redis bridge. A throw would escape as an uncaught
+   * exception and a rejection as an unhandled rejection; either terminates the
+   * worker and every connection on it. Containing it also keeps one faulty
+   * consumer from starving its co-tenants on the channel.
+   */
+  _deliver(channel, callback, message) {
+    const report = err =>
+      console.error(JSON.stringify({level: 'ERROR', message: `Ipc subscriber on "${channel}" failed`, error: err?.message ?? String(err)}))
+    try {
+      const result = callback(message)
+      if (result && typeof result.then === 'function') result.then(undefined, report)
+    } catch (err) {
+      report(err)
     }
   }
 

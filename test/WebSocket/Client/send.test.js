@@ -7,7 +7,8 @@ function createMockSocket() {
     on: jest.fn(),
     write: jest.fn(),
     end: jest.fn(),
-    removeAllListeners: jest.fn(),
+    removeListener: jest.fn(),
+    destroy: jest.fn(),
     writable: true
   }
 }

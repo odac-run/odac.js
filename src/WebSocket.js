@@ -11,6 +11,10 @@ const WORKER_ID = `${process.pid}`
 const DEFAULT_MAX_PAYLOAD = 10 * 1024 * 1024
 const DEFAULT_RATE_LIMIT_MAX = 50
 const DEFAULT_RATE_LIMIT_WINDOW = 1000
+// After the server sends its CLOSE frame and FIN, the peer gets this long to
+// finish the TCP close before the socket is destroyed. HTTP server sockets are
+// half-open capable, so a peer that never sends FIN would otherwise pin the fd.
+const CLOSE_TIMEOUT = 1000
 
 const OPCODE = {
   CONTINUATION: 0x0,
@@ -31,6 +35,10 @@ const READY_STATE = {
   CLOSING: 2,
   CLOSED: 3
 }
+
+/** Structured log line for a failing user handler; never rethrows. */
+const reportHandlerError = (event, err) =>
+  console.error(JSON.stringify({level: 'ERROR', message: `WebSocket '${event}' handler failed`, error: err?.message ?? String(err)}))
 
 const isBinary = data => Buffer.isBuffer(data) || ArrayBuffer.isView(data) || data instanceof ArrayBuffer
 
@@ -66,6 +74,8 @@ class WebSocketClient {
   #rateLimitTimer
   #fragments = null
   #parseJson
+  #onData
+  #closeTimer = null
   data = {}
 
   constructor(socket, server, id, options = {}) {
@@ -113,7 +123,7 @@ class WebSocketClient {
   #setupListeners() {
     let buffer = Buffer.alloc(0)
 
-    this.#socket.on('data', chunk => {
+    this.#onData = chunk => {
       buffer = Buffer.concat([buffer, chunk])
 
       while (buffer.length >= 2) {
@@ -123,10 +133,16 @@ class WebSocketClient {
         buffer = buffer.slice(frame.totalLength)
         this.#handleFrame(frame)
       }
-    })
+    }
 
+    this.#socket.on('data', this.#onData)
     this.#socket.on('close', () => this.#handleClose())
-    this.#socket.on('error', err => this.#emit('error', err))
+    // Stays attached for the socket's whole life: a reset that lands between
+    // our CLOSE frame and the TCP close is otherwise an unhandled 'error'
+    // event that kills the worker. Post-close errors are expected noise.
+    this.#socket.on('error', err => {
+      if (this.#readyState !== READY_STATE.CLOSED) this.#emit('error', err)
+    })
   }
 
   #parseFrame(buffer) {
@@ -293,7 +309,10 @@ class WebSocketClient {
     if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
     this.#fragments = null
 
-    this.#socket.removeAllListeners()
+    // Only detach our own frame parser. removeAllListeners() would also strip
+    // the error guard and Node's internal socket listeners while the socket
+    // is still half-open.
+    this.#socket.removeListener('data', this.#onData)
 
     for (const room of this.#rooms) {
       this.#server.leaveRoom(this.#id, room)
@@ -304,6 +323,8 @@ class WebSocketClient {
   }
 
   #handleClose() {
+    clearTimeout(this.#closeTimer)
+    this.#closeTimer = null
     this.#cleanup()
   }
 
@@ -335,10 +356,23 @@ class WebSocketClient {
     this.#socket.write(Buffer.concat([header, payload]))
   }
 
+  /**
+   * Dispatches an event to user handlers.
+   *
+   * Why: handlers run inside the socket 'data' listener. A synchronous throw
+   * would be an uncaught exception and an async rejection an unhandled
+   * rejection; both terminate the worker. Each handler is isolated so one bug
+   * neither crashes the process nor skips the remaining handlers.
+   */
   #emit(event, ...args) {
-    if (this.#handlers[event]) {
-      for (const handler of this.#handlers[event]) {
-        handler(...args)
+    const handlers = this.#handlers[event]
+    if (!handlers) return
+    for (const handler of handlers) {
+      try {
+        const result = handler(...args)
+        if (result && typeof result.then === 'function') result.then(undefined, err => reportHandlerError(event, err))
+      } catch (err) {
+        reportHandlerError(event, err)
       }
     }
   }
@@ -393,6 +427,9 @@ class WebSocketClient {
 
     this.#sendFrame(OPCODE.CLOSE, payload)
     this.#socket.end()
+    const socket = this.#socket
+    this.#closeTimer = setTimeout(() => socket.destroy(), CLOSE_TIMEOUT)
+    this.#closeTimer.unref?.()
     this.#cleanup()
   }
 
@@ -512,7 +549,19 @@ class WebSocketServer {
       Odac.Request._wsHeaders = req.headers
     }
 
-    handler(client, Odac)
+    // The route handler (auth check, middleware, user code) is async. A
+    // failure closes this connection with 1011 instead of becoming an
+    // unhandled rejection that takes down every connection on the worker.
+    const fail = err => {
+      reportHandlerError('connection', err)
+      client.close(1011, 'Internal error')
+    }
+    try {
+      const pending = handler(client, Odac)
+      if (pending && typeof pending.then === 'function') pending.then(undefined, fail)
+    } catch (err) {
+      fail(err)
+    }
   }
 
   removeClient(id) {

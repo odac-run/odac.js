@@ -11,6 +11,20 @@ const {WebSocketServer} = require('./WebSocket.js')
 let routes2 = {}
 const mime = require('./Route/MimeTypes.js')
 
+// HTTP status set by abort()/redirect() on a WebSocket request → close frame.
+const WS_REJECT = {401: [4001, 'Unauthorized'], 403: [4003, 'Forbidden']}
+
+/**
+ * Closes a WebSocket whose request was ended by middleware or the handler.
+ * Why: abort(401)/abort(403) keep the same close codes the built-in auth and
+ * `false` middleware paths use; any other ending (redirect, custom status)
+ * is a generic rejection.
+ */
+function closeRejected(ws, status) {
+  const [code, reason] = WS_REJECT[status] ?? [4000, 'Request rejected']
+  ws.close(code, reason)
+}
+
 class Route {
   loading = false
   routes = {}
@@ -1036,6 +1050,11 @@ class Route {
 
           const result = await middleware(Odac)
 
+          if (Odac.Request.ended) {
+            closeRejected(ws, Odac.Request.statusCode)
+            return
+          }
+
           if (result === false) {
             ws.close(4003, 'Forbidden')
             return
@@ -1049,6 +1068,10 @@ class Route {
       }
       const res = handler(Odac)
       if (res instanceof Promise) await res
+      if (Odac.Request.ended) {
+        closeRejected(ws, Odac.Request.statusCode)
+        return
+      }
       ws.resume()
       return res
     }

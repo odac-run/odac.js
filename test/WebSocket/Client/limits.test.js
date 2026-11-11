@@ -34,7 +34,8 @@ describe('WebSocketClient Limits', () => {
         on: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-        removeAllListeners: jest.fn(),
+        removeListener: jest.fn(),
+        destroy: jest.fn(),
         writable: true
       }
       const client = createClient(socket, server, 'test-id', {maxPayload: 10})
@@ -68,7 +69,8 @@ describe('WebSocketClient Limits', () => {
         on: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-        removeAllListeners: jest.fn(),
+        removeListener: jest.fn(),
+        destroy: jest.fn(),
         writable: true
       }
       const client = createClient(socket, server, 'test-id', {maxPayload: 10})
@@ -91,7 +93,8 @@ describe('WebSocketClient Limits', () => {
         on: jest.fn(),
         write: jest.fn(),
         end: jest.fn(),
-        removeAllListeners: jest.fn(),
+        removeListener: jest.fn(),
+        destroy: jest.fn(),
         writable: true
       }
       const client = createClient(socket, server, 'test-id', {rateLimit: {max: 2, window: 1000}})

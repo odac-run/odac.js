@@ -96,3 +96,49 @@ describe('Request.end()', () => {
     expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBeUndefined()
   })
 })
+
+// WebSocket upgrades build a Request with no HTTP response object. Middleware
+// shared with HTTP routes may still call end()/abort()/redirect() on it.
+describe('Request.end() without an HTTP response', () => {
+  beforeEach(() => {
+    global.Odac = {Config: {request: {timeout: 5000, maxBodySize: 1e6}}, Route: {routes: {www: {}}}, Request: {}}
+  })
+
+  afterEach(() => {
+    delete global.Odac
+  })
+
+  it('records the request as ended instead of throwing', () => {
+    const request = new OdacRequest('id', makeReq(), null, {})
+    expect(request.ended).toBe(false)
+    expect(() => request.end('bye')).not.toThrow()
+    expect(request.ended).toBe(true)
+  })
+
+  it('lets redirect() reject a WebSocket request', () => {
+    const request = new OdacRequest('id', makeReq(), null, {})
+    expect(() => request.redirect('/login')).not.toThrow()
+    expect(request.ended).toBe(true)
+    expect(request.statusCode).toBe(302)
+  })
+})
+
+describe('Request.ended', () => {
+  beforeEach(() => {
+    global.Odac = {Config: {request: {timeout: 5000, maxBodySize: 1e6}}, Route: {routes: {www: {}}}, Request: {}}
+  })
+
+  afterEach(() => {
+    for (const r of openRequests) r.clearTimeout()
+    openRequests = []
+    delete global.Odac
+  })
+
+  it('reflects the HTTP response state', () => {
+    const {res, request} = build({})
+    expect(request.ended).toBe(false)
+    request.end('ok')
+    res.finished = true
+    expect(request.ended).toBe(true)
+  })
+})

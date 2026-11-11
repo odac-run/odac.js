@@ -29,6 +29,7 @@ class OdacRequest {
   #status = 200
   #timeout = null
   #earlyHints = null
+  #ended = false
   #sessions = {}
   variables = {}
   sharedData = {}
@@ -80,6 +81,9 @@ class OdacRequest {
   // - ABORT REQUEST
   async abort(code) {
     this.status(code)
+    // WebSocket upgrades have no HTTP response and no error page to render;
+    // ending the request lets the WS route close the socket with this status.
+    if (!this.res) return this.end()
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
     const errorRoute = this.#odac.Route?.routes?.[this.route]?.error?.[code]
     if (errorRoute && typeof errorRoute.cache === 'function') {
@@ -358,6 +362,10 @@ class OdacRequest {
   // - RETURN REQUEST
   end(data) {
     if (data instanceof Promise) return data.then(result => this.end(result))
+    if (!this.res) {
+      this.#ended = true
+      return
+    }
     if (this.res.finished) return
     if (typeof data === 'object' && data !== null && data.type !== 'Buffer') {
       let json = JSON.stringify(data)
@@ -602,6 +610,29 @@ class OdacRequest {
   // - HTTP CODE
   status(code) {
     this.#status = code
+  }
+
+  /**
+   * Whether a response has been produced for this request.
+   *
+   * Why: middleware shared between HTTP and WebSocket routes signals rejection
+   * by ending the request (abort, redirect, return). A WebSocket request has no
+   * HTTP response to inspect, so callers read this instead of res.finished.
+   * @returns {boolean}
+   */
+  get ended() {
+    if (!this.res) return this.#ended
+    return Boolean(this.res.finished || this.res.writableEnded)
+  }
+
+  /**
+   * The status code set so far via status()/abort()/redirect().
+   *
+   * Why: the WebSocket route maps an aborted request's HTTP status to a close code.
+   * @returns {number}
+   */
+  get statusCode() {
+    return this.#status
   }
 
   // - CLEAR TIMEOUT (for long-running connections like SSE)
