@@ -558,32 +558,13 @@ class OdacRequest {
       .digest('hex')
     let pub = this.cookie('odac_session')
     if (!pub || !global.Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
-      const lockKey = `lock:${this.ip}:${pri}`
-      const now = Date.now()
-
-      const existingLock = global.Odac.Storage.get(lockKey)
-      if (existingLock) {
-        if (now - existingLock.timestamp < 2000 && global.Odac.Storage.get(`sess:${existingLock.sessionId}:${pri}:_created`)) {
-          pub = existingLock.sessionId
-        } else {
-          global.Odac.Storage.remove(lockKey)
-        }
-      }
-
-      if (!pub) {
-        do {
-          pub = nodeCrypto.randomBytes(16).toString('hex')
-        } while (global.Odac.Storage.get(`sess:${pub}:${pri}:_created`))
-        global.Odac.Storage.put(lockKey, {sessionId: pub, timestamp: now})
-        global.Odac.Storage.put(`sess:${pub}:${pri}:_created`, now)
-        this.cookie('odac_session', `${pub}`)
-        setTimeout(() => {
-          const lock = global.Odac.Storage.get(lockKey)
-          if (lock?.timestamp === now) {
-            global.Odac.Storage.remove(lockKey)
-          }
-        }, 2000)
-      }
+      // Every cookieless request gets its own session. Reusing a recent session by IP and
+      // User-Agent merged unrelated visitors behind the same NAT into one session.
+      do {
+        pub = nodeCrypto.randomBytes(16).toString('hex')
+      } while (global.Odac.Storage.get(`sess:${pub}:${pri}:_created`))
+      global.Odac.Storage.put(`sess:${pub}:${pri}:_created`, Date.now())
+      this.cookie('odac_session', `${pub}`)
     }
 
     const dbKey = `sess:${pub}:${pri}:${key}`
