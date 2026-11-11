@@ -61,6 +61,52 @@ describe('Server.init()', () => {
     delete global.Odac
   })
 
+  // Buffered writes live in the IPC store until WriteBuffer flushes them, so
+  // the database (whose close runs the final flush) must close before IPC.
+  describe('primary graceful shutdown', () => {
+    let order
+
+    beforeEach(() => {
+      cluster.isPrimary = true
+      cluster.workers = {}
+      order = []
+      const track = name => jest.fn(async () => order.push(name))
+      global.Odac = {
+        Config: {debug: true},
+        Route: {stopCron: jest.fn()},
+        Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn(() => order.push('storage'))},
+        Ipc: {close: track('ipc')},
+        Database: {close: track('database')}
+      }
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+      Server.init()
+    })
+
+    async function shutdown() {
+      const listener = process.listeners('SIGTERM').find(l => !processListeners.SIGTERM.includes(l))
+      listener()
+      await new Promise(resolve => setImmediate(resolve))
+    }
+
+    it('closes the database before IPC so the final flush still sees buffered writes', async () => {
+      await shutdown()
+
+      expect(order).toEqual(['database', 'ipc', 'storage'])
+      expect(process.exit).toHaveBeenCalledWith(0)
+    })
+
+    it('still closes IPC and storage when the database close fails', async () => {
+      global.Odac.Database.close.mockImplementation(async () => {
+        order.push('database')
+        throw new Error('pool gone')
+      })
+
+      await shutdown()
+
+      expect(order).toEqual(['database', 'ipc', 'storage'])
+    })
+  })
+
   describe('worker upgrade listener', () => {
     let server
 

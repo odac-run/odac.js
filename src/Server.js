@@ -39,7 +39,7 @@ module.exports = {
        * Shutdown order (deterministic, sequential):
        *   1. Stop accepting new work       → Cron, session GC
        *   2. Drain active workers           → send 'shutdown', disconnect, wait
-       *   3. Release shared resources       → IPC, Database, Storage
+       *   3. Release shared resources       → Database, IPC, Storage
        *   4. Exit 0
        *
        * A 30-second hard timeout protects against hung workers or I/O.
@@ -84,16 +84,19 @@ module.exports = {
 
         console.log('\x1b[32m[Shutdown]\x1b[0m All workers stopped.')
 
-        // Phase 3: Release shared resources (order matters: IPC → DB → Storage)
-        try {
-          await Odac.Ipc.close()
-        } catch (e) {
-          console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing IPC: ${e.message}`)
-        }
+        // Phase 3: Release shared resources (order matters: DB → IPC → Storage)
+        // Database.close() runs the WriteBuffer final flush, which reads the
+        // buffered writes from the IPC store and falls back to an LMDB
+        // checkpoint in Storage. Both must still be open when it runs.
         try {
           await Odac.Database.close()
         } catch (e) {
           console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing Database: ${e.message}`)
+        }
+        try {
+          await Odac.Ipc.close()
+        } catch (e) {
+          console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing IPC: ${e.message}`)
         }
         Odac.Storage.close()
 

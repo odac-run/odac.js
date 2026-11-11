@@ -621,7 +621,11 @@ class WriteBuffer {
       this._checkpointTimer = null
     }
 
-    if (cluster.isPrimary) {
+    // With IPC already torn down the buffer is unreachable: a flush would see
+    // nothing, report success and clear the checkpoint, the only remaining copy.
+    if (cluster.isPrimary && !Odac.Ipc?.initialized) {
+      console.error('\x1b[31m[WriteBuffer]\x1b[0m Final flush skipped: IPC closed first. Checkpoint kept for recovery.')
+    } else if (cluster.isPrimary) {
       try {
         // Force-acquire lock for final flush (bypass distributed lock)
         await Odac.Ipc.unlock('wb:lock:flush')
