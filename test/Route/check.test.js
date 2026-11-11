@@ -367,7 +367,7 @@ describe('Route.check()', () => {
 
     it('should serve a public static file successfully', async () => {
       const mockStat = jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 1024})
-      const mockStream = {pipe: jest.fn()}
+      const mockStream = new (require('stream').PassThrough)()
       const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue(mockStream)
       const expectedPath = path.normalize('/app/public/style.css')
 
@@ -413,7 +413,8 @@ describe('Route.check()', () => {
 
     it('should cache metadata in production mode', async () => {
       jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 2048})
-      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream')
+      const {PassThrough} = require('stream')
+      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue(new PassThrough())
 
       const mockOdac = createMockOdac('/script.js')
       mockOdac.Config.debug = false // prod mode
@@ -425,7 +426,8 @@ describe('Route.check()', () => {
 
       // reset mock tracking (cache hit -> no stat)
       jest.clearAllMocks()
-      jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream_2')
+      const secondStream = new PassThrough()
+      jest.spyOn(fs, 'createReadStream').mockReturnValue(secondStream)
 
       // second call
       const result2 = await route.check(mockOdac)
@@ -434,7 +436,7 @@ describe('Route.check()', () => {
       expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
       expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 2048)
       expect(mockCreateReadStream).toHaveBeenCalledWith(path.normalize('/app/public/script.js'))
-      expect(result2).toBe('mock_stream_2')
+      expect(result2).toBe(secondStream)
     })
   })
 
@@ -799,6 +801,37 @@ describe('Route.check()', () => {
         result.on('close', resolve)
         result.destroy()
       })
+    })
+
+    // A prod metadata-cache entry outlives a deleted file. The failed read
+    // must evict it so the next request re-stats and gets a 404.
+    it('evicts a prod-cached public file whose read fails', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'public'))
+      const file = path.join(tmpDir, 'public', 'gone.css')
+      fs.writeFileSync(file, 'body{}')
+      global.__dir = tmpDir
+      route.routes = {www: {}}
+
+      const first = createMockOdac('get', '/gone.css')
+      first.Config.debug = false
+      const firstStream = await route.check(first)
+      await new Promise(resolve => {
+        firstStream.on('close', resolve)
+        firstStream.destroy()
+      })
+
+      fs.unlinkSync(file)
+      const second = createMockOdac('get', '/gone.css')
+      second.Config.debug = false
+      const stale = await route.check(second)
+      await new Promise(resolve => stale.once('error', resolve))
+
+      const third = createMockOdac('get', '/gone.css')
+      third.Config.debug = false
+      const result = await route.check(third)
+
+      expect(result).toBeUndefined()
+      expect(third.Request.abort).toHaveBeenCalledWith(404)
     })
 
     it('serves a config-route file without calling Auth.check', async () => {

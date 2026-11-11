@@ -62,15 +62,77 @@ describe('Route.request()', () => {
     })
 
     it('pipes the stream into the response on GET', async () => {
-      const stream = createStream()
-      route.check = jest.fn().mockResolvedValue(stream)
+      const {Readable, PassThrough} = require('stream')
+      const source = Readable.from([Buffer.from('hello '), Buffer.from('world')])
+      const res = new PassThrough()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
       param.Request.method = 'get'
 
-      await route.request({}, {})
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
 
       expect(param.Request.print).toHaveBeenCalled()
-      expect(stream.pipe).toHaveBeenCalledWith(param.Request.res)
-      expect(stream.destroy).not.toHaveBeenCalled()
+      expect(Buffer.concat(chunks).toString()).toBe('hello world')
+      await new Promise(resolve => setImmediate(resolve))
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+  })
+
+  // pipe() neither destroys the source when the client goes away nor handles
+  // source errors. An aborted download leaked the file descriptor, and a
+  // read error (e.g. a prod-cached public file deleted since) crashed the worker.
+  describe('stream lifecycle', () => {
+    const fs = require('fs')
+    const os = require('os')
+    const path = require('path')
+    const {PassThrough} = require('stream')
+
+    let tmpDir
+
+    beforeEach(() => {
+      route.routes = {unknown: {}}
+      param.Request.method = 'get'
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-request-'))
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, {recursive: true, force: true})
+      jest.restoreAllMocks()
+    })
+
+    it('closes the file when the client disconnects mid-download', async () => {
+      const file = path.join(tmpDir, 'big.bin')
+      fs.writeFileSync(file, Buffer.alloc(4 * 1024 * 1024))
+      const source = fs.createReadStream(file, {highWaterMark: 1024})
+      // Never consumed: mimics a client that stops reading, then hangs up.
+      const res = new PassThrough({highWaterMark: 1024})
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => source.once('data', resolve))
+      res.destroy()
+      await new Promise(resolve => source.once('close', resolve))
+
+      expect(source.destroyed).toBe(true)
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    it('contains a read error instead of crashing the worker', async () => {
+      const source = fs.createReadStream(path.join(tmpDir, 'deleted.css'))
+      const res = new PassThrough()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.once('close', resolve))
+
+      expect(res.destroyed).toBe(true)
+      expect(param.cleanup).toHaveBeenCalled()
     })
   })
 })

@@ -1,6 +1,7 @@
 const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
+const {pipeline} = require('stream')
 
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
@@ -281,10 +282,17 @@ class Route {
       const relativePath = path.relative(publicDir, publicPath)
 
       if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
+        // The prod metadata cache can outlive the file. A failed read evicts
+        // the entry so the next request re-stats and 404s instead of failing again.
+        const openPublic = () =>
+          fs.createReadStream(publicPath).once('error', () => {
+            delete this.#publicCache[publicPath]
+          })
+
         // PROD CACHE HIT (Metadata)
         if (!Odac.Config.debug && this.#publicCache[publicPath]) {
           const cached = this.#publicCache[publicPath]
-          return this.#asset(Odac, cached.type, cached.size, () => fs.createReadStream(publicPath))
+          return this.#asset(Odac, cached.type, cached.size, openPublic)
         }
 
         try {
@@ -301,7 +309,7 @@ class Route {
               }
             }
 
-            return this.#asset(Odac, type, stat.size, () => fs.createReadStream(publicPath))
+            return this.#asset(Odac, type, stat.size, openPublic)
           }
         } catch {
           // File not found in public
@@ -694,7 +702,15 @@ class Route {
           return param.cleanup()
         }
         param.Request.print()
-        result.pipe(param.Request.res)
+        // pipeline() destroys the source when the client disconnects and
+        // routes read errors here; pipe() did neither, leaking the file
+        // descriptor on aborted downloads and crashing on a failed read.
+        pipeline(result, param.Request.res, err => {
+          if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            console.error(JSON.stringify({level: 'ERROR', message: 'Response stream failed', error: err.message}))
+          }
+          param.cleanup()
+        })
         return
       }
       if (param.Request.res.finished || param.Request.res.writableEnded) {
