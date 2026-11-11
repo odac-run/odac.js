@@ -19,7 +19,9 @@ jobs:
       issues: write
       pull-requests: write
       id-token: write
-    if: "!contains(github.event.head_commit.message, 'Odac v') || github.event_name == 'workflow_dispatch'"
+    if: "!contains(github.event.head_commit.message, 'ODAC.JS v') || github.event_name == 'workflow_dispatch'"
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
@@ -38,8 +40,83 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Capture current version
+        id: before
+        run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
       - name: Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HUSKY: 0
         run: npx semantic-release
+
+      # @semantic-release/npm bumps package.json only when a release is cut, so
+      # an unchanged version means nothing was published and sync-dev is skipped.
+      - name: Get version
+        id: version
+        env:
+          PREVIOUS: ${{ steps.before.outputs.version }}
+        run: |
+          current=$(node -p "require('./package.json').version")
+          if [ "$current" != "$PREVIOUS" ]; then
+            echo "version=$current" >> $GITHUB_OUTPUT
+          fi
+
+  sync-dev:
+    name: Sync release into dev
+    needs: release
+    if: needs.release.outputs.version != '' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: sync-dev
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: dev
+          fetch-depth: 0
+
+      - name: Merge main into dev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          message="chore(release): sync ${VERSION:+v$VERSION from }main into dev"
+
+          # Retried because dev can move between the fetch and the push.
+          for attempt in 1 2 3; do
+            git fetch origin main dev
+            git checkout -B dev origin/dev
+
+            if git merge-base --is-ancestor origin/main origin/dev; then
+              echo "dev already contains main."
+              exit 0
+            fi
+
+            if ! git merge --no-edit -m "$message" origin/main; then
+              git merge --abort
+              if [ -z "$(gh pr list --base dev --head main --state open --json number --jq '.[].number')" ]; then
+                gh pr create --base dev --head main --title "$message" \
+                  --body "Merging main into dev conflicted. Resolve it here so dev carries the released version."
+              fi
+              echo "::error::main does not merge cleanly into dev; a pull request was opened."
+              exit 1
+            fi
+
+            if git push origin dev; then
+              exit 0
+            fi
+            echo "Push rejected (attempt $attempt), retrying."
+            sleep 5
+          done
+
+          echo "::error::Could not push the sync to dev after 3 attempts."
+          exit 1
