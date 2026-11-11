@@ -34,8 +34,8 @@ beforeEach(async () => {
     Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
     Storage: {
       isReady: () => false,
-      put: jest.fn(),
-      remove: jest.fn(),
+      putSync: jest.fn(),
+      removeSync: jest.fn(),
       getRange: () => []
     },
     Ipc

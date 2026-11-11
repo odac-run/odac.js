@@ -18,7 +18,14 @@ function isExpiredFormRecord(key, value, now) {
   )
 }
 
+// Marks a queued remove in the pending-writes map.
+const REMOVED = Symbol('removed')
+
 class OdacStorage {
+  // Writes queued with LMDB but not yet committed: key -> {value}. get() serves them so a
+  // request reads its own writes; once committed, LMDB is the source for every process.
+  #pending = new Map()
+
   constructor() {
     this.db = null
     this.ready = false
@@ -57,19 +64,68 @@ class OdacStorage {
 
   get(key) {
     if (!this.ready) return null
+    const pending = this.#pending.get(key)
+    if (pending) return pending.value === REMOVED ? null : pending.value
     return this.db.get(key) ?? null
   }
 
+  /**
+   * Queues a write; it is committed asynchronously together with every other write of the
+   * same event-loop turn.
+   * Why: sessions, form records and CSRF tokens are written on the request path. A
+   * synchronous put opens and commits its own transaction per call, blocking the event loop
+   * for the disk commit several times per page view.
+   * @returns {boolean}
+   */
   put(key, value) {
     if (!this.ready) return false
+    this.#queue(key, value, this.db.put(key, value))
+    return true
+  }
+
+  /** Asynchronous remove; see put(). */
+  remove(key) {
+    if (!this.ready) return false
+    this.#queue(key, REMOVED, this.db.remove(key))
+    return true
+  }
+
+  /**
+   * Synchronous put, committed before returning.
+   * Why: for callers that read back through getRange()/getKeys(), which only see committed
+   * data (e.g. the write-buffer checkpoint).
+   */
+  putSync(key, value) {
+    if (!this.ready) return false
+    this.#pending.delete(key)
     this.db.putSync(key, value)
     return true
   }
 
-  remove(key) {
+  /** Synchronous remove; see putSync(). */
+  removeSync(key) {
     if (!this.ready) return false
+    this.#pending.delete(key)
     this.db.removeSync(key)
     return true
+  }
+
+  #queue(key, value, written) {
+    const entry = {value}
+    this.#pending.set(key, entry)
+    const settle = () => {
+      if (this.#pending.get(key) === entry) this.#pending.delete(key)
+    }
+    Promise.resolve(written).then(settle, error => {
+      settle()
+      console.error('\x1b[31m[Storage Error]\x1b[0m Write failed:', key, error?.message)
+    })
+  }
+
+  /** Resolves once every queued write is committed. */
+  flushed() {
+    if (!this.ready || !this.db?.committed) return Promise.resolve()
+    return Promise.resolve(this.db.committed)
   }
 
   // --- Range Operations ---
@@ -191,10 +247,20 @@ class OdacStorage {
 
   // --- Utility ---
 
-  close() {
-    if (this.db) {
-      this.db.close()
-      this.ready = false
+  /**
+   * Commits queued writes and closes the database.
+   * Why: writes are asynchronous; exiting without waiting would drop the last ones.
+   * @returns {Promise<void>}
+   */
+  async close() {
+    if (!this.db) return
+    this.stopSessionGC()
+    this.ready = false
+    try {
+      await this.db.committed
+    } finally {
+      await this.db.close()
+      this.#pending.clear()
     }
   }
 

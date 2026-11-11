@@ -125,7 +125,8 @@ describe('Server.init()', () => {
         Config: {debug: true},
         Route: {wsServer: {closeAll: jest.fn()}},
         Ipc: {close: jest.fn(async () => {})},
-        Database: {close: jest.fn(async () => {})}
+        Database: {close: jest.fn(async () => {})},
+        Storage: {close: jest.fn(async () => {})}
       }
       jest.spyOn(Stream, 'closeAll').mockImplementation(() => {})
       jest.spyOn(process, 'exit').mockImplementation(() => {})
@@ -171,6 +172,14 @@ describe('Server.init()', () => {
       expect(global.Odac.Database.close).toHaveBeenCalled()
       expect(global.Odac.Ipc.close).toHaveBeenCalled()
       expect(process.exit).toHaveBeenCalledWith(0)
+    })
+
+    it('commits pending session writes before exiting', async () => {
+      shutdown()
+      await server.close.mock.calls[0][0]()
+
+      expect(global.Odac.Storage.close).toHaveBeenCalled()
+      expect(global.Odac.Storage.close.mock.invocationCallOrder[0]).toBeLessThan(process.exit.mock.invocationCallOrder[0])
     })
 
     it('ignores a repeated shutdown message', () => {

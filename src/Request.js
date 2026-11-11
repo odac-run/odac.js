@@ -32,6 +32,7 @@ class OdacRequest {
   #earlyHints = null
   #ended = false
   #sessions = {}
+  #sessionUaHash = null
   variables = {}
   sharedData = {}
   isAjaxLoad = false
@@ -552,10 +553,11 @@ class OdacRequest {
 
   // - SESSION
   session(key, value) {
-    let pri = nodeCrypto
+    // The User-Agent cannot change within a request; hash it once.
+    const pri = (this.#sessionUaHash ??= nodeCrypto
       .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
-      .digest('hex')
+      .digest('hex'))
     let pub = this.cookie('odac_session')
     if (!pub || !global.Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
       // Every cookieless request gets its own session. Reusing a recent session by IP and

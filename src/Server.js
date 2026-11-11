@@ -159,7 +159,11 @@ module.exports = {
         } catch (e) {
           console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing IPC: ${e.message}`)
         }
-        Odac.Storage.close()
+        try {
+          await Odac.Storage.close()
+        } catch (e) {
+          console.error(`\x1b[31m[Shutdown]\x1b[0m Error closing Storage: ${e.message}`)
+        }
 
         console.log('\x1b[32m[Shutdown]\x1b[0m Resources released. Goodbye!')
         clearTimeout(forceTimer)
@@ -266,6 +270,12 @@ module.exports = {
           }
           try {
             await Odac.Database.close()
+          } catch {
+            /* best-effort */
+          }
+          try {
+            // Session writes are committed asynchronously; flush them before exiting.
+            await Odac.Storage.close()
           } catch {
             /* best-effort */
           }

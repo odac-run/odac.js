@@ -31,8 +31,8 @@ beforeEach(async () => {
     Config: {buffer: {flushInterval: 999999, checkpointInterval: 999999}},
     Storage: {
       isReady: () => true,
-      put: jest.fn(),
-      remove: jest.fn(),
+      putSync: jest.fn(),
+      removeSync: jest.fn(),
       getRange: jest.fn(() => [])
     },
     Ipc
@@ -71,7 +71,7 @@ describe('WriteBuffer.close()', () => {
 
     await WriteBuffer.close()
 
-    expect(Odac.Storage.remove).not.toHaveBeenCalled()
+    expect(Odac.Storage.removeSync).not.toHaveBeenCalled()
     expect(console.error).toHaveBeenCalled()
     expect(console.log).not.toHaveBeenCalledWith(expect.stringContaining('Final flush completed'))
   })

@@ -399,7 +399,7 @@ class WriteBuffer {
       const delta = (await Odac.Ipc.get(`wb:c:${key}`)) || 0
       if (delta === 0) continue
       const base = (await Odac.Ipc.get(`wb:b:${key}`)) || 0
-      Odac.Storage.put(`wb:c:${key}`, {delta, base})
+      Odac.Storage.putSync(`wb:c:${key}`, {delta, base})
     }
 
     // Updates
@@ -407,7 +407,7 @@ class WriteBuffer {
     for (const key of updateKeys) {
       const data = await Odac.Ipc.hgetall(`wb:u:${key}`)
       if (data && Object.keys(data).length > 0) {
-        Odac.Storage.put(`wb:u:${key}`, data)
+        Odac.Storage.putSync(`wb:u:${key}`, data)
       }
     }
 
@@ -416,7 +416,7 @@ class WriteBuffer {
     for (const key of queueKeys) {
       const rows = await Odac.Ipc.lrange(`wb:q:${key}`, 0, -1)
       if (rows.length > 0) {
-        Odac.Storage.put(`wb:q:${key}`, rows)
+        Odac.Storage.putSync(`wb:q:${key}`, rows)
       }
     }
   }
@@ -431,7 +431,7 @@ class WriteBuffer {
         if (parsed && filterConnection && parsed.connection !== filterConnection) continue
         if (parsed && filterTable && parsed.table !== filterTable) continue
       }
-      Odac.Storage.remove(key)
+      Odac.Storage.removeSync(key)
     }
 
     for (const {key} of Odac.Storage.getRange({start: 'wb:u:', end: 'wb:u:~'})) {
@@ -440,7 +440,7 @@ class WriteBuffer {
         if (parsed && filterConnection && parsed.connection !== filterConnection) continue
         if (parsed && filterTable && parsed.table !== filterTable) continue
       }
-      Odac.Storage.remove(key)
+      Odac.Storage.removeSync(key)
     }
 
     for (const {key} of Odac.Storage.getRange({start: 'wb:q:', end: 'wb:q:~'})) {
@@ -450,7 +450,7 @@ class WriteBuffer {
         if (filterConnection && conn !== filterConnection) continue
         if (filterTable && tbl !== filterTable) continue
       }
-      Odac.Storage.remove(key)
+      Odac.Storage.removeSync(key)
     }
   }
 
