@@ -10,20 +10,21 @@ Odac provides built-in internationalization (i18n) support, allowing you to crea
 <odac translate>Login</odac>
 ```
 
-The text inside the tag is used as the translation key. Odac looks up this key in your locale files.
+The text inside the tag is used as the translation key. Odac looks up this key in your language files.
 
 ### Translation Files
 
-Translation files are stored in the `locale/` directory:
+Translation files are stored in `storage/language/`, one JSON file per two-letter language code:
 
 ```
-locale/
-├── en.json
-├── tr.json
-└── de.json
+storage/
+└── language/
+    ├── en.json
+    ├── tr.json
+    └── de.json
 ```
 
-**Example: `locale/en.json`**
+**Example: `storage/language/en.json`**
 ```json
 {
   "Welcome": "Welcome",
@@ -33,7 +34,7 @@ locale/
 }
 ```
 
-**Example: `locale/tr.json`**
+**Example: `storage/language/tr.json`**
 ```json
 {
   "Welcome": "Hoş Geldiniz",
@@ -57,10 +58,10 @@ Use nested `<odac>` tags to insert dynamic values:
 
 **How it works:**
 1. The content becomes: `Hello %s1`
-2. Odac looks up this key in the locale file
+2. Odac looks up this key in the language file
 3. `%s1` is replaced with the actual value
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Hello %s1": "Hello %s1",
@@ -78,7 +79,7 @@ Use nested `<odac>` tags to insert dynamic values:
 
 This creates the key `%s1 %s2` and replaces both placeholders.
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "%s1 %s2": "%s1 %s2",
@@ -92,7 +93,7 @@ This creates the key `%s1 %s2` and replaces both placeholders.
 <odac translate>Hello <odac>John</odac>, how are you?</odac>
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Hello %s1, how are you?": "Hello %s1, how are you?",
@@ -114,7 +115,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 <!-- Output: Click <a href="/help">here</a> for help -->
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help",
@@ -130,7 +131,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </odac>
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!",
@@ -164,7 +165,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Welcome back, %s1!": "Welcome back, %s1!",
@@ -224,7 +225,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "Price: $%s1": "Price: $%s1",
@@ -266,7 +267,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language file:**
 ```json
 {
   "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.",
@@ -276,25 +277,23 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 ### Setting the Language
 
-The language is typically set based on user preference or browser settings. You can set it in your controller:
+By default the language comes from the first two letters of the `Accept-Language` header, falling back to `lang.default` in `odac.json`, then `en`. You can override it in your controller:
 
 ```javascript
 // Controller
 module.exports = async function(Odac) {
   // Set language from user preference
-  const userLang = Odac.Auth.check() 
-    ? Odac.Auth.user().language 
-    : 'en'
-  
-  Odac.Lang.setLanguage(userLang)
-  
+  if (await Odac.Auth.check()) Odac.Lang.set(Odac.Auth.user('language'))
+
   // Or from query parameter
-  const lang = Odac.Request.get('lang') || 'en'
-  Odac.Lang.setLanguage(lang)
-  
+  const lang = Odac.Request.get('lang')
+  if (lang) Odac.Lang.set(lang)
+
   Odac.View.skeleton('main').set('content', 'home')
 }
 ```
+
+`Odac.Lang.set()` accepts only two-letter codes; anything else falls back to the defaults above. `Odac.Lang.current()` returns the active code.
 
 ### Using Translation Helper in Controllers
 
@@ -313,12 +312,12 @@ module.exports = async function(Odac) {
 
 1. **Use descriptive keys**: Make translation keys meaningful and context-aware
 2. **Keep keys consistent**: Use the same key for the same text across your app
-3. **Organize locale files**: Group related translations together
+3. **Organize language files**: Group related translations together
 4. **Escape HTML carefully**: Only use `raw` with trusted content
 5. **Test all languages**: Ensure translations work correctly in all supported languages
 6. **Handle missing translations**: Provide fallback values
 
-**Good locale structure:**
+**Good language file structure:**
 ```json
 {
   "nav.home": "Home",

@@ -67,6 +67,19 @@ describe('Lang.set()', () => {
     expect(checkedPaths).toContain('/mock/storage/language/en.json')
   })
 
+  it('reports the active language through current()', () => {
+    mockOdac.Request.header.mockReturnValue('tr-TR')
+    lang = new Lang(mockOdac)
+    expect(lang.current()).toBe('tr')
+
+    lang.set('DE')
+    expect(lang.current()).toBe('de')
+
+    // An invalid code falls back to the header, never to the raw value.
+    lang.set('../')
+    expect(lang.current()).toBe('tr')
+  })
+
   it('falls back to en when both header and configured default are invalid', async () => {
     mockOdac.Config.lang.default = 'english' // not a 2-letter code
     mockOdac.Request.header.mockReturnValue('') // no usable header

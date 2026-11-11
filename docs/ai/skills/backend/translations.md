@@ -10,10 +10,10 @@ metadata:
 ODAC provides built-in support for internationalization, allowing for easy multi-language application development.
 
 ## Architectural Approach
-Translations are managed via JSON files in the `locale/` directory. The framework uses a flexible key-based system with support for placeholders.
+Translations are managed via JSON files in the `storage/language/` directory. The framework uses a flexible key-based system with support for placeholders.
 
 ## Core Rules
-1.  **Storage**: Place translation files in `locale/` (e.g., `en.json`, `tr.json`).
+1.  **Storage**: Place translation files in `storage/language/`, one per two-letter code (e.g., `en.json`, `tr.json`). In debug mode missing keys are appended automatically; production only does so with `lang.collect: true`.
 2.  **Tag Usage**: Use `<odac translate>Key</odac>` in views.
 3.  **Placeholders**: Use `%s1`, `%s2` in JSON and nested `<odac var="...">` tags in views.
 4.  **Backend Access**: Use `Odac.__(key, ...args)` in controllers.
@@ -34,9 +34,9 @@ Translations are managed via JSON files in the `locale/` directory. The framewor
 const msg = Odac.__('Welcome back, %s1!', user.name);
 ```
 
-### 3. Locale JSON Structure
+### 3. Language File Structure
 ```json
-// locale/tr.json
+// storage/language/tr.json
 {
   "Welcome": "Hoş Geldiniz",
   "Hello %s1": "Merhaba %s1"
@@ -46,4 +46,4 @@ const msg = Odac.__('Welcome back, %s1!', user.name);
 ## Best Practices
 -   **Descriptive Keys**: Use meaningful keys like `nav.home` or `form.error.required`.
 -   **Html Safety**: By default, translations are escaped. Use the `raw` attribute (`<odac translate raw>`) only for trusted HTML.
--   **Language Selection**: Set the language at the start of a request via `Odac.Lang.setLanguage('tr')`.
+-   **Language Selection**: Defaults to the `Accept-Language` header, then `lang.default`. Override per request with `Odac.Lang.set('tr')`; read it with `Odac.Lang.current()`.

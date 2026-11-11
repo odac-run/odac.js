@@ -19,7 +19,7 @@ ODAC uses a request-scoped container. Most logic should be encapsulated in Servi
     -   `class/`: Reusable business logic (Service Classes).
     -   `view/`: HTML/Template files.
     -   `middleware/`: Request interceptors.
-    -   `locale/`: Translation JSON files.
+    -   `storage/language/`: Translation JSON files.
 2.  **Service Classes**:
     -   Place classes in the `class/` directory.
     -   They are automatically instantiated and attached to `Odac` as `Odac.ClassName`.

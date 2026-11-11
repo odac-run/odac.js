@@ -171,6 +171,22 @@ class Lang {
     return configured === undefined ? !!this.#odac.Config?.debug : !!configured
   }
 
+  /**
+   * Returns the active two-letter language code.
+   * Why: controllers need it for locale-aware formatting (dates, numbers) that must match
+   * the language the translations are served in.
+   * @returns {string}
+   */
+  current() {
+    return this.#lang
+  }
+
+  /**
+   * Selects the request's language. Falls back to the Accept-Language header, then to
+   * `lang.default`, then to `en`.
+   * Why: the code becomes part of a filesystem path, so only two ASCII letters are accepted.
+   * @param {string} [lang]
+   */
   set(lang) {
     if (!lang || lang.length !== 2 || !this.#odac.Var(lang).is('alpha')) {
       if (

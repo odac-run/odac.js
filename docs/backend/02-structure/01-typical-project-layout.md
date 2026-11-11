@@ -26,7 +26,8 @@ project/
 │   ├── api.js          # Routes for api.example.com
 │   └── www.js          # Routes for www.example.com
 ├── storage/            # App storage (logs, cache, uploads)
-│   └── .cache/
+│   ├── .cache/
+│   └── language/       # Translation files (en.json, tr.json, ...); commit these
 ├── view/               # HTML templates
 │   ├── content/
 │   ├── css/            # (Optional) Custom Tailwind entry points
@@ -48,7 +49,7 @@ project/
 | `route/` | Route definitions, one file per subdomain |
 | `view/` | HTML templates and partials |
 | `public/` | Static files served directly to browsers |
-| `storage/` | Runtime data (cache, logs, file uploads) |
+| `storage/` | Runtime data (cache, logs, file uploads); `storage/language/` holds translations and is version-controlled |
 
 ### CLI Commands
 
