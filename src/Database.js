@@ -250,29 +250,38 @@ const buildQueryBuilder = (knexInstance, tableName) => {
     clear: () => readCache.clear(connectionKey, prop)
   })
 
-  // Automatic cache invalidation on write operations (insert/update/delete/truncate).
+  // Automatic cache invalidation on write operations.
   // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
-  // Write methods are terminal (no further chaining after await), so wrapping the return
-  // as a simple thenable is safe and avoids .then() override conflicts with count/other wraps.
-  const wrapWithInvalidation = original =>
+  // The write methods return the Knex builder itself with only its .then() wrapped, so the
+  // full chain keeps working (.update().where(), .returning(), .transacting(), .finally()).
+  // A failed invalidation is logged, never surfaced: the write has already happened, and
+  // rejecting would make callers retry it.
+  const invalidate = () =>
+    readCache.invalidate(connectionKey, prop).catch(error => {
+      console.error(`\x1b[31m[ODAC ReadCache]\x1b[0m Failed to invalidate "${prop}" after a write:`, error?.message)
+    })
+
+  const withInvalidation = original =>
     function (...args) {
-      const qbResult = original.apply(this, args)
-      const thenable = {
-        then: (resolve, reject) =>
-          qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
-        catch: fn => thenable.then(undefined, fn)
+      const builder = original.apply(this, args)
+      if (!builder || builder._odacInvalidates) return builder
+      builder._odacInvalidates = true
+      const previousThen = builder.then
+      builder.then = function (resolve, reject) {
+        return previousThen
+          .call(this)
+          .then(async result => {
+            await invalidate()
+            return result
+          })
+          .then(resolve, reject)
       }
-      return thenable
+      return builder
     }
 
-  const originalUpdate = qb.update
-  const originalDelete = qb.delete
-  const originalDel = qb.del
-  const originalTruncate = qb.truncate
-  qb.update = wrapWithInvalidation(originalUpdate)
-  qb.delete = wrapWithInvalidation(originalDelete)
-  qb.del = wrapWithInvalidation(originalDel)
-  qb.truncate = wrapWithInvalidation(originalTruncate)
+  for (const method of ['update', 'delete', 'del', 'truncate', 'increment', 'decrement']) {
+    qb[method] = withInvalidation(qb[method])
+  }
 
   // Odac DX Improvement: Wrap count() to return a clean number
   const originalCount = qb.count
@@ -302,23 +311,8 @@ const buildQueryBuilder = (knexInstance, tableName) => {
     }
   }
 
-  // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
-  // IMPORTANT: Unlike update/delete/truncate, insert is NOT terminal — it supports
-  // chaining (e.g. .insert().onConflict().merge()). So we cannot use wrapWithInvalidation
-  // which returns a plain thenable. Instead, override .then() on the query builder to
-  // inject invalidation at execution time, preserving the full Knex chain.
-  const insertBeforeInvalidation = qb.insert
-  qb.insert = function (...args) {
-    const result = insertBeforeInvalidation.apply(this, args)
-    const origThen = result.then
-    result.then = function (resolve, reject) {
-      return origThen
-        .call(this)
-        .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
-        .then(resolve, reject)
-    }
-    return result
-  }
+  // Applied AFTER the nanoid wrap so both paths are covered.
+  qb.insert = withInvalidation(qb.insert)
 
   const originalThen = qb.then
   qb.then = function (resolve, reject) {
