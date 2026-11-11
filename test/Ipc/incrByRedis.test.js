@@ -7,7 +7,8 @@ const mockClient = {
   duplicate: jest.fn(() => ({connect: jest.fn().mockResolvedValue(undefined), quit: jest.fn().mockResolvedValue(undefined)})),
   expire: jest.fn().mockResolvedValue(1),
   incrByFloat: jest.fn(),
-  quit: jest.fn().mockResolvedValue(undefined)
+  quit: jest.fn().mockResolvedValue(undefined),
+  set: jest.fn().mockResolvedValue('OK')
 }
 
 jest.mock('redis', () => ({createClient: jest.fn(() => mockClient)}), {virtual: true})
@@ -44,5 +45,17 @@ describe('Ipc redis - incrBy()', () => {
     mockClient.incrByFloat.mockResolvedValue('1')
     await Ipc.incrBy('counter', 1)
     expect(mockClient.expire).not.toHaveBeenCalled()
+  })
+})
+
+describe('Ipc redis - set()', () => {
+  it('passes the ttl as a node-redis options object', async () => {
+    await Ipc.set('cached', {a: 1}, 30)
+    expect(mockClient.set).toHaveBeenCalledWith('cached', '{"a":1}', {EX: 30})
+  })
+
+  it('sets no expiry without a ttl', async () => {
+    await Ipc.set('kept', 1)
+    expect(mockClient.set).toHaveBeenCalledWith('kept', '1')
   })
 })

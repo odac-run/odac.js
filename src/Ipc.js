@@ -40,9 +40,8 @@ class Ipc extends EventEmitter {
 
   async set(key, value, ttl = 0) {
     if (this.config.driver === 'redis') {
-      const args = [key, JSON.stringify(value)]
-      if (ttl > 0) args.push('EX', ttl)
-      return this.redis.set(...args)
+      // node-redis v4+ takes SET options as an object; positional 'EX', ttl is ignored there.
+      return ttl > 0 ? this.redis.set(key, JSON.stringify(value), {EX: ttl}) : this.redis.set(key, JSON.stringify(value))
     } else {
       return this._sendMemory('set', {key, value, ttl})
     }
