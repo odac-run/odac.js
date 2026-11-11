@@ -706,11 +706,16 @@ class Route {
         // routes read errors here; pipe() did neither, leaking the file
         // descriptor on aborted downloads and crashing on a failed read.
         pipeline(result, param.Request.res, err => {
+          param.Request.clearTimeout()
           if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
             console.error(JSON.stringify({level: 'ERROR', message: 'Response stream failed', error: err.message}))
           }
           param.cleanup()
         })
+        // The request timeout is an idle deadline: each chunk proves progress.
+        // Backpressure stops the chunks when the client stops reading, so a
+        // stalled download still times out after one idle period.
+        result.on('data', () => param.Request.refreshTimeout())
         return
       }
       if (param.Request.res.finished || param.Request.res.writableEnded) {

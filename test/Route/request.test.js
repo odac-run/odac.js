@@ -16,6 +16,8 @@ describe('Route.request()', () => {
         abort: jest.fn(),
         end: jest.fn(),
         print: jest.fn(),
+        refreshTimeout: jest.fn(),
+        clearTimeout: jest.fn(),
         res: {finished: false, writableEnded: false}
       },
       View: {print: jest.fn()},
@@ -120,6 +122,37 @@ describe('Route.request()', () => {
 
       expect(source.destroyed).toBe(true)
       expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    // The request timeout is an idle deadline. A download longer than the
+    // timeout used to be cut mid-file with "Request Timeout" appended.
+    it('re-arms the idle timeout for every chunk streamed', async () => {
+      const {Readable} = require('stream')
+      const source = Readable.from([Buffer.from('a'), Buffer.from('b'), Buffer.from('c')])
+      const res = new PassThrough()
+      res.resume()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
+
+      expect(param.Request.refreshTimeout).toHaveBeenCalledTimes(3)
+    })
+
+    it('clears the timeout once the stream completes', async () => {
+      const {Readable} = require('stream')
+      const source = Readable.from([Buffer.from('done')])
+      const res = new PassThrough()
+      res.resume()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(param.Request.clearTimeout).toHaveBeenCalled()
     })
 
     it('contains a read error instead of crashing the worker', async () => {

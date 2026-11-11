@@ -71,11 +71,33 @@ class OdacRequest {
   // upload data chunk so a slow-but-progressing upload isn't killed at the
   // fixed timeout; the timer now measures idle time, not total request time.
   #armTimeout() {
-    if (!this.res || this.res.finished) return
+    if (!this.res || this.res.finished || this.res.writableEnded) return
     clearTimeout(this.#timeout)
-    const fn = () => !this.res.finished && this.abort(408)
+    const fn = () => this.#onTimeout()
     const ms = global.Odac.Config.request.timeout
     this.#timeout = typeof this.#odac.setTimeout === 'function' ? this.#odac.setTimeout(fn, ms) : setTimeout(fn, ms)
+  }
+
+  // Once the status line is on the wire a 408 can no longer be sent; writing
+  // the error body would append it to the partial response and end it as if
+  // it were complete. Destroying the socket makes the client see a truncated
+  // transfer instead of a corrupt "successful" one.
+  #onTimeout() {
+    if (this.res.finished || this.res.writableEnded) return
+    if (this.res.headersSent) return this.res.destroy()
+    this.abort(408)
+  }
+
+  /**
+   * Pushes the idle deadline back by the configured request timeout.
+   *
+   * Why: streamed responses (downloads) never pass through end(), so the
+   * timer set at construction would cut any transfer longer than the timeout.
+   * Route calls this per streamed chunk; a client that stops reading stalls
+   * the stream through backpressure and is dropped after one idle period.
+   */
+  refreshTimeout() {
+    this.#armTimeout()
   }
 
   // - ABORT REQUEST
