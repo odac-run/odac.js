@@ -501,6 +501,10 @@ async function runMigration(cmd, cliArgs) {
   // Parse --db flag
   const dbFlag = cliArgs.find(a => a.startsWith('--db='))
   const options = dbFlag ? {db: dbFlag.split('=')[1]} : {}
+  // Destructive schema changes (dropping/narrowing columns) are skipped in production unless
+  // explicitly allowed by flag or config.
+  if (cliArgs.includes('--allow-destructive')) options.allowDestructive = true
+  else if (typeof config.migration?.allowDestructive === 'boolean') options.allowDestructive = config.migration.allowDestructive
 
   // Initialize migration engine
   const Migration = require('../src/Database/Migration')
@@ -547,6 +551,7 @@ async function runMigration(cmd, cliArgs) {
  */
 function printMigrationSummary(summary) {
   let totalOps = 0
+  let skippedOps = 0
 
   for (const [key, result] of Object.entries(summary)) {
     console.log(`  \x1b[36m[${key}]\x1b[0m`)
@@ -558,6 +563,11 @@ function printMigrationSummary(summary) {
     }
 
     for (const op of allOps) {
+      if (op.skipped) {
+        skippedOps++
+        console.log(`    ${formatOp(op)} \x1b[33m(skipped: destructive)\x1b[0m`)
+        continue
+      }
       totalOps++
       const label = formatOp(op)
       console.log(`    ${label}`)
@@ -566,6 +576,9 @@ function printMigrationSummary(summary) {
   }
 
   console.log(totalOps > 0 ? `✅ ${totalOps} operation(s) completed.` : '✅ Everything is up to date.')
+  if (skippedOps > 0) {
+    console.log(`⚠️  ${skippedOps} destructive operation(s) skipped. Back up the data and re-run with --allow-destructive to apply them.`)
+  }
 }
 
 /**
@@ -801,7 +814,7 @@ async function run() {
     console.log('  npx odac build           (Production build)')
     console.log('  npx odac start           (Start server)')
     console.log('  npx odac skills          (Sync AI Agent skills)')
-    console.log('  npx odac migrate         (Run pending migrations)')
+    console.log('  npx odac migrate         (Run pending migrations; add --allow-destructive to drop/narrow columns in production)')
     console.log('  npx odac migrate:status  (Show pending changes)')
     console.log('  npx odac migrate:rollback (Rollback last batch)')
     console.log('  npx odac migrate:snapshot (Reverse-engineer DB to schema/)')

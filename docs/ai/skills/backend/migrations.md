@@ -160,6 +160,7 @@ npx odac migrate:snapshot
 
 ## Performance and Safety Notes
 - Keep schema declarations deterministic and minimal.
-- Prefer additive changes; drops are destructive and should be intentional.
+- Prefer additive changes; drops are destructive and should be intentional. With `NODE_ENV=production`, column drops, type changes and shorter lengths are skipped unless `npx odac migrate --allow-destructive` or `"migration": {"allowDestructive": true}` is used.
+- Migration files run inside a transaction with their tracking row; export `transaction: false` for statements that cannot run in one.
 - Ensure high-cardinality lookup columns are indexed in schema definitions.
 - For very large tables, plan expensive column rewrites as dedicated data migrations.

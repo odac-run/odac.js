@@ -83,6 +83,30 @@ npx odac migrate
 ✅ 3 operation(s) completed.
 ```
 
+### Destructive Changes in Production
+
+Dropping a column, changing its type, or shortening its length can destroy data. With `NODE_ENV=production` these operations are **not applied** (on startup or via `npx odac migrate`); everything else in the diff is. The skipped operations are logged and listed with `(skipped: destructive)`. This protects against renaming a column (a drop plus an add), rolling back to an older release, or an old instance restarting during a rolling deploy.
+
+Back up the data, then apply them explicitly:
+
+```bash
+npx odac migrate --allow-destructive
+```
+
+or allow them permanently in `odac.json`:
+
+```json
+{
+  "migration": {"allowDestructive": true}
+}
+```
+
+Outside production they are applied as before. Note that a skipped `NOT NULL` column without a default still rejects inserts that leave it out.
+
+### Running Several Instances
+
+Each connection is migrated under a lock stored in the `_odac_migrations_lock` table, so instances that start together (several servers or containers) migrate one after another. A lock whose holder crashed expires after two minutes.
+
 ---
 
 ## Column Types
@@ -200,7 +224,7 @@ module.exports = {
 }
 ```
 
-Migration files run **once** and are tracked in the `_odac_migrations` table.
+Migration files run **once** and are tracked in the `_odac_migrations` table. Each file runs in a transaction together with its tracking row, so a failing `up()` leaves nothing recorded (on databases with transactional DDL such as PostgreSQL and SQLite, its schema changes are rolled back too). The `db` passed to `up`/`down` is that transaction. For statements that cannot run inside a transaction (e.g. `CREATE INDEX CONCURRENTLY`), export `transaction: false`.
 
 ---
 
@@ -247,6 +271,9 @@ npx odac migrate
 
 # Target a specific database connection
 npx odac migrate --db=analytics
+
+# Also apply destructive changes (drop/narrow columns) in production
+npx odac migrate --allow-destructive
 
 # Show pending changes without applying (dry-run)
 npx odac migrate:status
