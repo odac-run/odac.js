@@ -1,7 +1,10 @@
 const fs = require('fs')
 const Lang = require('../../src/Lang')
 
-jest.mock('fs')
+jest.mock('fs', () => ({promises: {readFile: jest.fn(async () => '{}'), stat: jest.fn(async () => ({mtimeMs: 1}))}}))
+
+// The language code reaches a filesystem path on the first lookup.
+const languagePaths = () => fs.promises.readFile.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
 
 describe('Lang.set()', () => {
   let mockOdac
@@ -21,10 +24,7 @@ describe('Lang.set()', () => {
       }
     }
 
-    fs.existsSync.mockReturnValue(false)
-    fs.readFileSync.mockImplementation(() => {
-      throw new Error('ENOENT')
-    })
+    Lang.store.reset()
   })
 
   it('should default to en when no config or header', () => {
@@ -49,29 +49,29 @@ describe('Lang.set()', () => {
 
   // 1.12 — a language code must never build a filesystem path from unvalidated
   // input. Every language file path must end in exactly two lowercase letters.
-  it('rejects a malicious ACCEPT-LANGUAGE header and falls back to a safe code', () => {
+  it('rejects a malicious ACCEPT-LANGUAGE header and falls back to a safe code', async () => {
     mockOdac.Request.header.mockReturnValue('a/../../etc/passwd')
-    new Lang(mockOdac)
-    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    await new Lang(mockOdac).get('x')
+    const checkedPaths = languagePaths()
     expect(checkedPaths.length).toBeGreaterThan(0)
     // No path may be derived from the 'a/' slice; all must be <2 letters>.json
     expect(checkedPaths.every(p => /\/[a-z]{2}\.json$/.test(p))).toBe(true)
     expect(checkedPaths).toContain('/mock/storage/language/en.json')
   })
 
-  it('normalizes an uppercase language code to a lowercase file path', () => {
+  it('normalizes an uppercase language code to a lowercase file path', async () => {
     lang = new Lang(mockOdac)
-    fs.existsSync.mockClear()
     lang.set('EN')
-    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    await lang.get('x')
+    const checkedPaths = languagePaths()
     expect(checkedPaths).toContain('/mock/storage/language/en.json')
   })
 
-  it('falls back to en when both header and configured default are invalid', () => {
+  it('falls back to en when both header and configured default are invalid', async () => {
     mockOdac.Config.lang.default = 'english' // not a 2-letter code
     mockOdac.Request.header.mockReturnValue('') // no usable header
-    new Lang(mockOdac)
-    const checkedPaths = fs.existsSync.mock.calls.map(c => c[0]).filter(p => p.includes('/storage/language/'))
+    await new Lang(mockOdac).get('x')
+    const checkedPaths = languagePaths()
     expect(checkedPaths.every(p => /\/[a-z]{2}\.json$/.test(p))).toBe(true)
     expect(checkedPaths).toContain('/mock/storage/language/en.json')
   })

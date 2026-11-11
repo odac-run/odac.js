@@ -43,6 +43,10 @@ locale/
 }
 ```
 
+### Missing Keys
+
+In development (`debug` mode) a key without a translation is added to the language file with itself as the value, so you can translate it later. Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too. Language files are loaded once per worker and re-read when they change on disk.
+
 ### Translations with Placeholders
 
 Use nested `<odac>` tags to insert dynamic values:
