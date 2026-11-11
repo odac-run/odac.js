@@ -181,6 +181,122 @@ describe('Server.init()', () => {
     })
   })
 
+  // A worker that crashes during startup used to be re-forked immediately, in
+  // a tight loop. A listen failure (port taken, no permission) can never
+  // succeed on retry, so it stops the app instead of looping.
+  describe('primary worker supervision', () => {
+    let nextId
+
+    beforeEach(() => {
+      jest.useFakeTimers()
+      cluster.isPrimary = true
+      cluster.workers = {}
+      nextId = 1
+      cluster.fork.mockReset()
+      cluster.fork.mockImplementation(() => ({id: nextId++}))
+      global.Odac = {
+        Config: {debug: true},
+        Route: {stopCron: jest.fn()},
+        Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn()},
+        Ipc: {close: jest.fn(async () => {})},
+        Database: {close: jest.fn(async () => {})}
+      }
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+      Server.init()
+    })
+
+    afterEach(() => {
+      jest.useRealTimers()
+    })
+
+    const crash = (id, code = 1) => cluster.emit('exit', {id}, code, null)
+
+    it('respawns a long-running worker immediately', () => {
+      jest.advanceTimersByTime(60000)
+      crash(1)
+      jest.advanceTimersByTime(0)
+
+      expect(cluster.fork).toHaveBeenCalledTimes(2)
+    })
+
+    it('backs off exponentially while workers keep crashing at startup', () => {
+      crash(1)
+      jest.advanceTimersByTime(999)
+      expect(cluster.fork).toHaveBeenCalledTimes(1)
+      jest.advanceTimersByTime(1)
+      expect(cluster.fork).toHaveBeenCalledTimes(2)
+
+      crash(2)
+      jest.advanceTimersByTime(1999)
+      expect(cluster.fork).toHaveBeenCalledTimes(2)
+      jest.advanceTimersByTime(1)
+      expect(cluster.fork).toHaveBeenCalledTimes(3)
+    })
+
+    it('caps the backoff at 30 seconds', () => {
+      for (let i = 1; i <= 10; i++) {
+        crash(i)
+        jest.advanceTimersByTime(30000)
+      }
+      const forks = cluster.fork.mock.calls.length
+      crash(nextId - 1)
+      jest.advanceTimersByTime(30000)
+
+      expect(cluster.fork).toHaveBeenCalledTimes(forks + 1)
+    })
+
+    it('resets the backoff once a worker stays up', () => {
+      crash(1)
+      jest.advanceTimersByTime(1000)
+      crash(2)
+      jest.advanceTimersByTime(2000)
+      jest.advanceTimersByTime(60000)
+      crash(3)
+      jest.advanceTimersByTime(0)
+
+      expect(cluster.fork).toHaveBeenCalledTimes(4)
+    })
+
+    it('stops the app instead of respawning after a fatal listen error', async () => {
+      crash(1, 78)
+      jest.advanceTimersByTime(60000)
+      await jest.runOnlyPendingTimersAsync()
+
+      expect(cluster.fork).toHaveBeenCalledTimes(1)
+      expect(process.exit).toHaveBeenCalledWith(1)
+    })
+  })
+
+  describe('worker server errors', () => {
+    let server
+
+    beforeEach(() => {
+      cluster.isPrimary = false
+      server = makeFakeServer()
+      http.createServer.mockReturnValue(server)
+      global.Odac = {Config: {debug: true}, Route: {}}
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+      Server.init()
+    })
+
+    // A cluster worker gets the primary's handle error, reported as 'bind'.
+    it.each([
+      ['listen', 'listen EADDRINUSE: address already in use :::3000'],
+      ['bind', 'bind EADDRINUSE null:3000']
+    ])('exits with the fatal code when the port cannot be bound (%s)', (syscall, message) => {
+      const err = Object.assign(new Error(message), {code: 'EADDRINUSE', syscall})
+
+      expect(() => server.emit('error', err)).not.toThrow()
+      expect(process.exit).toHaveBeenCalledWith(78)
+    })
+
+    it('logs other server errors without exiting', () => {
+      expect(() => server.emit('error', new Error('boom'))).not.toThrow()
+      expect(process.exit).not.toHaveBeenCalled()
+      expect(console.error).toHaveBeenCalled()
+    })
+  })
+
   describe('worker upgrade listener', () => {
     let server
 

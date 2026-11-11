@@ -9,7 +9,35 @@ const Stream = require('./Stream.js')
 // 30s hard timeout so the final write-buffer flush still runs afterwards.
 const SHUTDOWN_GRACE = 10000
 
+// Respawn backoff. A worker that dies within STABLE_UPTIME of starting is
+// treated as a startup crash: each consecutive one doubles the respawn delay
+// from RESPAWN_BASE up to RESPAWN_MAX, so a broken deploy cannot fork in a
+// tight loop. A worker that ran longer is replaced at once and resets it.
+const RESPAWN_BASE = 1000
+const RESPAWN_MAX = 30000
+const STABLE_UPTIME = 10000
+
+// Exit code (EX_CONFIG) a worker uses for errors a respawn cannot fix, such
+// as a port already in use. The primary stops the app instead of looping.
+const EXIT_FATAL = 78
+// A port conflict surfaces as 'listen' in a single process but as 'bind' in a
+// cluster worker, where the primary creates the listening handle.
+const BIND_SYSCALLS = new Set(['listen', 'bind'])
+
+/**
+ * Number of worker processes the cluster runs.
+ *
+ * Why: the primary forks this many workers, and database pools are sized
+ * from the same figure so the cluster as a whole stays under the server's
+ * connection limit.
+ * @returns {number}
+ */
+function workerCount() {
+  return Odac.Config.debug ? 1 : os.cpus().length
+}
+
 module.exports = {
+  workerCount,
   init: function () {
     let args = process.argv.slice(2)
     if (args[0] == 'framework' && args[1] == 'run') args = args.slice(2)
@@ -17,7 +45,7 @@ module.exports = {
     if (isNaN(port)) port = parseInt(process.env.PORT || '1071')
 
     if (cluster.isPrimary) {
-      const numCPUs = Odac.Config.debug ? 1 : os.cpus().length
+      const numCPUs = workerCount()
       let isShuttingDown = false
 
       const mode = Odac.Config.debug ? '\x1b[33mDevelopment\x1b[0m' : '\x1b[32mProduction\x1b[0m'
@@ -28,15 +56,42 @@ module.exports = {
       // Start session garbage collector (runs every hour, expires after 7 days)
       Odac.Storage.startSessionGC()
 
-      for (let i = 0; i < numCPUs; i++) {
-        cluster.fork()
+      const startedAt = new Map()
+      let crashStreak = 0
+
+      const spawn = () => {
+        const worker = cluster.fork()
+        if (worker) startedAt.set(worker.id, Date.now())
       }
 
-      cluster.on('exit', () => {
-        // Don't restart workers during shutdown
-        if (!isShuttingDown) {
-          cluster.fork()
+      for (let i = 0; i < numCPUs; i++) spawn()
+
+      cluster.on('exit', (worker, code) => {
+        const uptime = Date.now() - (startedAt.get(worker.id) ?? 0)
+        startedAt.delete(worker.id)
+        if (isShuttingDown) return
+
+        if (code === EXIT_FATAL) {
+          console.error(JSON.stringify({level: 'ERROR', message: 'Worker hit a fatal error, stopping ODAC', worker: worker.id}))
+          return gracefulShutdown('FATAL', 1)
         }
+
+        crashStreak = uptime >= STABLE_UPTIME ? 0 : crashStreak + 1
+        const delay = crashStreak === 0 ? 0 : Math.min(RESPAWN_BASE * 2 ** (crashStreak - 1), RESPAWN_MAX)
+        if (delay > 0) {
+          console.error(
+            JSON.stringify({
+              level: 'WARN',
+              message: 'Worker crashed during startup, delaying respawn',
+              worker: worker.id,
+              code,
+              delayMs: delay
+            })
+          )
+        }
+        setTimeout(() => {
+          if (!isShuttingDown) spawn()
+        }, delay)
       })
 
       /**
@@ -50,7 +105,7 @@ module.exports = {
        *
        * A 30-second hard timeout protects against hung workers or I/O.
        */
-      const gracefulShutdown = async signal => {
+      const gracefulShutdown = async (signal, exitCode = 0) => {
         if (isShuttingDown) return
         isShuttingDown = true
 
@@ -108,7 +163,7 @@ module.exports = {
 
         console.log('\x1b[32m[Shutdown]\x1b[0m Resources released. Goodbye!')
         clearTimeout(forceTimer)
-        process.exit(0)
+        process.exit(exitCode)
       }
 
       process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
@@ -167,6 +222,16 @@ module.exports = {
           console.error(JSON.stringify({level: 'ERROR', message: 'WebSocket upgrade failed', error: e.message}))
           socket.destroy()
         }
+      })
+
+      /**
+       * 6. Without an 'error' listener a bind failure is an uncaught exception.
+       *    A bind error cannot be fixed by retrying, so the worker exits with
+       *    EXIT_FATAL and the primary stops the app with a clear error.
+       */
+      server.on('error', err => {
+        console.error(JSON.stringify({level: 'ERROR', message: 'HTTP server error', code: err.code, error: err.message}))
+        if (BIND_SYSCALLS.has(err.syscall)) process.exit(EXIT_FATAL)
       })
 
       server.listen(port)

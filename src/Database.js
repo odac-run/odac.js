@@ -16,15 +16,21 @@ class DatabaseManager {
   async init() {
     if (!Odac.Config.database) return
 
-    this.connections = buildConnections(Odac.Config.database)
+    const cluster = require('node:cluster')
+    // Primary + one pool per worker share the database's connection limit.
+    const processCount = require('./Server.js').workerCount() + 1
+    this.connections = buildConnections(Odac.Config.database, {processCount})
 
+    // The primary boots once, at deploy: a dead database there is a
+    // misconfiguration and must stop startup. A worker is respawned while the
+    // app runs; knex reconnects per query, so it logs and keeps serving
+    // rather than crash-looping through a transient outage.
     for (const key of Object.keys(this.connections)) {
-      // Test connection
       try {
         await this.connections[key].raw('SELECT 1')
       } catch (e) {
-        console.error(`Odac Database Error: Failed to connect to '${key}' database.`)
-        console.error(e.message)
+        if (cluster.isPrimary) throw new Error(`Failed to connect to '${key}' database: ${e.message}`, {cause: e})
+        console.error(JSON.stringify({level: 'ERROR', message: `Failed to connect to '${key}' database`, error: e.message}))
       }
     }
 

@@ -16,6 +16,7 @@ Supported configuration options:
 - `type` - Database type (`mysql`, `postgres`, `sqlite`, `clickhouse`)
 - `filename` - Database file path (only for `sqlite`, default: `./dev.sqlite3`)
 - `url` - Full endpoint URL (only for `clickhouse`; alternative to host/port)
+- `connectionLimit` - Maximum pool size per process. When omitted, ODAC sizes the pools so the whole cluster stays near 80 connections (2 to 10 per process; see [Automatic Connection](#automatic-connection))
 
 ### Single Connection (MySQL Default)
 
@@ -145,5 +146,9 @@ DB_PASSWORD=mypassword
 ## Automatic Connection
 
 The connection is established automatically when your application starts. You don't need to write any connection code.
+
+ODAC tests each connection at startup. If a database is unreachable when the app boots, startup fails with an error instead of serving requests against a dead connection. A worker that is restarted later only logs the failure, since queries reconnect on their own once the database is back.
+
+Each process (the primary plus one worker per CPU core) opens its own connection pool. Without `connectionLimit`, ODAC divides a budget of about 80 connections among them, between 2 and 10 per process, which fits PostgreSQL's default `max_connections` of 100. If you set `connectionLimit`, every process uses that value, so the cluster opens up to `connectionLimit × (cores + 1)` connections.
 
 **Next Step:** Check out [Query Basics](./02-basics.md) to start using your database.

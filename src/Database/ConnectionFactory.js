@@ -46,13 +46,39 @@ const DRIVER_PACKAGES = {
   sqlite3: 'sqlite3'
 }
 
+// Connections the whole cluster may open to one database when the config sets
+// no connectionLimit. Sized to fit PostgreSQL's default max_connections (100)
+// with room for admin sessions and other clients.
+const CLUSTER_POOL_BUDGET = 80
+const POOL_MAX = 10
+// A process holding a transaction needs a second connection for any query run
+// outside it; with a pool of one that query would wait forever.
+const POOL_MIN_MAX = 2
+
+/**
+ * Picks the per-process pool size.
+ * Why: every process (primary + each worker) opens its own pool, so a fixed
+ * size multiplied by the core count exceeded the database's connection limit
+ * on large machines. An explicit connectionLimit is honored as given.
+ * @param {object} db Single database config node.
+ * @param {number} processCount Processes that will each open a pool.
+ * @returns {number}
+ */
+function poolMax(db, processCount) {
+  if (db.connectionLimit) return db.connectionLimit
+  return Math.min(POOL_MAX, Math.max(POOL_MIN_MAX, Math.floor(CLUSTER_POOL_BUDGET / processCount)))
+}
+
 /**
  * Creates knex connections map from ODAC database config.
  * Why: Centralizes zero-config connection bootstrap used by runtime and migration CLI.
  * @param {object} databaseConfig ODAC database config (single or multiple).
+ * @param {object} [options]
+ * @param {number} [options.processCount=1] Processes that each open these pools
+ *   (primary + workers at runtime, 1 for the CLI); used to size the pools.
  * @returns {Record<string, any>} Knex connections by key.
  */
-function buildConnections(databaseConfig) {
+function buildConnections(databaseConfig, {processCount = 1} = {}) {
   const isMultiple = typeof databaseConfig[Object.keys(databaseConfig)[0]] === 'object'
   const dbs = isMultiple ? databaseConfig : {default: databaseConfig}
   const connections = {}
@@ -82,7 +108,7 @@ function buildConnections(databaseConfig) {
     connections[key] = knex({
       client,
       connection,
-      pool: {min: 0, max: db.connectionLimit || 10},
+      pool: {min: 0, max: poolMax(db, processCount)},
       useNullAsDefault: true
     })
     connections[key]._odacConnectionKey = key
