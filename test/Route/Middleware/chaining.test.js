@@ -58,4 +58,20 @@ describe('Middleware Chaining Integration', () => {
     route.use('cors', 'rateLimit').post('/api/upload', () => {})
     expect(route.routes.test.post['/api/upload'].middlewares).toEqual(['cors', 'rateLimit'])
   })
+
+  describe('options on auth routes with a public fallback', () => {
+    const noop = () => {}
+
+    test.each([
+      ['use().authPost()', r => r.use('csrf').authPost('/a', noop, noop, {token: false}), '#post', 'post'],
+      ['use().authGet()', r => r.use('csrf').authGet('/a', noop, noop, {token: false}), '#get', 'get'],
+      ['use().auth.post()', r => r.use('csrf').auth.post('/a', noop, noop, {token: false}), '#post', 'post'],
+      ['auth.post()', r => r.auth.post('/a', noop, noop, {token: false}), '#post', 'post'],
+      ['auth.get()', r => r.auth.get('/a', noop, noop, {token: false}), '#get', 'get']
+    ])('%s forwards the fourth options argument', (_, register, authType, publicType) => {
+      register(route)
+      expect(route.routes.test[authType]['/a'].token).toBe(false)
+      expect(route.routes.test[publicType]['/a'].token).toBe(false)
+    })
+  })
 })

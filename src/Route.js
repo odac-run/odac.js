@@ -38,8 +38,8 @@ class Route {
   #paramIndexDirty = false
   auth = {
     page: (path, authFile, file) => this.authPage(path, authFile, file),
-    post: (path, authFile, file) => this.authPost(path, authFile, file),
-    get: (path, authFile, file) => this.authGet(path, authFile, file),
+    post: (path, authFile, file, options) => this.authPost(path, authFile, file, options),
+    get: (path, authFile, file, options) => this.authGet(path, authFile, file, options),
     ws: (path, handler, options) => this.authWs(path, handler, options),
     use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()], true)
   }
