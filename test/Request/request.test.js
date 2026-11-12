@@ -73,4 +73,38 @@ describe('Request.request()', () => {
     // name only exists in post; a get-scoped lookup must not return it.
     expect(await request.request('name', 'get')).toBeFalsy()
   })
+  describe('without a key', () => {
+    it('waits for a JSON body instead of returning the empty placeholder', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'application/json'}})
+      const pending = request.request()
+      req.end('{"event":"paid","id":7}')
+      expect(await pending).toEqual({event: 'paid', id: 7})
+    })
+
+    it('starts and waits for a multipart body', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'multipart/form-data; boundary=b'}})
+      const pending = request.request()
+      req.end('--b\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n--b--\r\n')
+      expect(await pending).toEqual({a: '1'})
+    })
+
+    it('waits for a urlencoded body', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      const pending = request.request()
+      req.end('name=alice')
+      expect(await pending).toEqual({name: 'alice'})
+    })
+
+    it('resolves with an empty bucket when the body is empty', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'application/json'}})
+      const pending = request.request()
+      req.end()
+      expect(await pending).toEqual({})
+    })
+
+    it('returns the get bucket without waiting for the body', async () => {
+      const {request} = build({method: 'POST', url: '/?foo=bar', headers: {'content-type': 'application/json'}})
+      expect(await request.request(undefined, 'get')).toEqual({foo: 'bar'})
+    })
+  })
 })
