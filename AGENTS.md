@@ -37,6 +37,7 @@ You are an AI Agent operating within the **ODAC Framework** repository. This doc
 ## 5. Testing & Documentation
 - **TDD Requirement:** No feature is complete without unit/integration tests covering both success and edge cases.
 - **Documentation:** Every exported member must have JSDoc explaining *Why* it exists, not just *What* it does.
+- **AI Skills Sync:** A change to public behavior (new option, new API, changed default, changed failure mode) is not complete until the matching file in `docs/ai/skills/` is updated alongside `docs/backend/` or `docs/frontend/`. The source-to-skill map is in `.agent/rules/workflow.md`.
 - **No User Dialogues in Code:** Do not include assistant-user interaction in comments or code files.
 
 ## 6. Communication Style
