@@ -17,7 +17,7 @@ const MAX_ACCEPT_LANGUAGE_LENGTH = 512
  * changes.
  */
 class LanguageStore {
-  // lang -> {data, mtimeMs, checkedAt, loading, pending: Set, saveTimer}
+  // lang -> {data, mtimeMs, checkedAt, loading, pending: Map(id -> {key, context}), saveTimer}
   #entries = new Map()
   // Language codes that have a file in storage/language/, refreshed in the background.
   #available = null
@@ -35,7 +35,7 @@ class LanguageStore {
   #entry(lang) {
     let entry = this.#entries.get(lang)
     if (!entry) {
-      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null, pending: new Set(), saveTimer: null}
+      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null, pending: new Map(), saveTimer: null}
       this.#entries.set(lang, entry)
     }
     return entry
@@ -62,7 +62,7 @@ class LanguageStore {
 
     const data = await this.#readFile(lang)
     // Keys collected but not yet saved must survive a reload.
-    for (const key of entry.pending) Catalog.addEntry(data, key, '', key)
+    for (const {key, context} of entry.pending.values()) Catalog.addEntry(data, key, context, key)
     entry.data = data
     entry.mtimeMs = mtimeMs
   }
@@ -133,10 +133,10 @@ class LanguageStore {
    * Writes are debounced and merged with the file's current content, so concurrent
    * workers add keys instead of overwriting each other's.
    */
-  collect(lang, key) {
+  collect(lang, key, context = '') {
     const entry = this.#entry(lang)
-    Catalog.addEntry(entry.data, key, '', key)
-    entry.pending.add(key)
+    Catalog.addEntry(entry.data, key, context, key)
+    entry.pending.set(Catalog.entryId(key, context), {key, context})
     if (entry.saveTimer) return
     entry.saveTimer = setTimeout(() => {
       entry.saveTimer = null
@@ -146,14 +146,14 @@ class LanguageStore {
   }
 
   async #save(lang, entry) {
-    const keys = [...entry.pending]
+    const keys = [...entry.pending.values()]
     if (keys.length === 0) return
     entry.pending.clear()
     try {
       await fsPromises.mkdir(this.#dir(), {recursive: true})
       const data = await this.#readFile(lang)
       let changed = false
-      for (const key of keys) if (Catalog.addEntry(data, key, '', key)) changed = true
+      for (const {key, context} of keys) if (Catalog.addEntry(data, key, context, key)) changed = true
       if (!changed) return
       // Atomic write: a reader or another worker never sees a half-written file.
       const target = this.#file(lang)
@@ -225,20 +225,39 @@ class Lang {
    * keys are added to the language file when `lang.collect` is on (default: debug mode).
    * @returns {Promise<string>}
    */
-  async get(...args) {
-    if (typeof args[0] !== 'string') return args[0]
-    const key = args[0]
+  get(key, ...args) {
+    return this.#translate(key, '', args)
+  }
+
+  /**
+   * Translates a key within a context, e.g. `getx('Gül', 'verb')`.
+   * Why: the same source text can need different translations depending on where it is used
+   * ("Gül" is "Rose" as a noun and "Smile" as a verb). The context is part of the entry's
+   * identity; in the language file the key holds an object of context -> translation. A
+   * missing context variant falls back to the same variant in the default language, then to
+   * the key; never to another context's translation.
+   * @param {string} key
+   * @param {string} context
+   * @param {...*} args Placeholder values.
+   * @returns {Promise<string>}
+   */
+  getx(key, context, ...args) {
+    return this.#translate(key, Catalog.normalizeContext(context), args)
+  }
+
+  async #translate(key, context, args) {
+    if (typeof key !== 'string') return key
     const lang = await this.#resolved()
     const data = await store.load(lang)
 
-    let str = Catalog.lookup(data, key)
+    let str = Catalog.lookup(data, key, context)
     if (str === undefined) {
-      if (this.#collect() && !Catalog.has(data, key)) store.collect(lang, key)
+      if (this.#collect() && !Catalog.has(data, key, context)) store.collect(lang, key, context)
       const fallback = Catalog.defaultLanguage(this.#odac.Config)
-      if (fallback !== lang) str = Catalog.lookup(await store.load(fallback), key)
+      if (fallback !== lang) str = Catalog.lookup(await store.load(fallback), key, context)
       if (str === undefined) str = key
     }
-    return Catalog.format(str, args.slice(1))
+    return Catalog.format(str, args)
   }
 
   #collect() {

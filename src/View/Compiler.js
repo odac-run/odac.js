@@ -190,8 +190,14 @@ function parseOdacTag(content) {
           return `%s${placeholderIndex++}`
         })
 
-        const escapedContent = processedContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-        const translationCall = placeholders.length > 0 ? `__('${escapedContent}', ${placeholders.join(', ')})` : `__('${escapedContent}')`
+        const escapedContent = escapeLiteral(processedContent)
+        // context="..." selects one translation of text that means different things in
+        // different places; it becomes part of the entry's identity (see Lang#getx).
+        const context = typeof attrs.context === 'string' ? attrs.context.trim() : ''
+        const args = [`'${escapedContent}'`]
+        if (context) args.push(`'${escapeLiteral(context)}'`)
+        args.push(...placeholders)
+        const translationCall = `${context ? '__x' : '__'}(${args.join(', ')})`
 
         if (attrs.raw) {
           return `{!! ${translationCall} !!}`
@@ -207,6 +213,11 @@ function parseOdacTag(content) {
   }
 
   return content
+}
+
+// Escapes text for a single-quoted JavaScript string literal in compiled view code.
+function escapeLiteral(text) {
+  return text.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
 }
 
 /**

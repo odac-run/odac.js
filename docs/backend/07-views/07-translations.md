@@ -48,6 +48,36 @@ storage/
 
 In development (`debug` mode) a key without a translation is added to the language file with itself as the value, so you can translate it later. Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too. Language files are loaded once per worker and re-read when they change on disk.
 
+### Context: Same Text, Different Meanings
+
+The same source text can need different translations depending on where it is used. In Turkish, "Gül" is both the flower ("Rose") and the verb ("Smile"); "Open" can be a button label or a status. Add a `context` to tell them apart:
+
+```html
+<odac translate context="flower">Gül</odac>
+<odac translate context="verb">Gül</odac>
+```
+
+```javascript
+// Controller
+Odac.__x('Gül', 'verb')            // "Smile"
+Odac.__x('%s1 gül', 'flower', 3)   // placeholders come after the context
+```
+
+The context is part of the entry's identity. In the language file the key holds an object of context → translation, where `""` is the variant used without a context:
+
+```json
+// storage/language/en.json
+{
+  "Gül": {
+    "": "Gül",
+    "flower": "Rose",
+    "verb": "Smile"
+  }
+}
+```
+
+Keys without a context stay plain strings. A missing context variant falls back to the same variant in the default language, then to the key, never to another context's translation. Keep contexts short and descriptive (`button`, `status`, `verb`): translators read them to decide what the text means. Contexts are capped at 100 characters.
+
 ### Translations with Placeholders
 
 Use nested `<odac>` tags to insert dynamic values:

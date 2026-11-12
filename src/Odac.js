@@ -135,6 +135,10 @@ module.exports = {
       _odac.__ = function (...args) {
         return _odac.Lang.get(...args)
       }
+      // Context-aware variant: __x('Gül', 'verb') and __x('Gül', 'flower') translate separately.
+      _odac.__x = function (key, context, ...args) {
+        return _odac.Lang.getx(key, context, ...args)
+      }
       if (typeof req === 'object') {
         _odac.abort = function (code) {
           return _odac.Request.abort(code)

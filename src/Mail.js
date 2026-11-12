@@ -69,7 +69,7 @@ class Mail {
       const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
       await fsPromises.writeFile(
         temp,
-        `module.exports = async (Odac, data, get, __) => {\n${declarations}\nlet html = '';\n${compile(content, {file})}\nreturn html.trim()\n}`
+        `module.exports = async (Odac, data, get, __, __x) => {\n${declarations}\nlet html = '';\n${compile(content, {file})}\nreturn html.trim()\n}`
       )
       await fsPromises.rename(temp, target)
       delete require.cache[require.resolve(target)]
@@ -81,7 +81,8 @@ class Mail {
       Odac,
       data,
       key => data[key],
-      (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0])
+      (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0]),
+      (key, context, ...args) => (Odac.Lang ? Odac.Lang.getx(key, context, ...args) : key)
     )
   }
 

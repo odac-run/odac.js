@@ -136,3 +136,84 @@ describe('Lang.get()', () => {
     expect(await new Lang(mockOdac).get('hello')).toBe('Merhaba')
   })
 })
+
+describe('Lang.getx()', () => {
+  let mockOdac
+  let tmpDir
+  let langDir
+
+  const writeLang = (code, data) => fs.writeFileSync(path.join(langDir, `${code}.json`), JSON.stringify(data))
+  const readLang = code => JSON.parse(fs.readFileSync(path.join(langDir, `${code}.json`), 'utf8'))
+  const waitForSave = () => new Promise(resolve => setTimeout(resolve, 600))
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-ctx-'))
+    langDir = path.join(tmpDir, 'storage/language')
+    fs.mkdirSync(langDir, {recursive: true})
+    global.__dir = tmpDir
+    Lang.store.reset()
+    mockOdac = {
+      Config: {debug: true, lang: {default: 'tr'}},
+      Var: val => ({is: type => type === 'alpha' && /^[a-zA-Z]+$/.test(val)}),
+      Request: {header: () => null}
+    }
+  })
+
+  afterEach(() => {
+    Lang.store.reset()
+    fs.rmSync(tmpDir, {recursive: true, force: true})
+  })
+
+  it('translates the same text differently per context', async () => {
+    writeLang('tr', {})
+    writeLang('en', {Gül: {'': 'Gül', flower: 'Rose', verb: 'Smile'}})
+    await Lang.store.init()
+    const lang = new Lang(mockOdac)
+    lang.set('en')
+    expect(await lang.getx('Gül', 'flower')).toBe('Rose')
+    expect(await lang.getx('Gül', 'verb')).toBe('Smile')
+    expect(await lang.get('Gül')).toBe('Gül')
+  })
+
+  it('treats an empty or missing context as the plain entry', async () => {
+    writeLang('tr', {Kaydet: 'Kaydet'})
+    await Lang.store.init()
+    const lang = new Lang(mockOdac)
+    expect(await lang.getx('Kaydet', '  ')).toBe('Kaydet')
+    expect(await lang.getx('Kaydet', undefined)).toBe('Kaydet')
+  })
+
+  it('never falls back to the translation of another context', async () => {
+    writeLang('tr', {})
+    writeLang('en', {Gül: 'Rose'})
+    await Lang.store.init()
+    mockOdac.Config.debug = false
+    const lang = new Lang(mockOdac)
+    lang.set('en')
+    expect(await lang.getx('Gül', 'verb')).toBe('Gül')
+  })
+
+  it('falls back to the same context in the default language', async () => {
+    writeLang('tr', {Gül: {verb: 'Gülümse'}})
+    writeLang('en', {Gül: {verb: ''}})
+    await Lang.store.init()
+    mockOdac.Config.debug = false
+    const lang = new Lang(mockOdac)
+    lang.set('en')
+    expect(await lang.getx('Gül', 'verb', 1)).toBe('Gülümse')
+  })
+
+  it('applies placeholders after the context argument', async () => {
+    writeLang('tr', {'%s1 gül': {flower: '%s1 rose'}})
+    await Lang.store.init()
+    expect(await new Lang(mockOdac).getx('%s1 gül', 'flower', 3)).toBe('3 rose')
+  })
+
+  it('collects a new context next to the existing plain translation', async () => {
+    writeLang('tr', {Gül: 'Gül'})
+    await Lang.store.init()
+    await new Lang(mockOdac).getx('Gül', 'verb')
+    await waitForSave()
+    expect(readLang('tr')).toEqual({Gül: {'': 'Gül', verb: 'Gül'}})
+  })
+})

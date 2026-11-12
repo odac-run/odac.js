@@ -289,7 +289,8 @@ class View {
       return await compiled(
         this.#odac,
         key => this.#odac.Request.get(key),
-        (...args) => this.#odac.Lang.get(...args)
+        (...args) => this.#odac.Lang.get(...args),
+        (key, context, ...args) => this.#odac.Lang.getx(key, context, ...args)
       )
     } catch (e) {
       throw this.#renderError(e, file)
@@ -352,7 +353,10 @@ class View {
       const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(6).toString('hex')}.tmp`
       await fsPromises.mkdir(`${__dir}/${CACHE_DIR}`, {recursive: true})
       try {
-        await fsPromises.writeFile(temp, `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`)
+        await fsPromises.writeFile(
+          temp,
+          `module.exports = async (Odac, get, __, __x) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
+        )
         await fsPromises.rename(temp, target)
       } catch (e) {
         await fsPromises.unlink(temp).catch(() => {})

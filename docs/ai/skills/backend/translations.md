@@ -17,6 +17,7 @@ Translations are managed via JSON files in the `storage/language/` directory. Th
 2.  **Tag Usage**: Use `<odac translate>Key</odac>` in views.
 3.  **Placeholders**: Use `%s1`, `%s2` in JSON and nested `<odac var="...">` tags in views.
 4.  **Backend Access**: Use `Odac.__(key, ...args)` in controllers.
+5.  **Context**: When the same source text needs different translations (e.g. "Gül" = Rose / Smile, "Open" = button / status), use `<odac translate context="verb">Gül</odac>` in views and `Odac.__x(key, context, ...args)` in controllers. Do not invent suffixed keys like `"Gül (verb)"` for this.
 
 ## Reference Patterns
 
@@ -40,6 +41,14 @@ const msg = Odac.__('Welcome back, %s1!', user.name);
 {
   "Welcome": "Hoş Geldiniz",
   "Hello %s1": "Merhaba %s1"
+}
+```
+
+A key used with contexts holds an object of context -> translation (`""` = no context):
+```json
+// storage/language/en.json
+{
+  "Gül": {"": "Gül", "flower": "Rose", "verb": "Smile"}
 }
 ```
 
