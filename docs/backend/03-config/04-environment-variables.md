@@ -232,3 +232,4 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
 - The `.env` file is **optional** - you can use direct values in `odac.json` if preferred
 - Variables defined in `.env` are available throughout your entire application
 - If a variable is not found, `Odac.env()` returns the default value or `undefined`
+- A `${VARIABLE}` in `odac.json` that is not set becomes an empty string and logs a warning at startup (once per variable)
