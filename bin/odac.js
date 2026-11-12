@@ -428,22 +428,10 @@ async function manageSkills(targetDir = process.cwd()) {
  */
 async function runMigration(cmd, cliArgs) {
   const projectDir = process.cwd()
-  const envPath = path.join(projectDir, '.env')
   const configPath = path.join(projectDir, 'odac.json')
 
-  // Load .env
-  if (fs.existsSync(envPath)) {
-    const envContent = fs.readFileSync(envPath, 'utf8')
-    envContent.split('\n').forEach(line => {
-      line = line.trim()
-      if (!line || line.startsWith('#')) return
-      const idx = line.indexOf('=')
-      if (idx === -1) return
-      const key = line.slice(0, idx).trim()
-      const value = Env._parseValue(line.slice(idx + 1).trim())
-      if (process.env[key] === undefined) process.env[key] = value
-    })
-  }
+  // Load .env with the same parser as the server (quotes, multi-line values, export).
+  await Env.init(projectDir)
 
   // Load config
   if (!fs.existsSync(configPath)) {
