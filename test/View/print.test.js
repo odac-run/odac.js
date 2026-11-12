@@ -78,6 +78,78 @@ describe('View.print()', () => {
     expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/html; charset=utf-8')
   })
 
+  describe('skeleton placeholders', () => {
+    // Skeletons and compiled views are cached by path in production mode; unique names per
+    // test keep one test's files from being served to the next.
+    let seq = 0
+    const renderPage = async (skeleton, parts) => {
+      const name = `placeholder${++seq}`
+      mockOdac.Var = (...args) => new (require('../../src/Var'))(...args)
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'skeleton', `${name}.html`), skeleton)
+      const set = {skeleton: name}
+      for (const [part, html] of Object.entries(parts)) {
+        const dir = path.join(global.__dir, 'view', part)
+        await fs.mkdir(dir, {recursive: true})
+        await fs.writeFile(path.join(dir, `${name}.html`), html)
+        set[part] = name
+      }
+      view.set(set)
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    it('inserts rendered HTML containing $ replacement patterns verbatim', async () => {
+      const html = await renderPage('<!DOCTYPE html><html><body><main>{{ CONTENT }}</main></body></html>', {
+        content: "<p>$` $& $$ $' $1</p>"
+      })
+      expect(html).toContain("<p>$` $& $$ $' $1</p>")
+      expect(html.match(/<!DOCTYPE html>/g)).toHaveLength(1)
+    })
+
+    it('keeps an escaped quote after a dollar sign intact', async () => {
+      const html = await renderPage('<main>{{ CONTENT }}</main>', {
+        content: `<odac:js>const price = "A$'B";</odac:js><p>{{ price }}</p>`
+      })
+      expect(html).toContain('<p>A$&#39;B</p>')
+    })
+
+    it('does not fill or erase placeholder-like text inside rendered parts', async () => {
+      const html = await renderPage('<main>{{ CONTENT }}</main><footer>{{ FOOTER }}</footer>', {
+        // User data that happens to look like a placeholder, printed through an escaped tag.
+        content: `<odac:js>const note = '{{ FOOTER }} and {{ NAME }}';</odac:js><code>{{ note }}</code>`,
+        footer: '<p>real footer</p>'
+      })
+      expect(html).toContain('<code>{{ FOOTER }} and {{ NAME }}</code>')
+      expect(html).toMatch(/<footer[^>]*><p>real footer<\/p><\/footer>/)
+    })
+
+    it('renders unresolved skeleton placeholders empty', async () => {
+      const html = await renderPage('<main>{{ CONTENT }}</main><aside>{{ SIDEBAR }}</aside>', {content: 'c'})
+      expect(html).not.toContain('SIDEBAR }}')
+      expect(html).toMatch(/<aside[^>]*><\/aside>/)
+    })
+
+    it('fills remaining placeholders from the all pattern after explicit parts', async () => {
+      await fs.mkdir(path.join(global.__dir, 'view', 'pages', 'header'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'view', 'pages', 'header', 'home.html'), 'H')
+      await fs.mkdir(path.join(global.__dir, 'view', 'pages', 'content'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'view', 'pages', 'content', 'home.html'), 'from all')
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(
+        path.join(global.__dir, 'skeleton', 'placeholderAll.html'),
+        '<header>{{ HEADER }}</header><main>{{ CONTENT }}</main>'
+      )
+      await fs.mkdir(path.join(global.__dir, 'view', 'content'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'view', 'content', 'own.html'), 'explicit')
+      view.set({skeleton: 'placeholderAll', all: 'pages.home', content: 'own'})
+      await view.print()
+      const html = mockOdac.Request.end.mock.calls[0][0]
+      expect(html).toMatch(/<header[^>]*>H<\/header>/)
+      expect(html).toMatch(/<main[^>]*>explicit<\/main>/)
+    })
+  })
+
   describe('Shared data injection', () => {
     const renderWithSharedData = async sharedData => {
       const skeletonDir = path.join(global.__dir, 'skeleton')

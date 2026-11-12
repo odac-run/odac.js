@@ -6,6 +6,8 @@ const EarlyHints = require('./View/EarlyHints')
 const Image = require('./View/Image')
 
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+// A skeleton placeholder: `{{ CONTENT }}`. The capture group keeps names in split() output.
+const SKELETON_PLACEHOLDER = /\{\{\s*([A-Z_][A-Z0-9_]*)\s*\}\}/
 
 const CACHE_DIR = './storage/.cache'
 
@@ -256,31 +258,7 @@ class View {
 
       // Add data-odac-navigate to content wrapper for auto-navigation
       result = this.#addNavigateAttribute(result)
-
-      for (let key in this.#part) {
-        if (['all', 'skeleton'].includes(key)) continue
-        if (!this.#part[key]) continue
-        if (this.#part[key].includes('.')) this.#part[key] = this.#part[key].replace(/\./g, '/')
-        if (await this.#exists(`./view/${key}/${this.#part[key]}.html`)) {
-          result = result.replace(`{{ ${key.toUpperCase()} }}`, await this.#render(`./view/${key}/${this.#part[key]}.html`))
-        }
-      }
-      if (this.#part.all) {
-        let parts = (result.match(/{{.*?}}/g) || []).map(part => part.replace(/{{|}}/g, '').trim())
-        if (parts.length > 0)
-          for (let part of parts) {
-            part = part.trim()
-            let file = this.#part.all.split('.')
-            file.splice(-1, 0, part.toLowerCase())
-            file = file.join('/')
-            if (await this.#exists(`./view/${file}.html`)) {
-              result = result.replace(`{{ ${part.toUpperCase()} }}`, await this.#render(`./view/${file}.html`))
-            }
-          }
-      }
-
-      // Clean up unresolved skeleton placeholders
-      result = result.replace(/\{\{\s*[A-Z_]+\s*\}\}/g, '')
+      result = await this.#fillSkeleton(result)
     }
 
     if (result) {
@@ -306,6 +284,55 @@ class View {
 
     this.#odac.Request.header('Content-Type', 'text/html; charset=utf-8')
     this.#odac.Request.end(result)
+  }
+
+  /**
+   * Fills a skeleton's `{{ PART }}` placeholders with rendered parts.
+   *
+   * Why: replacing placeholders one by one with String.replace() expanded `$&`, `` $` `` and
+   * `$'` inside rendered HTML (even an escaped `'` becomes `&#39;` after a `$`), re-scanned
+   * already inserted content (a part containing the text `{{ FOOTER }}` was filled before the
+   * real placeholder) and the final cleanup erased placeholder-like text from user content.
+   * The skeleton is tokenized once and only its own placeholders are ever filled.
+   *
+   * Explicit parts render first in the order they were set, then `all` fills the remaining
+   * placeholders in skeleton order, keeping the render order views may depend on. Only the
+   * first occurrence of a placeholder is filled; unresolved placeholders render empty.
+   *
+   * @param {string} skeleton Skeleton HTML.
+   * @returns {Promise<string>}
+   */
+  async #fillSkeleton(skeleton) {
+    const segments = skeleton.split(SKELETON_PLACEHOLDER)
+    const firstIndex = new Map()
+    for (let i = 1; i < segments.length; i += 2) if (!firstIndex.has(segments[i])) firstIndex.set(segments[i], i)
+
+    const rendered = new Map()
+    for (const key in this.#part) {
+      if (key === 'all' || key === 'skeleton' || !this.#part[key]) continue
+      if (this.#part[key].includes('.')) this.#part[key] = this.#part[key].replace(/\./g, '/')
+      const name = key.toUpperCase()
+      if (!firstIndex.has(name) || rendered.has(name)) continue
+      const file = `./view/${key}/${this.#part[key]}.html`
+      if (await this.#exists(file)) rendered.set(name, await this.#render(file))
+    }
+
+    if (this.#part.all) {
+      for (const name of firstIndex.keys()) {
+        if (rendered.has(name)) continue
+        const file = this.#part.all.split('.')
+        file.splice(-1, 0, name.toLowerCase())
+        const filePath = `./view/${file.join('/')}.html`
+        if (await this.#exists(filePath)) rendered.set(name, await this.#render(filePath))
+      }
+    }
+
+    let html = ''
+    for (let i = 0; i < segments.length; i++) {
+      if (i % 2 === 0) html += segments[i]
+      else if (firstIndex.get(segments[i]) === i) html += rendered.get(segments[i]) ?? ''
+    }
+    return html
   }
 
   #parseOdacTag(content) {
