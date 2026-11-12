@@ -48,7 +48,7 @@ class OdacRequest {
   #activeWrites = new Set()
   #cleanedUp = false
   #event = {data: [], end: []}
-  #headers = {Server: 'Odac'}
+  #headers = {}
   #status = 200
   #timeout = null
   #earlyHints = null
@@ -68,6 +68,8 @@ class OdacRequest {
     this.req = req
     this.res = res
     this.#odac = odac
+    const defaults = global.Odac.Config.headers
+    if (defaults) for (const name of Object.keys(defaults)) if (defaults[name]) this.#headers[name] = defaults[name]
     this.method = req.method.toLowerCase()
     this.url = req.url
     // HTTP/1.0 does not require Host, and a socket reset before construction
@@ -466,19 +468,35 @@ class OdacRequest {
     return this.variables[key] ? this.variables[key].value : null
   }
 
-  // Response headers are set with mixed casing across the framework, so the
-  // presence check must be case-insensitive to avoid emitting a duplicate.
-  #hasHeader(key) {
+  // Response headers are set with mixed casing across the framework and by apps, so lookups
+  // must be case-insensitive to avoid emitting the same header twice.
+  #headerName(key) {
     const lower = key.toLowerCase()
-    for (const name of Object.keys(this.#headers)) if (name.toLowerCase() === lower) return true
-    return false
+    for (const name of Object.keys(this.#headers)) if (name.toLowerCase() === lower) return name
+    return undefined
   }
 
-  // - SET HEADER
+  #hasHeader(key) {
+    return this.#headerName(key) !== undefined
+  }
+
+  /**
+   * Reads a request header, or sets/removes a response header.
+   *
+   * Why: one accessor for both directions. Writes replace an existing header regardless of
+   * its casing, so overriding a default such as `x-frame-options` never sends two values.
+   *
+   * @param {string} key Header name.
+   * @param {*} [value] New value; null removes the header; omitted reads the request header.
+   */
   header(key, value) {
-    if (value === null) delete this.#headers[key]
-    else if (value !== undefined) this.#headers[key] = value
-    else for (const header of Object.keys(this.req.headers)) if (header.toLowerCase() === key.toLowerCase()) return this.req.headers[header]
+    if (value === undefined) {
+      for (const header of Object.keys(this.req.headers)) if (header.toLowerCase() === key.toLowerCase()) return this.req.headers[header]
+      return undefined
+    }
+    const existing = this.#headerName(key)
+    if (existing !== undefined) delete this.#headers[existing]
+    if (value !== null) this.#headers[key] = value
   }
 
   // - ON EVENT

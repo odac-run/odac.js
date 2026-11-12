@@ -69,6 +69,15 @@ describe('View.print()', () => {
       expect(payload.title).toBe('Dynamic Title')
     })
   })
+  it('declares UTF-8 for full HTML pages', async () => {
+    const skeletonDir = path.join(global.__dir, 'skeleton')
+    await fs.mkdir(skeletonDir, {recursive: true})
+    await fs.writeFile(path.join(skeletonDir, 'main.html'), '<html><body>ş</body></html>')
+    view.set({skeleton: 'main'})
+    await view.print()
+    expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/html; charset=utf-8')
+  })
+
   describe('Shared data injection', () => {
     const renderWithSharedData = async sharedData => {
       const skeletonDir = path.join(global.__dir, 'skeleton')

@@ -304,7 +304,7 @@ class View {
       }
     }
 
-    this.#odac.Request.header('Content-Type', 'text/html')
+    this.#odac.Request.header('Content-Type', 'text/html; charset=utf-8')
     this.#odac.Request.end(result)
   }
 

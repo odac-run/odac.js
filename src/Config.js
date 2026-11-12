@@ -14,6 +14,15 @@ module.exports = {
     maxFiles: 10,
     uploadDir: null
   },
+  // Response headers every request starts with. They mirror the values the ODAC proxy fills
+  // in, so an app reached directly or behind another proxy gets the same protection. Set a
+  // header to false or null in odac.json to drop it; an app can still override any of them
+  // per response with Odac.Request.header().
+  headers: {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin'
+  },
   encrypt: {
     key: 'odac' // Default encryption key. MUST be overridden in production.
   },

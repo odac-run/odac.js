@@ -57,3 +57,11 @@ const apiKey = Odac.env('API_KEY');
 ```
 
 Access via: `Odac.DB.analytics.tableName`
+
+### 4. Default Response Headers
+`headers` holds headers sent with every response (`X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`). Set one to `false` to drop it; `Odac.Request.header(name, null)` removes it for a single response.
+```json
+{
+  "headers": {"X-Frame-Options": "DENY"}
+}
+```
