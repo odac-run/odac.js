@@ -816,7 +816,7 @@ class WriteBuffer {
     } else if (cluster.isPrimary) {
       try {
         // Force-acquire lock for final flush (bypass distributed lock)
-        await Odac.Ipc.unlock(LOCK_KEY)
+        await Odac.Ipc.forceUnlock(LOCK_KEY)
         await this.flush()
         console.log('\x1b[32m[WriteBuffer]\x1b[0m Final flush completed.')
       } catch (err) {

@@ -1,6 +1,20 @@
 const cluster = require('node:cluster')
 const {EventEmitter} = require('node:events')
 
+function copy(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
+}
+
+// worker.send() to a worker whose channel is closing emits 'error' on the worker when no
+// callback is given; nothing listens for it, so it would crash the primary.
+function sendToWorker(worker, message) {
+  if (!worker || !worker.isConnected?.()) return
+  worker.send(message, error => {
+    if (error)
+      console.error(JSON.stringify({level: 'WARN', message: 'Ipc could not reach a worker', worker: worker.id, error: error.message}))
+  })
+}
+
 class Ipc extends EventEmitter {
   constructor() {
     super()
@@ -9,6 +23,7 @@ class Ipc extends EventEmitter {
     this._requests = new Map() // For memory driver response tracking
     this._subs = new Map() // For memory driver subscriptions
     this._redisBridges = new Map() // channel -> the single node-redis listener bridging to our EventEmitter
+    this._lockOwners = new Map() // key -> owner token of a lock this process acquired without naming one
   }
 
   /**
@@ -256,27 +271,39 @@ class Ipc extends EventEmitter {
    * the holder release or extend only its own lock: without it, a holder that outlived the TTL
    * would delete the lock a second process had acquired meanwhile.
    *
+   * Without an owner, a random token is generated and remembered by this process, so the
+   * documented lock(key) ... unlock(key) pattern is ownership-checked too.
+   *
    * @param {string} key
    * @param {number} [ttl=10] - Lock time-to-live in seconds
-   * @param {string} [owner='1'] - Token identifying the holder
+   * @param {string} [owner] - Token identifying the holder
    * @returns {Promise<boolean>} true if lock acquired
    */
-  async lock(key, ttl = 10, owner = '1') {
+  async lock(key, ttl = 10, owner) {
+    const token = owner === undefined ? require('node:crypto').randomUUID() : String(owner)
+    let acquired
     if (this.config.driver === 'redis') {
-      const result = await this.redis.set(key, String(owner), {NX: true, EX: ttl})
-      return result === 'OK'
+      acquired = (await this.redis.set(key, token, {NX: true, EX: ttl})) === 'OK'
+    } else {
+      acquired = await this._sendMemory('lock', {key, ttl, owner: token})
     }
-    return this._sendMemory('lock', {key, ttl, owner: String(owner)})
+    if (acquired && owner === undefined) this._lockOwners.set(key, token)
+    return acquired
   }
 
   /**
-   * Why: Release flush lock after completion so the next cycle can proceed.
-   * With an owner, the lock is released only if that owner still holds it; without one it is
-   * removed unconditionally (used to break a stale lock at shutdown).
+   * Why: Release a lock after the critical section so the next holder can proceed.
+   * The lock is released only if it is still held by `owner` (or, without one, by this
+   * process's lock(key) call). A holder that outlived its TTL therefore cannot delete the lock
+   * another process acquired meanwhile. Use forceUnlock() to break a stale lock.
    * @returns {Promise<boolean>} true if a lock was released
    */
   async unlock(key, owner) {
-    if (owner === undefined) return this.del(key)
+    if (owner === undefined) {
+      owner = this._lockOwners.get(key)
+      if (owner === undefined) return false
+      this._lockOwners.delete(key)
+    }
     if (this.config.driver === 'redis') {
       const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
       return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner)]})) === 1
@@ -285,10 +312,24 @@ class Ipc extends EventEmitter {
   }
 
   /**
+   * Removes a lock whoever holds it.
+   * Why: breaking a stale lock is a deliberate act (e.g. the final flush at shutdown), never
+   * the side effect of an unlock() without an owner.
+   * @returns {Promise<boolean>} true if a lock was removed
+   */
+  async forceUnlock(key) {
+    this._lockOwners.delete(key)
+    const removed = await this.del(key) // memory: boolean, redis: count
+    return removed === true || Number(removed) > 0
+  }
+
+  /**
    * Why: Lets a long-running holder keep its lock alive instead of losing it at the TTL.
    * @returns {Promise<boolean>} false if the lock is no longer held by `owner`
    */
   async extendLock(key, owner, ttl = 10) {
+    if (owner === undefined) owner = this._lockOwners.get(key)
+    if (owner === undefined) return false
     if (this.config.driver === 'redis') {
       const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
       return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner), String(ttl)]})) === 1
@@ -543,8 +584,11 @@ class Ipc extends EventEmitter {
     })
   }
 
+  // Calls made on the primary itself (cron jobs) must see the same semantics as workers, whose
+  // values cross process.send() as JSON: get() used to return the stored object itself, so a
+  // caller mutating it changed the cache for everyone.
   _handleDirectPrimaryCall(action, payload) {
-    return this._executePrimaryAction(action, payload)
+    return copy(this._executePrimaryAction(action, copy(payload)))
   }
 
   /**
@@ -624,37 +668,26 @@ class Ipc extends EventEmitter {
       }
 
       // --- Set ---
+      // Members live in a Set: membership checks were Array.includes/indexOf, O(n) per member.
       case 'sadd': {
         let data = this._memoryStore.get(msg.key)
-        if (!data) {
-          data = {value: [], expireAt: Infinity}
+        if (!data || !(data.value instanceof Set)) {
+          data = {value: new Set(), expireAt: Infinity}
           this._memoryStore.set(msg.key, data)
         }
-        if (!Array.isArray(data.value)) data.value = []
-        let added = 0
-        for (const m of msg.members) {
-          if (!data.value.includes(m)) {
-            data.value.push(m)
-            added++
-          }
-        }
-        return added
+        const before = data.value.size
+        for (const m of msg.members) data.value.add(m)
+        return data.value.size - before
       }
       case 'smembers': {
         const data = this._memoryStore.get(msg.key)
-        return data && Array.isArray(data.value) ? data.value.slice() : []
+        return data && data.value instanceof Set ? [...data.value] : []
       }
       case 'srem': {
         const data = this._memoryStore.get(msg.key)
-        if (!data || !Array.isArray(data.value)) return 0
+        if (!data || !(data.value instanceof Set)) return 0
         let removed = 0
-        for (const m of msg.members) {
-          const idx = data.value.indexOf(m)
-          if (idx !== -1) {
-            data.value.splice(idx, 1)
-            removed++
-          }
-        }
+        for (const m of msg.members) if (data.value.delete(m)) removed++
         return removed
       }
 
@@ -683,9 +716,18 @@ class Ipc extends EventEmitter {
       case 'publish': {
         const workers = this._memorySubs.get(msg.channel)
         if (workers) {
-          workers.forEach(wId => {
-            const w = require('node:cluster').workers[wId]
-            if (w) w.send({type: 'ipc:message', channel: msg.channel, message: msg.message})
+          for (const wId of workers) {
+            sendToWorker(cluster.workers[wId], {type: 'ipc:message', channel: msg.channel, message: msg.message})
+          }
+        }
+        // Subscribers on the primary itself (cron jobs) have no worker id to be registered
+        // under; they are served from the primary's own subscription map. Delivery is
+        // deferred and the message copied, matching what a worker receives.
+        const local = this._subs.get(msg.channel)
+        if (local && local.size > 0) {
+          const message = copy(msg.message)
+          setImmediate(() => {
+            for (const cb of local) this._deliver(msg.channel, cb, message)
           })
         }
         return undefined
@@ -784,7 +826,7 @@ class Ipc extends EventEmitter {
     const response = this._executePrimaryAction(action, msg)
 
     if (msg.id) {
-      worker.send({type: 'ipc:response', id: msg.id, data: response})
+      sendToWorker(worker, {type: 'ipc:response', id: msg.id, data: response})
     }
   }
 }

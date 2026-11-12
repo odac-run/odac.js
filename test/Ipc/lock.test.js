@@ -80,9 +80,34 @@ describe('Ipc - lock ownership', () => {
     expect(await Ipc.lock('lock:ext', 5, 'owner-b')).toBe(false)
   })
 
-  it('force-releases without an owner', async () => {
+  it('force-releases a lock whoever holds it', async () => {
     await Ipc.lock('lock:force', 5, 'owner-a')
-    await Ipc.unlock('lock:force')
+    expect(await Ipc.forceUnlock('lock:force')).toBe(true)
     expect(await Ipc.lock('lock:force', 5, 'owner-b')).toBe(true)
+  })
+
+  it("does not release another holder's lock through unlock(key) without an owner", async () => {
+    await Ipc.lock('lock:other', 5, 'owner-a')
+    expect(await Ipc.unlock('lock:other')).toBe(false)
+    expect(await Ipc.lock('lock:other', 5, 'owner-b')).toBe(false)
+  })
+
+  it('checks ownership for the lock(key) ... unlock(key) pattern', async () => {
+    const realNow = Date.now
+    expect(await Ipc.lock('lock:job', 1)).toBe(true)
+    // The first holder outlives its TTL and another process takes the lock.
+    jest.spyOn(Date, 'now').mockReturnValue(realNow() + 2000)
+    expect(await Ipc.lock('lock:job', 30, 'second-process')).toBe(true)
+
+    // The late unlock() must not delete the second holder's lock.
+    expect(await Ipc.unlock('lock:job')).toBe(false)
+    expect(await Ipc.lock('lock:job', 30, 'third')).toBe(false)
+    jest.restoreAllMocks()
+  })
+
+  it('releases its own lock(key) with unlock(key)', async () => {
+    expect(await Ipc.lock('lock:own', 5)).toBe(true)
+    expect(await Ipc.unlock('lock:own')).toBe(true)
+    expect(await Ipc.lock('lock:own', 5)).toBe(true)
   })
 })
