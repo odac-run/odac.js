@@ -110,7 +110,7 @@ module.exports = {
 
       if (typeof req === 'object') {
         _odac.Request = new (require('./Request.js'))(id, req, res, _odac)
-        _odac.Auth = new (require('./Auth.js'))(_odac.Request)
+        _odac.Auth = new (require('./Auth.js'))(_odac.Request, _odac)
         _odac.Token = new (require('./Token.js'))(_odac.Request)
       }
       _odac.Lang = new (require('./Lang.js'))(_odac)

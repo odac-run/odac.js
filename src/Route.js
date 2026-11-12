@@ -4,6 +4,7 @@ const fsPromises = fs.promises
 const path = require('path')
 const {pipeline} = require('stream')
 
+const Hook = require('./Hook.js')
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
 const Image = require('./View/Image.js')
@@ -521,7 +522,7 @@ class Route {
   }
 
   /**
-   * Loads middleware, class and route files, reloading those that changed.
+   * Loads middleware, hook, class and route files, reloading those that changed.
    * Why: runs at startup and every 5 s in debug mode; any failure is logged and `loading` is
    * always released, so one broken save can never stop hot reload for the rest of the run.
    */
@@ -541,6 +542,7 @@ class Route {
 
   async #loadAll() {
     await this.#loadMiddlewares()
+    await Hook.load()
     const classDir = `${__dir}/class/`
     try {
       await fsPromises.access(classDir)

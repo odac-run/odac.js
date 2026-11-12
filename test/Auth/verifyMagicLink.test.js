@@ -172,6 +172,8 @@ describe('Auth.verifyMagicLink()', () => {
     // Regression test: verifyMagicLink must not call login() a second time
     // when register() already performed auto-login internally.
     const newUser = {email: 'new@example.com', id: 'nano_new'}
+    // register() inserts with this id and signs in with it, so it must match the stored row.
+    global.Odac.DB.nanoid = () => 'nano_new'
     const magicDbMock = createDbMock([createMagicRecord({email: 'new@example.com'})])
 
     // Query path breakdown:
@@ -210,6 +212,8 @@ describe('Auth.verifyMagicLink()', () => {
 
   it('should return the newly registered user on success', async () => {
     const newUser = {email: 'new@example.com', id: 'nano_new'}
+    // register() inserts with this id and signs in with it, so it must match the stored row.
+    global.Odac.DB.nanoid = () => 'nano_new'
     const magicDbMock = createDbMock([createMagicRecord({email: 'new@example.com'})])
 
     let usersFirstCallCount = 0

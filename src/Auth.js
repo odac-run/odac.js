@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const Hook = require('./Hook.js')
 const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 // Window after rotation during which the old token can still recover a lost
 // rotation response (one-shot). Shorter = smaller replay surface; too short
@@ -32,6 +33,7 @@ function toMillis(value) {
 }
 
 class Auth {
+  #odac = null
   #request = null
   #table = null
   #token = null
@@ -47,8 +49,13 @@ class Auth {
   // sweep instead of resetting a full interval on every restart.
   static #lastTokenSweep = Date.now() - TOKEN_SWEEP_INTERVAL_MS + TOKEN_SWEEP_BOOT_DELAY_MS
 
-  constructor(request) {
+  /**
+   * @param {object} request The request this instance authenticates.
+   * @param {object} [odac] The request's Odac instance, handed to `hook/auth.js` handlers.
+   */
+  constructor(request, odac = null) {
     this.#request = request
+    this.#odac = odac
   }
 
   #validateInput(where) {
@@ -452,22 +459,37 @@ class Auth {
    * Signs the user in and issues the auth cookies.
    * Why: password logins are throttled here, not in each caller, so the built-in form and
    * custom controllers share one limit. A throttled attempt returns false without touching the
-   * database, exactly like wrong credentials.
+   * database, exactly like wrong credentials. Every sign-in path (password, magic link,
+   * registration) ends here, so `hook/auth.js` sees all of them.
    * @param {object} where Identity fields plus, for password logins, the password field(s).
    * @returns {Promise<boolean>}
    */
   async login(where) {
+    return this.#login(where, null)
+  }
+
+  async #login(where, method) {
     this.#user = null
     where = await Auth.#resolveCriteria(where)
+    method ??= Auth.#hasSecret(where) ? 'password' : 'direct'
     const throttle = this.#loginThrottleKeys(where)
-    if (throttle && (await this.#isThrottled(throttle))) return false
+    if (throttle && (await this.#isThrottled(throttle))) {
+      await this.#loginFailed(where, method, 'throttled')
+      return false
+    }
 
     let user = await this.check(where)
     if (!user) {
       if (throttle) await this.#recordLoginFailure(throttle)
+      await this.#loginFailed(where, method, 'invalid')
       return false
     }
     if (throttle) await Odac.Ipc.del(throttle.account).catch(() => {})
+
+    if (!(await this.#allowLogin(user, method))) {
+      await this.#loginFailed(where, method, 'denied')
+      return false
+    }
 
     // A session identifier chosen before sign-in (possibly planted) must not carry over.
     this.#request.regenerateSession()
@@ -518,7 +540,47 @@ class Auth {
 
     // Knex insert returns ids on some dbs, promise resolves to result
     const result = await Odac.DB[token].insert(cookie)
-    return !!result
+    if (!result) return false
+
+    if (Hook.has('auth', 'login')) await Hook.run('auth', 'login', this.#hookContext(), {user: Auth.#publicUser(user), method})
+    return true
+  }
+
+  // --- LOGIN HOOKS (hook/auth.js) ---
+
+  static #hasSecret(where) {
+    if (!where || typeof where !== 'object') return false
+    const secrets = Auth.#secretFields()
+    return Object.keys(where).some(key => secrets.includes(key))
+  }
+
+  // Hooks get the row without password hashes, so logging or forwarding it cannot leak them.
+  static #publicUser(user) {
+    const copy = {...user}
+    for (const field of Auth.#secretFields()) delete copy[field]
+    return copy
+  }
+
+  #hookContext() {
+    return this.#odac || global.Odac
+  }
+
+  // A veto hook fails closed: if the check that would block an account cannot run, the
+  // account is not let in. Only an explicit `false` denies; any other return value allows.
+  async #allowLogin(user, method) {
+    if (!Hook.has('auth', 'beforeLogin')) return true
+    const result = await Hook.run('auth', 'beforeLogin', this.#hookContext(), {user: Auth.#publicUser(user), method})
+    return !result.error && result.value !== false
+  }
+
+  async #loginFailed(where, method, reason) {
+    if (!Hook.has('auth', 'loginFailed')) return
+    const secrets = Auth.#secretFields()
+    const identity = {}
+    if (where && typeof where === 'object') {
+      for (const key of Object.keys(where)) if (!secrets.includes(key)) identity[key] = where[key]
+    }
+    await Hook.run('auth', 'loginFailed', this.#hookContext(), {identity, method, reason})
   }
 
   async #cleanupExpiredTokens(tokenTable) {
@@ -532,7 +594,19 @@ class Auth {
       .catch(() => {})
   }
 
+  /**
+   * Creates a user and, unless `options.autoLogin` is false, signs them in.
+   * Why: one place enforces unique fields, hashes the password and picks the id strategy, so
+   * custom sign-up controllers and magic-link sign-ups produce identical rows.
+   * @param {object} data Column values of the new user.
+   * @param {object} [options] passwordField, uniqueFields, autoLogin.
+   * @returns {Promise<{success: boolean, user?: object, autoLogin?: boolean, error?: string}>}
+   */
   async register(data, options = {}) {
+    return this.#register(data, options, 'register')
+  }
+
+  async #register(data, options, loginMethod) {
     if (!Odac.Config.auth) {
       Odac.Config.auth = {}
     }
@@ -628,7 +702,7 @@ class Auth {
       if (options.autoLogin !== false) {
         const loginData = {}
         loginData[primaryKey] = userId
-        const loginSuccess = await this.login(loginData)
+        const loginSuccess = await this.#login(loginData, loginMethod)
 
         if (!loginSuccess) {
           return {success: true, user: newUser, autoLogin: false, message: 'User created but auto-login failed'}
@@ -883,6 +957,7 @@ class Auth {
     const records = await Odac.DB[magicTable].where('email', email).where('expires_at', '>', new Date())
 
     if (!records || records.length === 0) {
+      await this.#loginFailed({email}, 'magic', 'invalid')
       return {success: false, error: 'Link expired or invalid'}
     }
 
@@ -896,6 +971,7 @@ class Auth {
     }
 
     if (!validRecord) {
+      await this.#loginFailed({email}, 'magic', 'invalid')
       return {success: false, error: 'Invalid token'}
     }
 
@@ -904,7 +980,6 @@ class Auth {
 
     // 4. Log in user (or Register if new)
     let user = await Odac.DB[this.#table].where('email', email).first()
-    let alreadyLoggedIn = false
 
     if (!user) {
       // Auto-Register the user
@@ -920,22 +995,20 @@ class Auth {
         registerData[Auth.#secretFields()[0]] = nodeCrypto.randomBytes(32).toString('hex')
       }
 
-      const regResult = await this.register(registerData)
+      const regResult = await this.#register(registerData, {}, 'magic')
 
       if (!regResult.success) {
         return {success: false, error: 'Registration failed'}
       }
 
-      user = regResult.user
-      // register() already performs auto-login by default, skip duplicate login
-      alreadyLoggedIn = regResult.autoLogin !== false
+      // register() already signed the new user in. A failure there (a beforeLogin veto) is
+      // final: retrying would run the hooks a second time for the same attempt.
+      if (regResult.autoLogin === false) return {success: false, error: 'Login failed'}
+      return {success: true, user: regResult.user}
     }
 
-    if (!alreadyLoggedIn) {
-      const loginData = {}
-      loginData[primaryKey] = user[primaryKey]
-      await this.login(loginData)
-    }
+    // A failed sign-in (a beforeLogin veto) must not be reported as success.
+    if (!(await this.#login({[primaryKey]: user[primaryKey]}, 'magic'))) return {success: false, error: 'Login failed'}
 
     return {success: true, user: user}
   }

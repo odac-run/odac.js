@@ -19,6 +19,7 @@ ODAC uses a request-scoped container. Most logic should be encapsulated in Servi
     -   `class/`: Reusable business logic (Service Classes).
     -   `view/`: HTML/Template files.
     -   `middleware/`: Request interceptors.
+    -   `hook/`: Framework lifecycle hooks. Only `hook/auth.js` exists (`beforeLogin`, `login`, `loginFailed`); see the authentication skill. Never register framework listeners from route files.
     -   `storage/language/`: Translation JSON files.
 2.  **Service Classes**:
     -   Place classes in the `class/` directory.

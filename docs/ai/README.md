@@ -20,7 +20,7 @@ The `skills/` directory contains a master `SKILL.md` that indexes specialized ru
 Detailed instructions are organized into Backend and Frontend categories:
 
 ### Backend
-- `backend/authentication.md`: Sessions, Auth, and Realtime Hubs.
+- `backend/authentication.md`: Sessions, Auth, Login Hooks, and Realtime Hubs.
 - `backend/config.md`: Configuration management and environment variables.
 - `backend/controllers.md`: Request handling and Class-Based Controllers.
 - `backend/cron.md`: Scheduled background tasks and automation.

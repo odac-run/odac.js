@@ -14,6 +14,8 @@ project/
 │   └── page/           # HTML page controllers
 │       ├── about.js
 │       └── home.js
+├── hook/               # Framework lifecycle hooks
+│   └── auth.js         # beforeLogin, login, loginFailed
 ├── middleware/         # Route middleware functions
 │   └── auth.js
 ├── public/             # Static assets (directly accessible)
@@ -45,6 +47,7 @@ project/
 |-----------|---------|
 | `class/` | Request-scoped service classes for business logic |
 | `controller/` | HTTP handlers that process requests and return responses |
+| `hook/` | Framework lifecycle hooks; `auth.js` runs on every sign-in (see Login Hooks) |
 | `middleware/` | Functions that run before controllers (auth, logging, etc.) |
 | `route/` | Route definitions, one file per subdomain |
 | `view/` | HTML templates and partials |

@@ -14,7 +14,7 @@ Use this skill whenever you are developing an application with the ODAC Framewor
 Read the specific rule files based on whether you are working on the Backend or Frontend:
 
 ### Backend Rules
-- [backend/authentication.md](backend/authentication.md) - Sessions, Auth, and Realtime Hubs
+- [backend/authentication.md](backend/authentication.md) - Sessions, Auth, Login Hooks, and Realtime Hubs
 - [backend/config.md](backend/config.md) - Configuration management and environment variables
 - [backend/controllers.md](backend/controllers.md) - Request handling and Class-Based Controllers
 - [backend/cron.md](backend/cron.md) - Scheduled background tasks and automation

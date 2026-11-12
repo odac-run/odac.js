@@ -1,8 +1,8 @@
 ---
 name: backend-authentication-realtime-skill
-description: Secure ODAC authentication patterns for sessions, guards, passwordless flows, and realtime channel protection.
+description: Secure ODAC authentication patterns for sessions, guards, passwordless flows, login hooks, and realtime channel protection.
 metadata:
-  tags: backend, authentication, session, auth-guard, magic-link, realtime, security
+  tags: backend, authentication, session, auth-guard, magic-link, login-hooks, realtime, security
 ---
 
 # Backend Authentication & Realtime Skill
@@ -20,6 +20,7 @@ ODAC provides built-in drivers for session handling (Memory/Redis) and multiple 
 5.  **Token Rotation**: Enterprise-grade rotation is enabled by default. The rotated token stays valid for a 30 s grace period (`auth.rotationGrace`) to prevent race conditions in SPAs; concurrent requests rotate only once.
 6.  **Persistence**: Cookies use the configured `maxAge` to persist beyond browser closure.
 7.  **Token Accessor**: Use `Odac.Auth.token()` to access the active auth session record (e.g., auth ID, IP, timestamps). Returns `false` if no active session.
+8.  **Login Hooks**: Sign-in side effects (last login time/IP, audit logs) and sign-in vetoes (suspended accounts) go in `hook/auth.js`, never in individual login controllers: the hooks run on every path (password, built-in login form, magic link, `register()` auto-login, direct `Odac.Auth.login()`). Resumed sessions and token rotation run no hooks.
 
 ## Reference Patterns
 
@@ -42,7 +43,31 @@ await Odac.Auth.login({ email, password })
 await Odac.Auth.logout()
 ```
 
-### 2. Magic Links (Passwordless)
+### 2. Login Hooks (`hook/auth.js`)
+```javascript
+// hook/auth.js — every handler gets the request's Odac instance first
+module.exports = {
+  // Credentials verified, nothing issued yet. Only an explicit `false` refuses.
+  // Throwing also refuses (fails closed). A refusal does not count toward throttling.
+  async beforeLogin(Odac, {user, method}) {
+    if (user.suspended) return false
+  },
+
+  // Token stored and cookies set. Errors are logged; the sign-in still succeeds.
+  async login(Odac, {user, method}) {
+    await Odac.DB.users.where('id', user.id).update({last_login_at: new Date(), last_login_ip: Odac.Request.ip})
+  },
+
+  // reason: 'invalid' | 'throttled' | 'denied'. identity never contains the password.
+  async loginFailed(Odac, {identity, method, reason}) {}
+}
+```
+- `method`: `'password'`, `'magic'` (existing user or sign-up via link), `'register'` (auto-login), `'direct'` (identity-only `login()`).
+- `user` is a copy without the `auth.passwordField` hash(es); use it instead of `Odac.Auth.user()` inside hooks.
+- A refusal makes `login()` return `false` (form shows "Invalid credentials"), fails `verifyMagicLink()` with `{success: false, error: 'Login failed'}`, and makes `register()` return `{success: true, autoLogin: false}`. For a custom message, check the account state in your controller before calling `login()`.
+- Only `auth.js` and these three exports are recognized; anything else is logged as unknown at load time.
+
+### 3. Magic Links (Passwordless)
 ```javascript
 // Generate and send a magic link
 const result = await Odac.Auth.magic('user@example.com', {
@@ -55,7 +80,7 @@ if (result.success) {
 }
 ```
 
-### 3. Session Management
+### 4. Session Management
 ```javascript
 // Get/Set session data
 Odac.session('key', 'value');
@@ -68,7 +93,7 @@ Odac.session('key', null);
 - Expiry slides: 7 days after the last activity (recorded at most hourly).
 - Bound to the version-free User-Agent: browser updates keep the session.
 
-### 4. Realtime Broadcasting (Ipc)
+### 5. Realtime Broadcasting (Ipc)
 ```javascript
 // Broadcast to everyone subscibed in this worker cluster
 await Odac.Ipc.publish('lobby', { type: 'chat', text: 'Hello!' });
