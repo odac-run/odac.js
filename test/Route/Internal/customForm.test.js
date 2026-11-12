@@ -121,5 +121,23 @@ describe('Internal.customForm()', () => {
       logged.mockRestore()
       delete global.Odac
     })
+
+    // Stored uploads are permanent records; the OS temp directory is wiped on reboot.
+    it('stores file fields under storage/uploads when no uploadDir is configured', async () => {
+      const Odac = makeOdac(undefined, {action: undefined, table: 'docs', fields: [{name: 'cv', type: 'file'}]})
+      const move = jest.fn(async dest => dest)
+      Odac.file = jest.fn(async () => ({ext: 'pdf', move}))
+      Odac.DB = {docs: {insert: jest.fn().mockResolvedValue([1])}}
+      global.Odac = {Config: {request: {}}}
+      global.__dir = '/srv/app'
+
+      const out = await Internal.customForm(Odac)
+
+      expect(out.result.success).toBe(true)
+      expect(move.mock.calls[0][0]).toMatch(/^\/srv\/app\/storage\/uploads\/docs\/[0-9a-f]{16}\.pdf$/)
+      expect(Odac.formData.cv).toMatch(/^docs\/[0-9a-f]{16}\.pdf$/)
+      delete global.Odac
+      delete global.__dir
+    })
   })
 })

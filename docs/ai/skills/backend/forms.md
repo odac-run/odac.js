@@ -147,7 +147,12 @@ async saveAvatar(form) {
 ```
 
 ### Table Forms
-For `table="..."` forms, file fields are auto-stored relative to `uploadDir` (configured in `odac.json` or `$ODAC_UPLOAD_DIR`) and the path string is persisted in the column.
+For `table="..."` forms, file fields are auto-stored relative to `uploadDir` (configured in `odac.json` or `$ODAC_UPLOAD_DIR`; default `storage/uploads`) and the relative path string is persisted in the column.
+
+### Limits
+- Multipart bodies are parsed lazily, on the first `Odac.request()`/`Odac.file()` call; a POST to a URL with no route is never parsed or written to disk.
+- `request.maxBodySize` caps the combined size of all text fields in a multipart request → `413` when exceeded.
+- `request.maxFileSize` / `request.maxFiles` cap files; an oversize file arrives with `truncated: true` and `path: null`.
 
 ### File Object Shape
 ```javascript

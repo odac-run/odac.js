@@ -705,7 +705,7 @@ describe('Route.check()', () => {
     })
 
     it('loads the user before processing a form post', async () => {
-      route.routes = {www: {}}
+      route.routes = {www: {post: {'/submit': {cache: jest.fn()}}}}
       global.__dir = tmpDir
 
       const mockOdac = createMockOdac('post', '/submit')
@@ -714,6 +714,30 @@ describe('Route.check()', () => {
 
       // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
       expect(mockOdac.Auth.check).toHaveBeenCalled()
+    })
+
+    // Reading the form token parses the body; an upload to a URL nothing handles must not be.
+    it('does not read the body of a post to a URL without a route', async () => {
+      route.routes = {www: {}}
+      global.__dir = tmpDir
+
+      const mockOdac = createMockOdac('post', '/nowhere')
+      mockOdac.request = jest.fn(async () => null)
+      await route.check(mockOdac)
+
+      expect(mockOdac.request).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    it('reads the form token for a post to a page route', async () => {
+      route.routes = {www: {page: {'/contact': {cache: jest.fn()}}}}
+      global.__dir = tmpDir
+
+      const mockOdac = createMockOdac('post', '/contact')
+      mockOdac.request = jest.fn(async () => null)
+      await route.check(mockOdac)
+
+      expect(mockOdac.request).toHaveBeenCalledWith('_odac_form_token')
     })
   })
 })

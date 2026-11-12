@@ -143,7 +143,12 @@ class Route {
       Odac.Request.route = '_odac_internal'
     }
 
-    if (['post', 'put', 'patch', 'delete'].includes(Odac.Request.method)) {
+    // The body is read only when a route will handle the request: an upload to an unknown URL
+    // is answered without being parsed or written to disk.
+    if (
+      ['post', 'put', 'patch', 'delete'].includes(Odac.Request.method) &&
+      this.#hasHandler(Odac.Request.route, Odac.Request.method, url)
+    ) {
       const formToken = await Odac.request('_odac_form_token')
       if (formToken) {
         // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
@@ -368,6 +373,11 @@ class Route {
    * Phase 1 — O(1) exact hash-map match for static routes.
    * Phase 2 — Pre-indexed parametric match grouped by segment count to avoid full iteration.
    */
+  #hasHandler(route, method, url) {
+    for (const type of ['#' + method, method, '#page', 'page']) if (this.#controller(route, type, url)) return true
+    return false
+  }
+
   #controller(route, method, url) {
     const methodRoutes = this.routes[route]?.[method]
     if (!methodRoutes) return false

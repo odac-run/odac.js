@@ -558,7 +558,6 @@ class Internal {
       try {
         const table = Odac.DB[Odac.formConfig.table]
         const path = require('path')
-        const os = require('os')
 
         for (const field of Odac.formUniqueFields) {
           if (Odac.formData[field.name] == null) continue
@@ -577,7 +576,9 @@ class Internal {
         // Auto-store file fields for table forms. Skipped fields are validated
         // but excluded from persistence (mirrors `skip` for text fields); their
         // temp files are cleaned up by Request when the response is sent.
-        const uploadDir = global.Odac.Config.request.uploadDir || path.join(os.tmpdir(), 'odac-uploads')
+        // Stored files are permanent, so they never default to the OS temp directory, which is
+        // cleared on reboot and by tmp cleaners.
+        const uploadDir = global.Odac.Config.request.uploadDir || path.join(global.__dir || process.cwd(), 'storage', 'uploads')
         for (const field of Odac.formConfig.fields) {
           if (field.type !== 'file' || field.skip) continue
 

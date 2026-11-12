@@ -400,7 +400,9 @@ module.exports = class Profile {
 }
 ```
 
-For `table="..."` forms with file fields, files are automatically stored in the configured `uploadDir` and the file path is saved to the database column.
+For `table="..."` forms with file fields, files are automatically stored in the configured `uploadDir` (default: `storage/uploads` in your project) and the path relative to it is saved to the database column. Uploads that are never moved live in the OS temp directory and are deleted when the response is sent.
+
+Multipart bodies are parsed only when something reads them (a form, `Odac.request()` or `Odac.file()`): an upload to a URL without a route is answered without being written to disk. `request.maxBodySize` (default 1 MB) limits all text fields of a multipart request together; a larger request is answered with `413`. Files have their own limits, `request.maxFileSize` and `request.maxFiles`.
 
 > **Security:** `move(dest)` writes to whatever path you pass, just like `fs` — the file object's own `.name` is already stripped to a bare filename, but if you build `dest` from raw user input, sanitize it yourself to avoid path traversal. Server-generated names (as in the example above) are always safe. Uploads are validated for size/type before your handler runs, but content sniffing only covers raster images (JPEG/PNG/GIF/WebP); other types are trusted by extension + declared MIME, and `image/*` also permits SVG (an XSS vector) — list explicit types like `mimetype:image/png,image/jpeg` when you need to exclude it.
 

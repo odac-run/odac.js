@@ -45,6 +45,7 @@ class OdacRequest {
   #cookies = {data: {}, sent: []}
   data = {post: {}, get: {}, url: {}}
   #files = {}
+  #multipartPending = false
   #activeWrites = new Set()
   #cleanedUp = false
   #event = {data: [], end: []}
@@ -190,7 +191,10 @@ class OdacRequest {
 
     const contentType = this.req.headers['content-type'] || ''
     if (contentType.startsWith('multipart/form-data')) {
-      return this.#multipart()
+      // Parsed on first request()/file() call, so a multipart body sent to a URL with no
+      // route, or to a handler that never reads it, is never written to disk.
+      this.#multipartPending = true
+      return
     }
 
     // Non-multipart: urlencoded or JSON (buffered path). Chunks stay raw until 'end' so a
@@ -256,6 +260,12 @@ class OdacRequest {
     for (const event of waiters) event.callback()
   }
 
+  #startBody() {
+    if (!this.#multipartPending) return
+    this.#multipartPending = false
+    this.#multipart()
+  }
+
   async #multipart() {
     const cfg = global.Odac.Config.request
     const busboy = require('busboy')
@@ -286,9 +296,24 @@ class OdacRequest {
       this.#finish()
     }
 
-    bb.on('field', (name, val) => {
+    // maxBodySize bounds all text fields together, as it bounds a urlencoded body. Per-field
+    // limits alone let 200 fields of maxBodySize each hold 200 MB in memory.
+    let fieldBytes = 0
+    const tooLarge = () => {
+      if (this.#complete) return
+      this.#finish()
+      this.req.unpipe(bb)
+      this.req.resume()
+      this.abort(413)
+    }
+
+    bb.on('field', (name, val, info) => {
+      if (this.#complete) return
+      fieldBytes += Buffer.byteLength(name) + Buffer.byteLength(val)
+      if (info?.valueTruncated || fieldBytes > cfg.maxBodySize) return tooLarge()
       this.data.post[name] = val
     })
+    bb.on('fieldsLimit', tooLarge)
 
     bb.on('file', (fieldname, stream, info) => {
       // Empty optional file input: browsers send filename === '' for untouched input
@@ -553,6 +578,7 @@ class OdacRequest {
 
     const found = lookup()
     if (found !== undefined && found !== null) return found
+    this.#startBody()
     // Body already parsed: nothing more will arrive, resolve with what we have.
     if (this.#complete) return lookup()
 
@@ -570,6 +596,7 @@ class OdacRequest {
       if (!arr || arr.length === 0) return null
       return arr.length === 1 ? arr[0] : arr
     }
+    this.#startBody()
     if (this.#complete) return resolveFiles()
     return new Promise(resolve => {
       this.#event.end.push({
