@@ -66,6 +66,9 @@ Follow the interactive prompt to sync the documentation and patterns directly in
 | `npm start` | Run the application in high-performance production mode. |
 | `npx odac migrate` | Run pending database migrations. |
 | `npx odac skills` | Sync/Update AI Agent knowledge files. |
+| `npx odac lang:sync` | Add every translation key used in code to every language file. |
+| `npx odac lang:check` | Report missing, unused and untranslated translation keys (`--strict` for CI). |
+| `npx odac lang:prune` | List unused translation keys; `--write` removes them. |
 
 ---
 

@@ -391,6 +391,42 @@ module.exports = async function(Odac) {
 }
 ```
 
+### Managing Language Files
+
+ODAC can read the translation keys straight from your code, so language files can be checked and cleaned up without visiting every page:
+
+```bash
+npx odac lang:sync           # add every key used in code to every language file
+npx odac lang:check          # report what is out of sync; exit code 1 if anything is
+npx odac lang:check --strict # also fail on missing translations (for CI)
+npx odac lang:prune          # list keys no code uses (dry run)
+npx odac lang:prune --write  # remove them from every language file
+```
+
+The scan covers views and skeletons (`.html`, compiled the same way as at runtime, so `<odac translate>Hello <odac var="name" /></odac>` is found as `Hello %s1`) and JavaScript/TypeScript files (`Odac.__()`, `Odac.__x()`, `Odac.Lang.get()`, `Odac.Lang.getx()`). `node_modules/`, `storage/`, `public/`, dot directories and `*.min.*` files are skipped. Keys ODAC itself translates are always kept.
+
+`lang:prune` never runs automatically and removes nothing without `--write`, because removing a key deletes its translations in every language. Files that are not valid JSON stop `lang:prune` and are never modified.
+
+#### Keys Built at Runtime
+
+A key that is not a string literal cannot be found in the source:
+
+```javascript
+Odac.__(`status.${order.status}`)   // reported as a dynamic call
+```
+
+`lang:check` and `lang:prune` list such calls. List their keys in `lang.keep` so they are never reported as unused; an entry ending in `*` keeps every key with that prefix:
+
+```json
+{
+  "lang": {
+    "keep": ["status.*", "Some exact key"]
+  }
+}
+```
+
+Prefer literal keys where you can (e.g. a map from status to `Odac.__('Shipped')`), so the scan sees them.
+
 ### Best Practices
 
 1. **Use descriptive keys**: Make translation keys meaningful and context-aware

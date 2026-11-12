@@ -52,7 +52,17 @@ A key used with contexts holds an object of context -> translation (`""` = no co
 }
 ```
 
+### 4. Managing Language Files (CLI)
+```bash
+npx odac lang:sync           # add keys used in code to every language file
+npx odac lang:check --strict # CI: fail on out-of-sync, unused or untranslated keys
+npx odac lang:prune --write  # remove keys no code uses (dry run without --write)
+```
+Keys are read from views (compiled, so placeholders become `%s1`) and from `__()`, `__x()`, `Lang.get()`, `Lang.getx()` calls with string-literal arguments. A non-literal key (`Odac.__(`status.${s}`)`) is reported as dynamic; list such keys in `lang.keep` (`"status.*"` keeps a prefix) or they will be pruned.
+
 ## Best Practices
+-   **Literal Keys**: Pass string literals to `__()` / `__x()` so `lang:check` and `lang:prune` can see them. For computed keys, add a `lang.keep` pattern.
+-   **Removing Keys**: Remove keys with `odac lang:prune --write`, not by hand; a key deleted from one file is restored from the others on the next sync.
 -   **Descriptive Keys**: Use meaningful keys like `nav.home` or `form.error.required`.
 -   **Html Safety**: By default, translations are escaped. Use the `raw` attribute (`<odac translate raw>`) only for trusted HTML.
 -   **Supported Languages**: Only languages with a file in `storage/language/` (or listed in `lang.supported`, a strict whitelist) plus `lang.default` are ever served. To add a language, create `storage/language/<code>.json` (`{}` is enough) or add it to `lang.supported`. Client headers never create language files.

@@ -799,6 +799,8 @@ async function run() {
     await manageSkills()
   } else if (command === 'migrate' || command === 'migrate:status' || command === 'migrate:rollback' || command === 'migrate:snapshot') {
     await runMigration(command, args)
+  } else if (command === 'lang:sync' || command === 'lang:check' || command === 'lang:prune') {
+    process.exitCode = await require('../src/Cli/Lang').run(command, args)
   } else {
     console.log('Usage:')
     console.log('  npx odac init            (Interactive mode)')
@@ -811,6 +813,9 @@ async function run() {
     console.log('  npx odac migrate:status  (Show pending changes)')
     console.log('  npx odac migrate:rollback (Rollback last batch)')
     console.log('  npx odac migrate:snapshot (Reverse-engineer DB to schema/)')
+    console.log('  npx odac lang:sync       (Add the keys used in code to every language file)')
+    console.log('  npx odac lang:check      (Report missing, unused and untranslated keys; --strict for CI)')
+    console.log('  npx odac lang:prune      (List unused keys; --write removes them)')
   }
 
   rl.close()

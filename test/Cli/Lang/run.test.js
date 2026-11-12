@@ -1,0 +1,142 @@
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+const CliLang = require('../../../src/Cli/Lang')
+
+describe('odac lang:* commands', () => {
+  let root
+  let output
+
+  const write = (file, content) => {
+    fs.mkdirSync(path.dirname(path.join(root, file)), {recursive: true})
+    fs.writeFileSync(path.join(root, file), typeof content === 'string' ? content : JSON.stringify(content))
+  }
+  const readLang = code => JSON.parse(fs.readFileSync(path.join(root, 'storage/language', `${code}.json`), 'utf8'))
+  const run = (command, ...args) => CliLang.run(command, args, {root, write: line => output.push(line)})
+  const text = () => output.join('\n')
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-cli-lang-'))
+    output = []
+    write('odac.json', {lang: {default: 'en', keep: ['status.*']}})
+    write('view/content/home.html', '<odac translate>Hello</odac><odac translate context="verb">Gül</odac>')
+    write('controller/home.js', "Odac.__('Saved'); Odac.__(`status.${code}`)")
+    write('storage/language/en.json', {Hello: 'Hello', Old: 'Old', 'status.ok': 'OK'})
+    write('storage/language/tr.json', {Hello: 'Merhaba'})
+  })
+
+  afterEach(() => {
+    fs.rmSync(root, {recursive: true, force: true})
+  })
+
+  describe('lang:sync', () => {
+    it('adds every used key to every language file without removing any', async () => {
+      expect(await run('lang:sync')).toBe(0)
+      const framework = 'Too many failed attempts. Please try again later.'
+      expect(readLang('en')).toEqual({
+        Gül: {verb: 'Gül'},
+        Hello: 'Hello',
+        Old: 'Old',
+        Saved: 'Saved',
+        'status.ok': 'OK',
+        [framework]: framework
+      })
+      expect(readLang('tr')).toEqual({Gül: {verb: ''}, Hello: 'Merhaba', Old: '', Saved: '', 'status.ok': '', [framework]: ''})
+      expect(text()).toContain('1 unused key(s)')
+      expect(text()).toContain('`status.${code}`')
+    })
+
+    it('fails without touching a language file that is not valid JSON', async () => {
+      write('storage/language/tr.json', '{"Hello": ')
+      expect(await run('lang:sync')).toBe(1)
+      expect(fs.readFileSync(path.join(root, 'storage/language/tr.json'), 'utf8')).toBe('{"Hello": ')
+      expect(text()).toContain('tr.json')
+    })
+
+    it('creates the files of the languages in lang.supported', async () => {
+      write('odac.json', {lang: {supported: ['de']}})
+      await run('lang:sync')
+      expect(readLang('de').Hello).toBe('')
+    })
+  })
+
+  describe('lang:check', () => {
+    it('fails when keys are missing from files or unused, and writes nothing', async () => {
+      const before = fs.readFileSync(path.join(root, 'storage/language/en.json'), 'utf8')
+      expect(await run('lang:check')).toBe(1)
+      expect(text()).toContain('missing from language files')
+      expect(text()).toContain('"Gül" (context: "verb")')
+      expect(text()).toMatch(/1 key\(s\) in language files are not used[\s\S]*"Old"/)
+      expect(fs.readFileSync(path.join(root, 'storage/language/en.json'), 'utf8')).toBe(before)
+    })
+
+    it('passes once files are synced and pruned, failing on missing translations only with --strict', async () => {
+      await run('lang:sync')
+      await run('lang:prune', '--write')
+      output = []
+      expect(await run('lang:check')).toBe(0)
+      expect(text()).toContain('Missing translations')
+      expect(text()).toContain('"Saved"')
+      expect(await run('lang:check', '--strict')).toBe(1)
+    })
+
+    it('passes --strict when everything is translated', async () => {
+      write('controller/home.js', "Odac.__('Hello')")
+      write('view/content/home.html', '')
+      const framework = 'Too many failed attempts. Please try again later.'
+      write('storage/language/en.json', {Hello: 'Hello', [framework]: framework})
+      write('storage/language/tr.json', {Hello: 'Merhaba', [framework]: 'Çok fazla deneme.'})
+      expect(await run('lang:check', '--strict')).toBe(0)
+      expect(text()).toContain('all in sync and translated')
+    })
+  })
+
+  describe('lang:prune', () => {
+    it('lists unused keys without removing them by default', async () => {
+      expect(await run('lang:prune')).toBe(0)
+      expect(text()).toContain('"Old"')
+      expect(text()).not.toContain('"status.ok"')
+      expect(text()).toContain('Dry run')
+      expect(readLang('en').Old).toBe('Old')
+    })
+
+    it('removes unused keys from every language file with --write', async () => {
+      write('storage/language/tr.json', {Hello: 'Merhaba', Old: 'Eski'})
+      expect(await run('lang:prune', '--write')).toBe(0)
+      expect(readLang('en').Old).toBeUndefined()
+      expect(readLang('tr').Old).toBeUndefined()
+      expect(readLang('en')['status.ok']).toBe('OK')
+      expect(readLang('tr').Hello).toBe('Merhaba')
+    })
+
+    it('removes only the unused context of a key', async () => {
+      write('storage/language/en.json', {Gül: {verb: 'Smile', flower: 'Rose'}})
+      await run('lang:prune', '--write')
+      expect(readLang('en').Gül).toEqual({verb: 'Smile'})
+    })
+
+    it('refuses to prune while a language file is invalid', async () => {
+      write('storage/language/tr.json', 'nope')
+      expect(await run('lang:prune', '--write')).toBe(1)
+      expect(readLang('en').Old).toBe('Old')
+    })
+
+    it('says so when there is nothing to prune', async () => {
+      write('storage/language/en.json', {Hello: 'Hello'})
+      write('storage/language/tr.json', {})
+      expect(await run('lang:prune')).toBe(0)
+      expect(text()).toContain('No unused keys')
+    })
+  })
+
+  it('rejects unknown commands', async () => {
+    expect(await run('lang:nope')).toBe(1)
+  })
+
+  it('works without odac.json or a language directory', async () => {
+    fs.rmSync(path.join(root, 'odac.json'))
+    fs.rmSync(path.join(root, 'storage'), {recursive: true})
+    expect(await run('lang:sync')).toBe(0)
+    expect(readLang('en').Hello).toBe('Hello')
+  })
+})
