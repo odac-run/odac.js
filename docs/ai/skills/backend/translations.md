@@ -13,7 +13,7 @@ ODAC provides built-in support for internationalization, allowing for easy multi
 Translations are managed via JSON files in the `storage/language/` directory. The framework uses a flexible key-based system with support for placeholders.
 
 ## Core Rules
-1.  **Storage**: Place translation files in `storage/language/`, one per two-letter code (e.g., `en.json`, `tr.json`). In debug mode missing keys are appended automatically; production only does so with `lang.collect: true`.
+1.  **Storage**: Place translation files in `storage/language/`, one per two-letter code (e.g., `en.json`, `tr.json`). In debug mode a missing key is added to every language file at once (default language: the key, others: `""`), sorted by key; production only does so with `lang.collect: true`. Never hand-edit key order or add a key to only one file; files are kept in sync automatically. A file that is not valid JSON is never overwritten.
 2.  **Tag Usage**: Use `<odac translate>Key</odac>` in views.
 3.  **Placeholders**: Use `%s1`, `%s2` in JSON and nested `<odac var="...">` tags in views.
 4.  **Backend Access**: Use `Odac.__(key, ...args)` in controllers.
@@ -57,4 +57,5 @@ A key used with contexts holds an object of context -> translation (`""` = no co
 -   **Html Safety**: By default, translations are escaped. Use the `raw` attribute (`<odac translate raw>`) only for trusted HTML.
 -   **Supported Languages**: Only languages with a file in `storage/language/` (or listed in `lang.supported`, a strict whitelist) plus `lang.default` are ever served. To add a language, create `storage/language/<code>.json` (`{}` is enough) or add it to `lang.supported`. Client headers never create language files.
 -   **Language Selection**: `Odac.Lang.set(code)` if supported, else the most preferred supported `Accept-Language` entry (q values respected), else `lang.default`, then `en`. Read it with `Odac.Lang.current()`.
+-   **Missing Translations**: Debug mode logs each missing translation once (`WARN "Missing translation"`). `lang.highlightMissing: true` (debug only) renders fallback text as `⟦text⟧`.
 -   **Fallback**: A missing or empty (`""`) translation is served from the default language, then as the key itself. `""` marks an entry as "not translated yet"; do not copy the key as the value in non-default languages.

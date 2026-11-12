@@ -46,7 +46,25 @@ storage/
 
 ### Missing Keys
 
-In development (`debug` mode) a key without a translation is added to the language file with itself as the value, so you can translate it later. Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too. Language files are loaded once per worker and re-read when they change on disk.
+In development (`debug` mode) a key without an entry is added to **every** language file at once: the default language gets the key itself as its value, every other language gets `""` (not translated yet). Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too.
+
+```json
+// storage/language/en.json (default)     // storage/language/tr.json
+{                                          {
+    "Login": "Login",                          "Login": "Giriş Yap",
+    "Logout": "Logout"                         "Logout": ""
+}                                          }
+```
+
+All language files therefore list the same entries in the same order (sorted by key), which keeps them easy to compare and keeps diffs small. Writes from several workers are serialized, and a language file that is not valid JSON (for example while you are editing it) is never overwritten; a warning is logged instead. Language files are loaded once per worker and re-read when they change on disk.
+
+To remove a key, use `odac lang:prune` (see [Managing Language Files](#managing-language-files)); deleting it from a single file by hand is undone the next time keys are synced, because the other files still have it.
+
+#### Spotting Missing Translations
+
+- An empty string marks a translation that is still missing; it is served from the default language meanwhile.
+- In debug mode each missing translation is logged once as a `WARN` (`{"message": "Missing translation", "lang": "tr", "key": "Logout"}`).
+- Set `"lang": {"highlightMissing": true}` to mark text served from the fallback on the page itself, e.g. `⟦Logout⟧`. It only takes effect in debug mode.
 
 ### Context: Same Text, Different Meanings
 

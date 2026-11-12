@@ -1,5 +1,8 @@
 const fsPromises = require('node:fs').promises
+const {randomUUID} = require('node:crypto')
 const Catalog = require('./Lang/Catalog.js')
+const Files = require('./Lang/Files.js')
+const Ipc = require('./Ipc.js')
 
 // How often a cached language file (and the list of language files) is checked on disk.
 const RECHECK_INTERVAL_MS = 2000
@@ -8,6 +11,15 @@ const SAVE_DEBOUNCE_MS = 500
 // Accept-Language entries considered; the rest of an oversized header is ignored.
 const MAX_ACCEPT_LANGUAGES = 16
 const MAX_ACCEPT_LANGUAGE_LENGTH = 512
+// Serializes language file writes across workers (and servers sharing a Redis Ipc).
+const WRITE_LOCK = 'odac:lang:write'
+const WRITE_LOCK_TTL = 10
+// Debug warnings for missing translations are logged once per entry, up to this many.
+const MAX_WARNED = 10000
+
+function warn(message, fields) {
+  console.error(JSON.stringify({level: 'WARN', message, ...fields}))
+}
 
 /**
  * Per-process language data shared by every request.
@@ -17,12 +29,19 @@ const MAX_ACCEPT_LANGUAGE_LENGTH = 512
  * changes.
  */
 class LanguageStore {
-  // lang -> {data, mtimeMs, checkedAt, loading, pending: Map(id -> {key, context}), saveTimer}
+  // lang -> {data, mtimeMs, checkedAt, loading}
   #entries = new Map()
   // Language codes that have a file in storage/language/, refreshed in the background.
   #available = null
   #availableCheckedAt = 0
   #scanning = null
+  // Collected entries not written yet: id -> {key, context}. Shared by all languages,
+  // because a new key is written to every language file at once.
+  #pending = new Map()
+  #config = null
+  #saveTimer = null
+  #saving = Promise.resolve()
+  #warned = new Set()
 
   #dir() {
     return `${__dir}/storage/language/`
@@ -35,7 +54,7 @@ class LanguageStore {
   #entry(lang) {
     let entry = this.#entries.get(lang)
     if (!entry) {
-      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null, pending: new Map(), saveTimer: null}
+      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null}
       this.#entries.set(lang, entry)
     }
     return entry
@@ -50,6 +69,11 @@ class LanguageStore {
     }
   }
 
+  // The value a not yet translated entry has: the key in the default language, '' elsewhere.
+  #placeholder(lang, key) {
+    return lang === Catalog.defaultLanguage(this.#config) ? key : ''
+  }
+
   async #refresh(lang, entry) {
     let mtimeMs = null
     try {
@@ -62,22 +86,13 @@ class LanguageStore {
 
     const data = await this.#readFile(lang)
     // Keys collected but not yet saved must survive a reload.
-    for (const {key, context} of entry.pending.values()) Catalog.addEntry(data, key, context, key)
+    for (const {key, context} of this.#pending.values()) Catalog.addEntry(data, key, context, this.#placeholder(lang, key))
     entry.data = data
     entry.mtimeMs = mtimeMs
   }
 
   async #scan() {
-    const codes = new Set()
-    try {
-      for (const name of await fsPromises.readdir(this.#dir())) {
-        const code = name.slice(0, -5)
-        if (name.endsWith('.json') && Catalog.isLanguageCode(code)) codes.add(code)
-      }
-    } catch {
-      // No language directory yet.
-    }
-    this.#available = codes
+    this.#available = new Set(await Files.listLanguages(this.#dir()))
     this.#availableCheckedAt = Date.now()
   }
 
@@ -129,49 +144,94 @@ class LanguageStore {
   }
 
   /**
-   * Records a key that has no translation yet so it shows up in the language file.
-   * Writes are debounced and merged with the file's current content, so concurrent
-   * workers add keys instead of overwriting each other's.
+   * Records an entry that no language file has yet, so it is added to all of them.
+   * Writes are debounced, merged with the files' current content and serialized across
+   * workers, so concurrent workers add keys instead of overwriting each other's.
+   * @param {string} key
+   * @param {string} context
+   * @param {object} config The application config (default and supported languages).
    */
-  collect(lang, key, context = '') {
-    const entry = this.#entry(lang)
-    Catalog.addEntry(entry.data, key, context, key)
-    entry.pending.set(Catalog.entryId(key, context), {key, context})
-    if (entry.saveTimer) return
-    entry.saveTimer = setTimeout(() => {
-      entry.saveTimer = null
-      this.#save(lang, entry).catch(() => {})
-    }, SAVE_DEBOUNCE_MS)
-    entry.saveTimer.unref?.()
+  collect(key, context, config) {
+    this.#config = config
+    const id = Catalog.entryId(key, context)
+    if (this.#pending.has(id)) return
+    this.#pending.set(id, {key, context})
+    for (const [lang, entry] of this.#entries) Catalog.addEntry(entry.data, key, context, this.#placeholder(lang, key))
+    this.#schedule()
   }
 
-  async #save(lang, entry) {
-    const keys = [...entry.pending.values()]
-    if (keys.length === 0) return
-    entry.pending.clear()
+  #schedule() {
+    if (this.#saveTimer) return
+    this.#saveTimer = setTimeout(() => {
+      this.#saveTimer = null
+      this.#saving = this.#saving.then(() => this.#save())
+    }, SAVE_DEBOUNCE_MS)
+    this.#saveTimer.unref?.()
+  }
+
+  async #save() {
+    const items = [...this.#pending.values()]
+    if (items.length === 0) return
+    let owner = null
     try {
-      await fsPromises.mkdir(this.#dir(), {recursive: true})
-      const data = await this.#readFile(lang)
-      let changed = false
-      for (const {key, context} of keys) if (Catalog.addEntry(data, key, context, key)) changed = true
-      if (!changed) return
-      // Atomic write: a reader or another worker never sees a half-written file.
-      const target = this.#file(lang)
-      const tmp = `${target}.${process.pid}.${Date.now()}.tmp`
-      await fsPromises.writeFile(tmp, JSON.stringify(data, null, 4))
-      await fsPromises.rename(tmp, target)
-    } catch {
+      // Every language file is written, so the list of them must be known first.
+      if (!this.ready) await this.init()
+      if (Ipc.initialized) {
+        owner = randomUUID()
+        if (!(await Ipc.lock(WRITE_LOCK, WRITE_LOCK_TTL, owner))) {
+          // Another worker is writing; try again after it.
+          owner = null
+          this.#schedule()
+          return
+        }
+      }
+      for (const item of items) this.#pending.delete(Catalog.entryId(item.key, item.context))
+      const result = await Files.sync(this.#dir(), {
+        languages: this.languages(this.#config),
+        defaultLanguage: Catalog.defaultLanguage(this.#config),
+        add: items
+      })
+      for (const code of result.invalid) warn('Language file is not valid JSON; collected keys were not added to it', {lang: code})
+    } catch (e) {
       // Best-effort persistence of auto-collected keys; never crash a request.
+      warn('Could not save collected translation keys', {error: e?.message ?? String(e)})
+    } finally {
+      if (owner) await Ipc.unlock(WRITE_LOCK, owner).catch(() => {})
     }
+  }
+
+  /**
+   * Logs a missing translation once per language and entry.
+   * Why: missing translations fall back to the default language, so the page looks fine and
+   * nobody notices; debug mode says so instead.
+   * @returns {void}
+   */
+  warnMissing(lang, key, context) {
+    const id = `${lang}\u0000${Catalog.entryId(key, context)}`
+    if (this.#warned.has(id) || this.#warned.size >= MAX_WARNED) return
+    this.#warned.add(id)
+    warn('Missing translation', context ? {lang, key, context} : {lang, key})
+  }
+
+  /** Resolves once pending writes are on disk. Used by tests. */
+  async flush() {
+    clearTimeout(this.#saveTimer)
+    this.#saveTimer = null
+    this.#saving = this.#saving.then(() => this.#save())
+    await this.#saving
   }
 
   /** Drops cached data and pending timers. Used by tests. */
   reset() {
-    for (const entry of this.#entries.values()) clearTimeout(entry.saveTimer)
+    clearTimeout(this.#saveTimer)
+    this.#saveTimer = null
     this.#entries.clear()
+    this.#pending.clear()
+    this.#warned.clear()
     this.#available = null
     this.#availableCheckedAt = 0
     this.#scanning = null
+    this.#config = null
   }
 }
 
@@ -252,9 +312,17 @@ class Lang {
 
     let str = Catalog.lookup(data, key, context)
     if (str === undefined) {
-      if (this.#collect() && !Catalog.has(data, key, context)) store.collect(lang, key, context)
-      const fallback = Catalog.defaultLanguage(this.#odac.Config)
-      if (fallback !== lang) str = Catalog.lookup(await store.load(fallback), key, context)
+      const config = this.#odac.Config
+      if (this.#collect() && !Catalog.has(data, key, context)) store.collect(key, context, config)
+      const fallback = Catalog.defaultLanguage(config)
+      if (fallback !== lang) {
+        str = Catalog.lookup(await store.load(fallback), key, context)
+        if (config?.debug) {
+          store.warnMissing(lang, key, context)
+          // Opt-in debug aid: makes text served from the fallback visible on the page.
+          if (config.lang?.highlightMissing) str = `⟦${str ?? key}⟧`
+        }
+      }
       if (str === undefined) str = key
     }
     return Catalog.format(str, args)
