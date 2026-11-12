@@ -417,12 +417,12 @@ class OdacRequest {
       return
     }
     if (this.res.finished) return
-    if (typeof data === 'object' && data !== null && data.type !== 'Buffer') {
-      let json = JSON.stringify(data)
-      if (json.length > 0 && JSON.parse(json).type !== 'Buffer') {
-        data = json
-        this.header('Content-Type', 'application/json')
-      }
+    // Binary bodies go out as-is. Anything else that is an object is serialized exactly once:
+    // detecting Buffers by a `type` field stringified and re-parsed every Buffer (a 2 MB file
+    // blocked the loop for ~90 ms) and sent API objects with `type: 'Buffer'` unserialized.
+    if (typeof data === 'object' && data !== null && !Buffer.isBuffer(data) && !ArrayBuffer.isView(data)) {
+      data = JSON.stringify(data)
+      if (!this.#hasHeader('Content-Type')) this.header('Content-Type', 'application/json')
     }
     // A body without Content-Type is MIME-sniffed by desktop browsers, but
     // Android Chrome / iOS Safari hand it to the download manager instead of
