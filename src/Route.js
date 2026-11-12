@@ -837,9 +837,14 @@ class Route {
       console.error(e)
       // param may be undefined if instance construction itself threw.
       if (param) {
-        param.Request.abort(500)
-        param.cleanup()
-        return param.Request.end()
+        try {
+          await param.Request.abort(500)
+          if (!param.Request.res.writableEnded) param.Request.end()
+        } catch (err) {
+          console.error(err)
+          param.Request.res.destroy?.()
+        }
+        return param.cleanup()
       }
       try {
         res.statusCode = 500

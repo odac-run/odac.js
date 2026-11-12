@@ -41,6 +41,49 @@ describe('Route.request()', () => {
     expect(param.Request.abort).toHaveBeenCalledWith(404)
   })
 
+  describe('controller errors', () => {
+    beforeEach(() => {
+      route.routes = {unknown: {}}
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => console.error.mockRestore())
+
+    it('waits for abort(500) so a custom 500 page is not cut off by an empty end()', async () => {
+      route.check = jest.fn().mockRejectedValue(new Error('boom'))
+      let finishAbort
+      param.Request.abort = jest.fn(
+        () =>
+          new Promise(resolve => {
+            finishAbort = () => {
+              param.Request.res.writableEnded = true
+              resolve()
+            }
+          })
+      )
+
+      const done = route.request({}, {})
+      await new Promise(resolve => setImmediate(resolve))
+      expect(param.Request.end).not.toHaveBeenCalled()
+      finishAbort()
+      await done
+
+      expect(param.Request.abort).toHaveBeenCalledWith(500)
+      expect(param.Request.end).not.toHaveBeenCalled()
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    it('contains a failing abort(500) instead of rejecting', async () => {
+      route.check = jest.fn().mockRejectedValue(new Error('boom'))
+      param.Request.abort = jest.fn().mockRejectedValue(new Error('headers already sent'))
+      param.Request.res.destroy = jest.fn()
+
+      await expect(route.request({}, {})).resolves.toBeUndefined()
+      expect(param.Request.res.destroy).toHaveBeenCalled()
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+  })
+
   // A HEAD response carries no body. Piping a stream result (image route, user
   // controllers) would read the whole source only for Node to discard it.
   describe('stream results', () => {

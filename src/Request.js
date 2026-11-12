@@ -145,24 +145,43 @@ class OdacRequest {
   }
 
   // - ABORT REQUEST
+  /**
+   * Answers the request with an error status, through the app's custom error route if any.
+   * Why: abort() is also called where nothing continues the response afterwards (request
+   * timeout, oversized or malformed bodies, the 500 fallback), so it always finishes the
+   * response itself: a handler that only configured a view (View.set, returns undefined) is
+   * rendered here, and a handler that fails falls back to the plain status page. Once headers
+   * are on the wire no status can be sent, so the connection is dropped instead.
+   */
   async abort(code) {
-    this.status(code)
     // WebSocket upgrades have no HTTP response and no error page to render;
     // ending the request lets the WS route close the socket with this status.
-    if (!this.res) return this.end()
+    if (!this.res) {
+      this.status(code)
+      return this.end()
+    }
+    if (this.res.writableEnded) return
+    if (this.res.headersSent) return this.res.destroy()
+    this.status(code)
     let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
     const errorRoute = this.#odac.Route?.routes?.[this.route]?.error?.[code]
     if (errorRoute && typeof errorRoute.cache === 'function') {
       try {
         const handlerResult = await errorRoute.cache(this.#odac)
-        // If the handler returned nothing, assume it configured the view via Odac.View.set()
-        // and let Route.request() continue to View.print() like normal pages.
-        if (handlerResult === undefined) return
-        result = handlerResult
+        if (handlerResult === undefined) {
+          // The handler configured a view (Odac.View.set()) or answered on its own.
+          if (!this.res.writableEnded && this.#odac.View) await this.#odac.View.print()
+          if (this.res.writableEnded) return
+        } else {
+          result = handlerResult
+        }
       } catch (e) {
         console.error(JSON.stringify({level: 'ERROR', message: `Error in custom error handler for ${code}`, error: e.message}))
       }
     }
+    if (this.res.writableEnded) return
+    if (this.res.headersSent) return this.res.destroy()
+    this.status(code)
     this.end(result)
   }
 
@@ -469,7 +488,11 @@ class OdacRequest {
     // Binary bodies go out as-is. Anything else that is an object is serialized exactly once:
     // detecting Buffers by a `type` field stringified and re-parsed every Buffer (a 2 MB file
     // blocked the loop for ~90 ms) and sent API objects with `type: 'Buffer'` unserialized.
-    if (typeof data === 'object' && data !== null && !Buffer.isBuffer(data) && !ArrayBuffer.isView(data)) {
+    // Numbers and booleans are JSON values too; res.end() only accepts strings and bytes.
+    if (typeof data === 'number' || typeof data === 'boolean') {
+      data = JSON.stringify(data)
+      if (!this.#hasHeader('Content-Type')) this.header('Content-Type', 'application/json')
+    } else if (typeof data === 'object' && data !== null && !Buffer.isBuffer(data) && !ArrayBuffer.isView(data)) {
       data = JSON.stringify(data)
       if (!this.#hasHeader('Content-Type')) this.header('Content-Type', 'application/json')
     }

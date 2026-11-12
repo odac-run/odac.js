@@ -90,6 +90,18 @@ describe('Request.end()', () => {
     expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBe('application/json')
   })
 
+  it.each([
+    [42, '42'],
+    [0, '0'],
+    [true, 'true'],
+    [false, 'false']
+  ])('sends %p as JSON instead of throwing in res.end()', (value, body) => {
+    const {res, request} = build({})
+    expect(() => request.end(value)).not.toThrow()
+    expect(res.end).toHaveBeenCalledWith(body)
+    expect(res.writeHead.mock.calls[0][1]['Content-Type']).toBe('application/json')
+  })
+
   it('leaves buffer bodies untyped', () => {
     const {res, request} = build({})
     request.end(Buffer.from([1, 2, 3]))
