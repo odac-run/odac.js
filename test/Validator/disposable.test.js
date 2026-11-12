@@ -71,7 +71,8 @@ describe('Validator.isDisposable()', () => {
     // The cache file is now stale as well, so the refresh downloads again.
     respond('new.com\n', {delay: 20})
     expect(await Validator.isDisposable('a@old.com')).toBe(true) // stale list, refresh started
-    await new Promise(resolve => setTimeout(resolve, 50))
+    // The refresh runs in the background (download, then an atomic cache write).
+    for (let i = 0; i < 100 && !(await Validator.isDisposable('a@new.com')); i++) await new Promise(r => setTimeout(r, 10))
     expect(await Validator.isDisposable('a@new.com')).toBe(true)
     expect(await Validator.isDisposable('a@old.com')).toBe(false)
     expect(https.get).toHaveBeenCalledTimes(2)
