@@ -128,7 +128,14 @@ class Stream {
     }
 
     if (input && typeof input.pipe === 'function') {
-      input.on('data', chunk => this.send(chunk.toString()))
+      input.on('data', chunk => {
+        if (this.#closed) return input.destroy?.()
+        if (this.#write(chunk.toString()) && typeof input.pause === 'function') {
+          input.pause()
+          this.#drained().then(() => input.resume())
+        }
+      })
+      this.on('close', () => input.destroy?.())
       input.on('end', () => this.close())
       input.on('error', err => {
         this.error(err.message)
@@ -141,11 +148,40 @@ class Stream {
     this.close()
   }
 
+  /**
+   * Sends one SSE message.
+   * Why: every line of the payload gets its own `data:` field. Writing a multi-line string
+   * as one field broke the frame, and a payload containing a blank line followed by
+   * `event:`/`data:` lines injected a separate, attacker-shaped event into the stream.
+   * @returns {boolean} false once the stream is closed.
+   */
   send(data) {
     if (this.#closed) return false
-    const message = typeof data === 'string' ? data : JSON.stringify(data)
-    this.#res.write(`data: ${message}\n\n`)
+    this.#write(data)
     return true
+  }
+
+  // Writes one message and reports whether the socket buffer is full (backpressure).
+  #write(data) {
+    // Readable streams arrive here through async iteration as Buffers; send their text, not
+    // the {"type":"Buffer"} JSON form.
+    if (Buffer.isBuffer(data)) data = data.toString()
+    const message = typeof data === 'string' ? data : String(JSON.stringify(data))
+    return this.#res.write(`data: ${message.split(/\r\n|\r|\n/).join('\ndata: ')}\n\n`) === false
+  }
+
+  // Resolves once the response can take more data or the stream has closed.
+  #drained() {
+    if (this.#closed || this.#res.writableEnded) return Promise.resolve()
+    return new Promise(resolve => {
+      const done = () => {
+        this.#res.off?.('drain', done)
+        this.#res.off?.('close', done)
+        resolve()
+      }
+      this.#res.once('drain', done)
+      this.#res.once('close', done)
+    })
   }
 
   error(message) {
@@ -171,20 +207,29 @@ class Stream {
     }
   }
 
+  // Sync iterators are pumped in batches so a long one does not block the event loop, and
+  // stop at a full socket buffer until it drains, so a slow client cannot make the worker
+  // buffer the whole sequence in memory.
   #pipeIterator(iterator) {
     const batchSize = 100
-    const iterate = () => {
-      let count = 0
-      while (count < batchSize) {
-        const {value, done} = iterator.next()
-        if (done) {
-          this.close()
-          return
+    const iterate = async () => {
+      try {
+        let count = 0
+        while (count < batchSize) {
+          if (this.#closed) return
+          const {value, done} = iterator.next()
+          if (done) return this.close()
+          count++
+          if (this.#write(value)) {
+            await this.#drained()
+            count = 0
+          }
         }
-        this.send(value)
-        count++
+        setImmediate(iterate)
+      } catch (err) {
+        this.error(err.message)
+        this.close()
       }
-      setImmediate(iterate)
     }
     iterate()
   }
@@ -192,7 +237,8 @@ class Stream {
   async #pipeAsyncIterator(iterator) {
     try {
       for await (const value of iterator) {
-        this.send(value)
+        if (this.#closed) break
+        if (this.#write(value)) await this.#drained()
       }
       this.close()
     } catch (err) {
