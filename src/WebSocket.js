@@ -396,11 +396,13 @@ class WebSocketClient {
   #handleMessage(data) {
     if (!this.#parseJson || typeof data !== 'string') return this.#emit('message', data)
 
+    let message = data
     try {
-      this.#emit('message', JSON.parse(data))
+      message = JSON.parse(data)
     } catch {
-      this.#emit('message', data)
+      // Not JSON: deliver the raw text.
     }
+    this.#emit('message', message)
   }
 
   /**

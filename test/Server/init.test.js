@@ -36,6 +36,12 @@ function makeSocket() {
 }
 
 describe('Server.init()', () => {
+  // Invoke the listener Server.init() added directly: emitting on the real
+  // process would also reach Jest's own handlers.
+  function added(event) {
+    return process.listeners(event).find(l => !processListeners[event].includes(l))
+  }
+
   let originalArgv
   let processListeners
 
@@ -45,7 +51,9 @@ describe('Server.init()', () => {
     processListeners = {
       message: process.listeners('message'),
       SIGTERM: process.listeners('SIGTERM'),
-      SIGINT: process.listeners('SIGINT')
+      SIGINT: process.listeners('SIGINT'),
+      unhandledRejection: process.listeners('unhandledRejection'),
+      uncaughtException: process.listeners('uncaughtException')
     }
     jest.spyOn(console, 'error').mockImplementation(() => {})
     jest.spyOn(console, 'log').mockImplementation(() => {})
@@ -107,6 +115,24 @@ describe('Server.init()', () => {
       await shutdown()
 
       expect(order).toEqual(['database', 'ipc', 'storage'])
+    })
+
+    it('logs an unhandled rejection without shutting down', async () => {
+      added('unhandledRejection')(new Error('stray promise'))
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('stray promise'))
+      expect(order).toEqual([])
+      expect(process.exit).not.toHaveBeenCalled()
+    })
+
+    it('flushes and exits 1 after an uncaught exception', async () => {
+      added('uncaughtException')(new Error('primary bug'))
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('"level":"FATAL"'))
+      expect(order).toEqual(['database', 'ipc', 'storage'])
+      expect(process.exit).toHaveBeenCalledWith(1)
     })
   })
 
@@ -185,6 +211,53 @@ describe('Server.init()', () => {
     it('ignores a repeated shutdown message', () => {
       shutdown()
       shutdown()
+
+      expect(server.close).toHaveBeenCalledTimes(1)
+    })
+
+    // Application code outside framework dispatch (timer callbacks, detached
+    // promises) used to take the whole worker down with one rejection.
+    it('logs an unhandled rejection and keeps serving', () => {
+      expect(() => added('unhandledRejection')(new Error('async interval bug'))).not.toThrow()
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('async interval bug'))
+      expect(server.close).not.toHaveBeenCalled()
+      expect(process.exit).not.toHaveBeenCalled()
+    })
+
+    it('logs a non-Error rejection reason', () => {
+      added('unhandledRejection')('plain string')
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('plain string'))
+    })
+
+    it('drains and exits 1 after an uncaught exception', async () => {
+      added('uncaughtException')(new Error('timer bug'))
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('"level":"FATAL"'))
+      expect(server.close).toHaveBeenCalledTimes(1)
+      expect(global.Odac.Route.wsServer.closeAll).toHaveBeenCalledWith(1001, expect.any(String))
+
+      await server.close.mock.calls[0][0]()
+
+      expect(global.Odac.Database.close).toHaveBeenCalled()
+      expect(global.Odac.Storage.close).toHaveBeenCalled()
+      expect(process.exit).toHaveBeenCalledWith(1)
+    })
+
+    it('exits 1 when the crash drain never completes', () => {
+      added('uncaughtException')(new Error('timer bug'))
+      jest.advanceTimersByTime(14999)
+      expect(process.exit).not.toHaveBeenCalled()
+
+      jest.advanceTimersByTime(1)
+
+      expect(process.exit).toHaveBeenCalledWith(1)
+    })
+
+    it('does not start a second drain on a repeated exception', () => {
+      added('uncaughtException')(new Error('first'))
+      added('uncaughtException')(new Error('second'))
 
       expect(server.close).toHaveBeenCalledTimes(1)
     })

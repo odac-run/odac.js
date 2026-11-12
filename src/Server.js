@@ -24,6 +24,33 @@ const EXIT_FATAL = 78
 // cluster worker, where the primary creates the listening handle.
 const BIND_SYSCALLS = new Set(['listen', 'bind'])
 
+// A worker draining after an uncaught exception has no primary-imposed
+// deadline, so it bounds its own: SHUTDOWN_GRACE for in-flight requests plus
+// headroom for closing IPC, database and storage.
+const CRASH_DRAIN_TIMEOUT = SHUTDOWN_GRACE + 5000
+
+function describeError(err) {
+  return {error: err?.message ?? String(err), stack: err?.stack}
+}
+
+/**
+ * Logs a promise rejection that no code handled.
+ *
+ * Why: under Node's default (--unhandled-rejections=throw) one missing
+ * catch in application code (an async Odac.setInterval callback, a
+ * fire-and-forget query) kills the process along with every connection it
+ * serves. A rejection leaves no half-applied synchronous state behind, so
+ * logging it and carrying on is safe.
+ * @param {*} reason
+ */
+function logUnhandledRejection(reason) {
+  console.error(JSON.stringify({level: 'ERROR', message: 'Unhandled promise rejection', pid: process.pid, ...describeError(reason)}))
+}
+
+function logUncaughtException(err) {
+  console.error(JSON.stringify({level: 'FATAL', message: 'Uncaught exception, shutting down', pid: process.pid, ...describeError(err)}))
+}
+
 /**
  * Number of worker processes the cluster runs.
  *
@@ -172,6 +199,15 @@ module.exports = {
 
       process.on('SIGTERM', () => gracefulShutdown('SIGTERM'))
       process.on('SIGINT', () => gracefulShutdown('SIGINT'))
+
+      // The primary runs cron jobs, the session GC and the memory IPC store.
+      // A stray rejection is logged; an uncaught exception leaves state
+      // unknown, so the app still flushes and exits instead of running on.
+      process.on('unhandledRejection', logUnhandledRejection)
+      process.on('uncaughtException', err => {
+        logUncaughtException(err)
+        gracefulShutdown('uncaughtException', 1)
+      })
     } else {
       const server = http.createServer((req, res) => {
         return Odac.Route.request(req, res)
@@ -250,11 +286,11 @@ module.exports = {
        *    hard timeout, which skips the final write-buffer flush.
        * 3. Give in-flight requests SHUTDOWN_GRACE to finish, then cut them
        * 4. Release worker-scoped resources (IPC pending requests, DB pools)
-       * 5. Exit 0
+       * 5. Exit 0 (1 when the drain follows an uncaught exception)
        */
       let isShuttingDown = false
-      process.on('message', msg => {
-        if (msg !== 'shutdown' || isShuttingDown) return
+      const drain = exitCode => {
+        if (isShuttingDown) return
         isShuttingDown = true
         console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Closing server...`)
 
@@ -280,12 +316,34 @@ module.exports = {
             /* best-effort */
           }
           console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Server closed.`)
-          process.exit(0)
+          process.exit(exitCode)
         })
 
         server.closeIdleConnections?.()
         Odac.Route.wsServer.closeAll(1001, 'Server shutting down')
         Stream.closeAll()
+      }
+
+      process.on('message', msg => {
+        if (msg === 'shutdown') drain(0)
+      })
+
+      /**
+       * PROCESS-LEVEL SAFETY NET — WORKER
+       * ─────────────────────────────────
+       * Framework dispatch points (route handlers, WebSocket and IPC
+       * callbacks) contain their own errors; this covers application code
+       * they cannot see, such as timer callbacks and detached promises.
+       *  - Unhandled rejection: logged, the worker keeps serving.
+       *  - Uncaught exception: process state is unknown, so the worker drains
+       *    like a normal shutdown and exits 1; the primary forks a
+       *    replacement. CRASH_DRAIN_TIMEOUT bounds a drain that hangs.
+       */
+      process.on('unhandledRejection', logUnhandledRejection)
+      process.on('uncaughtException', err => {
+        logUncaughtException(err)
+        setTimeout(() => process.exit(1), CRASH_DRAIN_TIMEOUT).unref()
+        drain(1)
       })
     }
   }
