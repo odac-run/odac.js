@@ -68,6 +68,7 @@ describe('Lang.set()', () => {
   })
 
   it('reports the active language through current()', () => {
+    mockOdac.Config.lang.supported = ['tr', 'de']
     mockOdac.Request.header.mockReturnValue('tr-TR')
     lang = new Lang(mockOdac)
     expect(lang.current()).toBe('tr')

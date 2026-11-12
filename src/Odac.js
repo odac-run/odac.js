@@ -6,6 +6,8 @@ module.exports = {
 
     await global.Odac.Env.init()
     await global.Odac.Config.init()
+    // Language selection is synchronous; list the language files before the first request.
+    await require('./Lang.js').store.init()
 
     global.Odac.Ipc = require('./Ipc.js')
     await global.Odac.Ipc.init()

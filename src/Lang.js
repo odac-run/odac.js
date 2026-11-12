@@ -1,9 +1,13 @@
 const fsPromises = require('node:fs').promises
+const Catalog = require('./Lang/Catalog.js')
 
-// How often a cached language file is checked for changes on disk.
+// How often a cached language file (and the list of language files) is checked on disk.
 const RECHECK_INTERVAL_MS = 2000
 // Missing keys found within this window are written to disk in one go.
 const SAVE_DEBOUNCE_MS = 500
+// Accept-Language entries considered; the rest of an oversized header is ignored.
+const MAX_ACCEPT_LANGUAGES = 16
+const MAX_ACCEPT_LANGUAGE_LENGTH = 512
 
 /**
  * Per-process language data shared by every request.
@@ -15,9 +19,17 @@ const SAVE_DEBOUNCE_MS = 500
 class LanguageStore {
   // lang -> {data, mtimeMs, checkedAt, loading, pending: Set, saveTimer}
   #entries = new Map()
+  // Language codes that have a file in storage/language/, refreshed in the background.
+  #available = null
+  #availableCheckedAt = 0
+  #scanning = null
+
+  #dir() {
+    return `${__dir}/storage/language/`
+  }
 
   #file(lang) {
-    return `${__dir}/storage/language/${lang}.json`
+    return `${this.#dir()}${lang}.json`
   }
 
   #entry(lang) {
@@ -31,11 +43,10 @@ class LanguageStore {
 
   async #readFile(lang) {
     try {
-      const parsed = JSON.parse(await fsPromises.readFile(this.#file(lang), 'utf8'))
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+      return Catalog.parse(await fsPromises.readFile(this.#file(lang), 'utf8'))
     } catch {
-      // Missing or malformed file: serve keys untranslated rather than failing the request.
-      return {}
+      // Missing file: serve keys untranslated rather than failing the request.
+      return Object.create(null)
     }
   }
 
@@ -49,11 +60,59 @@ class LanguageStore {
     entry.checkedAt = Date.now()
     if (mtimeMs === entry.mtimeMs) return
 
-    const data = Object.assign(Object.create(null), await this.#readFile(lang))
+    const data = await this.#readFile(lang)
     // Keys collected but not yet saved must survive a reload.
-    for (const key of entry.pending) if (!(key in data)) data[key] = key
+    for (const key of entry.pending) Catalog.addEntry(data, key, '', key)
     entry.data = data
     entry.mtimeMs = mtimeMs
+  }
+
+  async #scan() {
+    const codes = new Set()
+    try {
+      for (const name of await fsPromises.readdir(this.#dir())) {
+        const code = name.slice(0, -5)
+        if (name.endsWith('.json') && Catalog.isLanguageCode(code)) codes.add(code)
+      }
+    } catch {
+      // No language directory yet.
+    }
+    this.#available = codes
+    this.#availableCheckedAt = Date.now()
+  }
+
+  /**
+   * Lists the language files on disk once, so the first request already sees them.
+   * Why: language selection is synchronous (it runs in the Lang constructor); it reads a
+   * snapshot that this primes at startup and that refreshes in the background afterwards.
+   * @returns {Promise<void>}
+   */
+  init() {
+    if (!this.#scanning) this.#scanning = this.#scan().finally(() => (this.#scanning = null))
+    return this.#scanning
+  }
+
+  /** @returns {boolean} true once the language directory has been listed. */
+  get ready() {
+    return this.#available !== null
+  }
+
+  /**
+   * Returns the languages a request may be served in.
+   * Why: Accept-Language is client input. Without this whitelist any visitor could make the
+   * server look up, and with key collection create, a file for every two-letter code.
+   * `lang.supported` is a strict whitelist; without it, the files on disk decide. The
+   * default language is always included.
+   * @param {object} [config]
+   * @returns {Set<string>}
+   */
+  languages(config) {
+    const configured = Catalog.configuredLanguages(config)
+    if (configured) return configured
+    if (Date.now() - this.#availableCheckedAt >= RECHECK_INTERVAL_MS) this.init().catch(() => {})
+    const codes = new Set(this.#available ?? [])
+    codes.add(Catalog.defaultLanguage(config))
+    return codes
   }
 
   /**
@@ -76,7 +135,7 @@ class LanguageStore {
    */
   collect(lang, key) {
     const entry = this.#entry(lang)
-    entry.data[key] = key
+    Catalog.addEntry(entry.data, key, '', key)
     entry.pending.add(key)
     if (entry.saveTimer) return
     entry.saveTimer = setTimeout(() => {
@@ -91,15 +150,10 @@ class LanguageStore {
     if (keys.length === 0) return
     entry.pending.clear()
     try {
-      const dir = `${__dir}/storage/language/`
-      await fsPromises.mkdir(dir, {recursive: true})
+      await fsPromises.mkdir(this.#dir(), {recursive: true})
       const data = await this.#readFile(lang)
       let changed = false
-      for (const key of keys) {
-        if (Object.prototype.hasOwnProperty.call(data, key)) continue
-        data[key] = key
-        changed = true
-      }
+      for (const key of keys) if (Catalog.addEntry(data, key, '', key)) changed = true
       if (!changed) return
       // Atomic write: a reader or another worker never sees a half-written file.
       const target = this.#file(lang)
@@ -115,14 +169,46 @@ class LanguageStore {
   reset() {
     for (const entry of this.#entries.values()) clearTimeout(entry.saveTimer)
     this.#entries.clear()
+    this.#available = null
+    this.#availableCheckedAt = 0
+    this.#scanning = null
   }
 }
 
 const store = new LanguageStore()
 
+/**
+ * Parses an Accept-Language header into two-letter codes, most preferred first.
+ * @param {string} header
+ * @returns {string[]}
+ */
+function parseAcceptLanguage(header) {
+  if (typeof header !== 'string' || header === '') return []
+  const ranked = []
+  const parts = header.slice(0, MAX_ACCEPT_LANGUAGE_LENGTH).split(',', MAX_ACCEPT_LANGUAGES)
+  for (let i = 0; i < parts.length; i++) {
+    const [range, ...params] = parts[i].trim().split(';')
+    const code = range.trim().slice(0, 2).toLowerCase()
+    if (!Catalog.isLanguageCode(code) || (range.length > 2 && range[2] !== '-')) continue
+    let q = 1
+    for (const param of params) {
+      const [name, value] = param.trim().split('=')
+      if (name === 'q') q = Number(value)
+    }
+    if (!(q > 0)) continue
+    ranked.push({code, q, i})
+  }
+  ranked.sort((a, b) => b.q - a.q || a.i - b.i)
+  return ranked.map(r => r.code)
+}
+
 class Lang {
   #odac
   #lang
+  // Languages asked for (explicitly or through Accept-Language), in order of preference.
+  #candidates = []
+  // Set when #lang was chosen before the language directory was listed.
+  #provisional = false
 
   /** Shared language cache; exposed so tests can reset it. */
   static store = store
@@ -134,41 +220,39 @@ class Lang {
 
   /**
    * Translates a key, replacing `%s` (sequential) or `%s1`, `%s2` (numbered) placeholders.
-   * Why: one lookup path for views, mails and validators. Untranslated keys are returned as
-   * is and, when `lang.collect` is on (default: debug mode), added to the language file.
+   * Why: one lookup path for views, mails and validators. A key without a translation in the
+   * active language falls back to the default language, then to the key itself. Untranslated
+   * keys are added to the language file when `lang.collect` is on (default: debug mode).
    * @returns {Promise<string>}
    */
   async get(...args) {
     if (typeof args[0] !== 'string') return args[0]
     const key = args[0]
-    const data = await store.load(this.#lang)
+    const lang = await this.#resolved()
+    const data = await store.load(lang)
 
-    let str
-    if (Object.prototype.hasOwnProperty.call(data, key) && typeof data[key] === 'string' && data[key]) {
-      str = data[key]
-    } else {
-      str = key
-      if (this.#collect() && !(key in data)) store.collect(this.#lang, key)
+    let str = Catalog.lookup(data, key)
+    if (str === undefined) {
+      if (this.#collect() && !Catalog.has(data, key)) store.collect(lang, key)
+      const fallback = Catalog.defaultLanguage(this.#odac.Config)
+      if (fallback !== lang) str = Catalog.lookup(await store.load(fallback), key)
+      if (str === undefined) str = key
     }
-
-    // Function replacers: argument values may contain `$&`-style patterns.
-    if (/%s\d+/.test(str)) {
-      for (let i = 1; i < args.length; i++) {
-        const value = String(args[i])
-        str = str.replace(new RegExp(`%s${i}`, 'g'), () => value)
-      }
-    } else {
-      for (let i = 1; i < args.length; i++) {
-        const value = String(args[i])
-        str = str.replace('%s', () => value)
-      }
-    }
-    return str
+    return Catalog.format(str, args.slice(1))
   }
 
   #collect() {
     const configured = this.#odac.Config?.lang?.collect
     return configured === undefined ? !!this.#odac.Config?.debug : !!configured
+  }
+
+  // A language chosen before the directory was listed is re-checked once it is.
+  async #resolved() {
+    if (this.#provisional) {
+      if (!store.ready) await store.init()
+      this.#choose()
+    }
+    return this.#lang
   }
 
   /**
@@ -182,33 +266,27 @@ class Lang {
   }
 
   /**
-   * Selects the request's language. Falls back to the Accept-Language header, then to
-   * `lang.default`, then to `en`.
-   * Why: the code becomes part of a filesystem path, so only two ASCII letters are accepted.
+   * Selects the request's language: the given code if it is supported, otherwise the most
+   * preferred supported language of the Accept-Language header, otherwise `lang.default`,
+   * then `en`.
+   * Why: the code becomes part of a filesystem path, so only two ASCII letters are accepted,
+   * and only languages the application has (see LanguageStore#languages).
    * @param {string} [lang]
    */
   set(lang) {
-    if (!lang || lang.length !== 2 || !this.#odac.Var(lang).is('alpha')) {
-      if (
-        this.#odac.Request &&
-        this.#odac.Request.header &&
-        this.#odac.Request.header('ACCEPT-LANGUAGE') &&
-        this.#odac.Request.header('ACCEPT-LANGUAGE').length > 1
-      ) {
-        lang = this.#odac.Request.header('ACCEPT-LANGUAGE').slice(0, 2)
-      } else {
-        lang = this.#odac.Config.lang?.default || 'en'
-      }
-    }
-    // Final gate before this value ever reaches a filesystem path: a language
-    // code must be exactly two ASCII letters. Header junk ('a/', '..'), or a
-    // misconfigured default, falls back to a guaranteed-valid code.
-    lang = String(lang).toLowerCase()
-    if (!/^[a-z]{2}$/.test(lang)) {
-      lang = String(this.#odac.Config.lang?.default || 'en').toLowerCase()
-      if (!/^[a-z]{2}$/.test(lang)) lang = 'en'
-    }
-    this.#lang = lang
+    const candidates = []
+    if (lang && lang.length === 2 && this.#odac.Var(lang).is('alpha')) candidates.push(String(lang).toLowerCase())
+    const header = this.#odac.Request?.header?.('ACCEPT-LANGUAGE')
+    for (const code of parseAcceptLanguage(header)) candidates.push(code)
+    this.#candidates = candidates
+    this.#choose()
+  }
+
+  #choose() {
+    const config = this.#odac.Config
+    const supported = store.languages(config)
+    this.#provisional = !store.ready && !Catalog.configuredLanguages(config)
+    this.#lang = this.#candidates.find(code => Catalog.isLanguageCode(code) && supported.has(code)) ?? Catalog.defaultLanguage(config)
   }
 }
 

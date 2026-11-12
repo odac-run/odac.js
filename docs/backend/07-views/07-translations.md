@@ -275,9 +275,44 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 }
 ```
 
+### Supported Languages
+
+A request is only ever served in a language the application has. Without configuration, these are the languages with a file in `storage/language/` plus `lang.default`. To list them explicitly, set `lang.supported` in `odac.json`. The list is then a strict whitelist: other files are ignored, and the default language is always included.
+
+```json
+{
+  "lang": {
+    "default": "en",
+    "supported": ["en", "tr", "de"]
+  }
+}
+```
+
+A visitor who asks for an unsupported language gets the default one. Key collection never creates a file for a language a client asked for. To add a language, create its file (`storage/language/fr.json` containing `{}` is enough) or add it to `lang.supported`.
+
+### Missing Translations and Fallback
+
+A key without a translation in the active language is served in the default language, and if that has no translation either, as the key itself. An empty string in a language file means "not translated yet":
+
+```json
+// storage/language/tr.json
+{
+  "nav.home": "Ana Sayfa",
+  "nav.about": ""
+}
+```
+
+Here `nav.about` is served from `en.json` until it is translated.
+
 ### Setting the Language
 
-By default the language comes from the first two letters of the `Accept-Language` header, falling back to `lang.default` in `odac.json`, then `en`. You can override it in your controller:
+The language is chosen in this order:
+
+1. The code passed to `Odac.Lang.set()`, if it is supported.
+2. The most preferred supported language of the `Accept-Language` header (q values respected, e.g. `de-DE,de;q=0.9,tr;q=0.8` picks `tr` when there is no `de.json`).
+3. `lang.default` in `odac.json`, then `en`.
+
+You can override it in your controller:
 
 ```javascript
 // Controller
@@ -293,7 +328,7 @@ module.exports = async function(Odac) {
 }
 ```
 
-`Odac.Lang.set()` accepts only two-letter codes; anything else falls back to the defaults above. `Odac.Lang.current()` returns the active code.
+`Odac.Lang.set()` accepts only two-letter codes of supported languages; anything else falls back as described above. `Odac.Lang.current()` returns the active code.
 
 ### Using Translation Helper in Controllers
 

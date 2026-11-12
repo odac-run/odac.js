@@ -46,4 +46,6 @@ const msg = Odac.__('Welcome back, %s1!', user.name);
 ## Best Practices
 -   **Descriptive Keys**: Use meaningful keys like `nav.home` or `form.error.required`.
 -   **Html Safety**: By default, translations are escaped. Use the `raw` attribute (`<odac translate raw>`) only for trusted HTML.
--   **Language Selection**: Defaults to the `Accept-Language` header, then `lang.default`. Override per request with `Odac.Lang.set('tr')`; read it with `Odac.Lang.current()`.
+-   **Supported Languages**: Only languages with a file in `storage/language/` (or listed in `lang.supported`, a strict whitelist) plus `lang.default` are ever served. To add a language, create `storage/language/<code>.json` (`{}` is enough) or add it to `lang.supported`. Client headers never create language files.
+-   **Language Selection**: `Odac.Lang.set(code)` if supported, else the most preferred supported `Accept-Language` entry (q values respected), else `lang.default`, then `en`. Read it with `Odac.Lang.current()`.
+-   **Fallback**: A missing or empty (`""`) translation is served from the default language, then as the key itself. `""` marks an entry as "not translated yet"; do not copy the key as the value in non-default languages.
