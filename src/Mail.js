@@ -4,9 +4,24 @@ const fs = require('fs')
 const fsPromises = fs.promises
 // const Form = require('./View/Form')
 
-const CACHE_DIR = './storage/.cache'
+const {cacheName, compile} = require('./View/Compiler')
+
+const CACHE_DIR = 'storage/.cache'
+// Data keys that may be declared as template locals: plain identifiers that neither shadow
+// the compiled function's own names nor are reserved words.
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
+const RESERVED = new Set(
+  (
+    'Odac data get __ html arguments await break case catch class const continue debugger default delete do else enum eval ' +
+    'export extends false finally for function if implements import in instanceof interface let new null package private ' +
+    'protected public return static super switch this throw true try typeof undefined var void while with yield'
+  ).split(' ')
+)
+// Header values and display names end up as raw header lines; CR/LF would start new headers.
+const stripLineBreaks = value => (value === undefined || value === null ? value : String(value).replace(/[\r\n]+/g, ' '))
 
 class Mail {
+  static #compiled = new Map()
   #header = {}
   #from
   #subject = ''
@@ -19,296 +34,78 @@ class Mail {
     this.#template = template
   }
 
-  #functions = {
-    '{!!': {
-      function: '${await ',
-      close: '!!}',
-      end: '}'
-    },
-    '{{--': {
-      function: '`; /*',
-      close: '--}}',
-      end: '*/ html += `'
-    },
-    '{{': {
-      function: '${Odac.Var(await ',
-      close: '}}',
-      end: ').html().replace(/\\n/g, "<br>")}'
-    },
-    break: {
-      function: 'break;',
-      arguments: {}
-    },
-    component: {},
-    continue: {
-      function: 'continue;',
-      arguments: {}
-    },
-    mysql: {},
-    elseif: {
-      function: '} else if(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    },
-    else: {
-      function: '} else {'
-    },
-    fetch: {},
-    for: {
-      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
-      end: '}}',
-      arguments: {
-        var: null,
-        get: null,
-        key: 'key',
-        value: 'value'
-      }
-    },
-    if: {
-      function: 'if(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    },
-    '<odac:js>': {
-      end: ' html += `',
-      function: '`; ',
-      close: '</odac:js>'
-    },
-    lazy: {},
-    list: {
-      arguments: {
-        var: null,
-        get: null,
-        key: 'key',
-        value: 'value'
-      },
-      end: '}}',
-      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
-      replace: 'ul'
-    },
-    while: {
-      function: 'while(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    }
-  }
-
-  #parseOdacTag(content) {
-    // Parse backend comments
-    content = content.replace(/<!--odac([\s\S]*?)(?:odac-->|-->)/g, () => '')
-
-    // Parse <script:odac> tags
-    content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (fullMatch, attributes, jsContent) => {
-      return `<odac:js>${jsContent}</odac:js>`
-    })
-
-    content = content.replace(/<odac:else\s*\/>/g, '<odac:else>')
-    content = content.replace(/<odac:elseif\s+([^>]*?)\/>/g, '<odac:elseif $1>')
-
-    content = content.replace(/<odac([^>]*?)\/>/g, (fullMatch, attributes) => {
-      attributes = attributes.trim()
-      const attrs = {}
-      const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-      let match
-      while ((match = attrRegex.exec(attributes))) {
-        const key = match[1]
-        const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-        attrs[key] = value
-      }
-
-      if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
-      else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
-
-      return fullMatch
-    })
-
-    let depth = 0
-    let maxDepth = 10
-    while (depth < maxDepth && content.includes('<odac')) {
-      const before = content
-      content = content.replace(/<odac([^>]*)>((?:(?!<odac)[\s\S])*?)<\/odac>/g, (fullMatch, attributes, innerContent) => {
-        attributes = attributes.trim()
-        innerContent = innerContent.trim()
-
-        const attrs = {}
-        const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-        let match
-        while ((match = attrRegex.exec(attributes))) {
-          const key = match[1]
-          const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-          attrs[key] = value
-        }
-
-        if (attrs.get) return `{{ get('${attrs.get}') || '' }}`
-        else if (attrs.var) return attrs.raw ? `{!! ${attrs.var} !!}` : `{{ ${attrs.var} }}`
-        else if (attrs.t || attrs.translate)
-          return `{{ '${innerContent}' }}` // Simple fallback for mail
-        else return `{{ '${innerContent}' }}`
-      })
-      if (before === content) break
-      depth++
-    }
-
-    return content
-  }
-
+  /**
+   * Renders a mail template with `data`.
+   * Why: data keys become local variables, so `{{ name }}` works for `send({name})`. They are
+   * declared per compiled variant (one per key set) from validated identifiers only. Declaring
+   * the first call's keys into a cached module made later calls with other keys throw (and
+   * send an empty mail), broke on keys such as `html` or `first-name`, and executed any key
+   * that came from user input. Every key stays reachable through `get('key')`.
+   * Render errors propagate, so send() fails instead of delivering an empty body.
+   */
   async #render(file, data) {
     let mtime, content
     const handle = await fsPromises.open(file, 'r')
     try {
-      const stats = await handle.stat()
-      mtime = stats.mtimeMs
+      mtime = (await handle.stat()).mtimeMs
       content = await handle.readFile('utf8')
     } finally {
       await handle.close()
     }
 
-    // Since mail doesn't have a persistent Odac instance access like View cache, we manage a simple cache or just re-compile.
-    // For performance in emails (usually background), re-compiling is okay, but caching is better.
-    // Let's use global Odac.View.cache if available or local.
-    if (!Odac.View) Odac.View = {}
-    if (!Odac.View.cache) Odac.View.cache = {}
+    const locals = Object.keys(data)
+      .filter(key => IDENTIFIER.test(key) && !RESERVED.has(key))
+      .sort()
+    const variant = `${file}\u0000${locals.join(',')}`
+    let compiled = Mail.#compiled.get(variant)
 
-    if (Odac.View.cache[file]?.mtime !== mtime) {
-      // No Form options needed normally for simplified email templates, but keeping Form.parse for consistency if needed
-      // content = Form.parse(content, {Request: {}, ...Odac}) // Partially mock if Form needs it, but Form usually needs full Request.
-      // Skipping Form.parse for mail for now unless requested, as it relies on Session/Request heavily.
-      // User asked for "View file rendering", usually meaning logic tags.
-
-      const jsBlocks = []
-      content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
-        const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
-        jsBlocks.push(jsContent)
-        return `<script:odac${attrs}>${placeholder}</script:odac>`
-      })
-
-      content = this.#parseOdacTag(content)
-      // Escape template literal meta-characters for JS backtick embedding.
-      // Backslash escape applies only to plain HTML — expression blocks from
-      // #parseOdacTag already handle their own escaping (CWE-116).
-      const exprBlocks = []
-      content = content.replace(/\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g, block => {
-        const placeholder = `___ODAC_EXPR_${exprBlocks.length}___`
-        exprBlocks.push(block)
-        return placeholder
-      })
-      content = content.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${')
-      exprBlocks.forEach((block, index) => {
-        content = content.replace(`___ODAC_EXPR_${index}___`, () => block)
-      })
-
-      jsBlocks.forEach((jsContent, index) => {
-        content = content.replace(`___ODAC_JS_BLOCK_${index}___`, jsContent)
-      })
-
-      let result = 'html += `\n' + content + '\n`'
-      content = content.split('\n')
-
-      for (let key in this.#functions) {
-        let att = ''
-        let func = this.#functions[key]
-        let matches = func.close
-          ? result.match(new RegExp(`${key}[\\s\\S]*?${func.close}`, 'g'))
-          : result.match(new RegExp(`<odac:${key}(?:\\s+[^>]*?(?:"[^"]*"|'[^']*'|[^"'>])*)?>`, 'g'))
-        if (!matches) continue
-        for (let match of matches) {
-          let matchForParsing = match
-          if (!func.close) matchForParsing = matchForParsing.replace(/^<odac:/, '').replace(/>$/, '')
-          const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-          let attrMatch
-          const args = []
-          while ((attrMatch = attrRegex.exec(matchForParsing))) {
-            args.push(attrMatch[0])
-          }
-          let vars = {}
-          if (func.arguments)
-            for (let arg of args) {
-              const argRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/
-              const argMatch = argRegex.exec(arg)
-              if (!argMatch) continue
-              const argKey = argMatch[1]
-              const value = argMatch[3] !== undefined ? argMatch[3] : argMatch[4] !== undefined ? argMatch[4] : true
-              if (func.arguments[argKey] === undefined) {
-                att += `${argKey}="${value}"`
-                continue
-              }
-              vars[argKey] = value
-            }
-          if (!func.function) continue
-          let fun = func.function
-
-          // Simplified logic for loop
-          if (key === 'for' || key === 'list') {
-            let constructor
-            if (vars.var) {
-              constructor = `await ${vars.var}`
-              delete vars.var
-            }
-            fun = fun.replace(/\$constructor/g, constructor)
-          }
-
-          for (let argKey in func.arguments) {
-            if (argKey === 'var' || argKey === 'get') continue
-            if (vars[argKey] === undefined) vars[argKey] = func.arguments[argKey]
-            fun = fun.replace(new RegExp(`\\$${argKey}`, 'g'), vars[argKey])
-          }
-          if (func.close) {
-            result = result.replace(match, fun + match.substring(key.length, match.length - func.close.length) + func.end)
-          } else {
-            result = result.replace(match, (func.replace ? `<${[func.replace, att].join(' ')}>` : '') + '`; ' + fun + ' html += `')
-            result = result.replace(`</odac:${key}>`, '`; ' + (func.end ?? '}') + ' html += `' + (func.replace ? `</${func.replace}>` : ''))
-          }
-        }
-      }
-
-      let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
-      await fsPromises.mkdir(CACHE_DIR, {recursive: true})
+    if (compiled?.mtime !== mtime) {
+      const name = cacheName('mail', variant)
+      const dir = `${__dir}/${CACHE_DIR}`
+      const target = `${dir}/${name}`
+      const declarations = locals.map(key => `let ${key} = data[${JSON.stringify(key)}];`).join('\n')
+      await fsPromises.mkdir(dir, {recursive: true})
+      // Written to a temporary file and renamed so a concurrent render never loads half a module.
+      const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
       await fsPromises.writeFile(
-        `${CACHE_DIR}/${cache}`,
-        `module.exports = async (Odac, data, get, __) => {\n
-           // Destructure data keys into local scope variables
-           ${Object.keys(data)
-             .map(k => `let ${k} = data['${k}'];`)
-             .join('\n')}
-           let html = '';\n${result}\nreturn html.trim()\n}`
+        temp,
+        `module.exports = async (Odac, data, get, __) => {\n${declarations}\nlet html = '';\n${compile(content, {file})}\nreturn html.trim()\n}`
       )
-      delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
-      Odac.View.cache[file] = {mtime: mtime, cache: cache}
+      await fsPromises.rename(temp, target)
+      delete require.cache[require.resolve(target)]
+      compiled = {mtime, target}
+      Mail.#compiled.set(variant, compiled)
     }
 
-    try {
-      return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
-        Odac,
-        data,
-        key => data[key],
-        (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0])
-      )
-    } catch (e) {
-      console.error(e)
-      return ''
-    }
+    return require(compiled.target)(
+      Odac,
+      data,
+      key => data[key],
+      (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0])
+    )
   }
 
   header(header) {
-    this.#header = header
+    this.#header = {}
+    for (const [name, value] of Object.entries(header ?? {})) {
+      // RFC 5322 field names are printable ASCII without ':'.
+      if (/^[!-9;-~]+$/.test(name)) this.#header[name] = stripLineBreaks(value)
+    }
     return this
   }
 
   from(email, name) {
-    this.#from = {email: email, name: name}
+    this.#from = {email: email, name: stripLineBreaks(name)}
     return this
   }
 
   subject(subject) {
-    this.#subject = subject
+    this.#subject = stripLineBreaks(subject)
     return this
   }
 
   to(email, name = '') {
-    this.#to = {value: [{address: email, name: name}]}
+    this.#to = {value: [{address: email, name: stripLineBreaks(name)}]}
     return this
   }
 
@@ -510,7 +307,8 @@ class Mail {
           client.on('error', error => {
             if (error.code === 'ENOENT' && error.address === socketPath) {
               console.error(
-                '[Mail] Socket Error: If you are using ODAC, you must grant permissions or enter SMTP information in the config.'
+                `[Mail] Mail is delivered through the ODAC Core socket (${socketPath}), which was not found. ` +
+                  'Run the app under ODAC (with mail permission) or point ODAC_API_SOCKET at the Core socket.'
               )
             } else {
               console.error('[Mail] Socket Error:', error)

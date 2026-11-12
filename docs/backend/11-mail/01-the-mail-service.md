@@ -20,7 +20,9 @@ await Odac.Mail('template_name')
 ```
 
 *   **Template**: The constructor takes the name of the HTML template file located in `view/mail/`.
-*   **Data**: The object passed to `send()` contains key-value pairs that replace `{key}` placeholders in your HTML template.
+*   **Data**: The object passed to `send()` is available in the template. Keys that are plain identifiers (`user_name`, not `first-name` or reserved words such as `class`) are local variables: `{{ user_name }}`. Every key, including the others, is reachable with `get('key')`.
+*   **Templates** use the same syntax as views (`{{ }}`, `{!! !!}`, `<odac:if>`, `<odac:for in="...">`, `<script:odac>`).
+*   **Result**: `send()` resolves to the ODAC Core response, or `false` when the mail could not be built or delivered (including a template error — an empty mail is never sent).
 
 #### Example: Contact Form Controller
 
@@ -68,10 +70,10 @@ Create your HTML template in `view/mail/contact_form_notification.html`:
 
 ```html
 <h1>New Contact Message</h1>
-<p><strong>From:</strong> {user_name} ({user_email})</p>
-<p><strong>Time:</strong> {timestamp}</p>
+<p><strong>From:</strong> {{ user_name }} ({{ user_email }})</p>
+<p><strong>Time:</strong> {{ timestamp }}</p>
 <hr>
-<p>{user_message}</p>
+<p>{{ user_message }}</p>
 ```
 
 ### Sending Plain Text or Raw HTML (No Template)
