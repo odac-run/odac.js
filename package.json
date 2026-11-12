@@ -10,7 +10,7 @@
   "version": "1.5.3",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "bin": {
     "odac": "./bin/odac.js"
