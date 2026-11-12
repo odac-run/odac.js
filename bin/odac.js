@@ -3,7 +3,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline')
-const {execSync, spawn} = require('node:child_process')
+const {execSync, spawn, spawnSync} = require('node:child_process')
 const cluster = require('node:cluster')
 const Env = require('../src/Env')
 const {buildConnections} = require('../src/Database/ConnectionFactory')
@@ -90,6 +90,19 @@ const select = async (title, options) => {
  * Supports multiple CSS entry points from 'view/css'.
  * @returns {Array<{ input: string, cssOutput: string, isCustom: boolean, name: string }>}
  */
+/**
+ * Path of the Tailwind CLI entry script, preferring the project's own install.
+ * Why: the CLI runs as `node <entry> ...args` without a shell, so CSS file names and project
+ * paths (spaces, quotes, $(...)) are passed as plain arguments instead of being interpreted
+ * by sh. @tailwindcss/cli is a dependency of ODAC, so it always resolves.
+ * @returns {string}
+ */
+function tailwindCli() {
+  const pkgPath = require.resolve('@tailwindcss/cli/package.json', {paths: [process.cwd(), __dirname]})
+  const {bin} = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+  return path.join(path.dirname(pkgPath), typeof bin === 'string' ? bin : bin.tailwindcss)
+}
+
 function getTailwindConfigs() {
   const cssDir = path.join(process.cwd(), 'view/css')
   const cacheDir = path.join(process.cwd(), 'storage/.cache')
@@ -667,16 +680,8 @@ async function run() {
         let tailwindProcess = null
 
         const startWatcher = () => {
-          const localCli = path.join(process.cwd(), 'node_modules', '.bin', 'tailwindcss')
-          const useLocal = fs.existsSync(localCli)
-          const cmd = useLocal ? localCli : 'npx'
-          const args = useLocal
-            ? ['-i', input, '-o', cssOutput, '--watch=always']
-            : ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch=always']
-
-          tailwindProcess = spawn(cmd, args, {
+          tailwindProcess = spawn(process.execPath, [tailwindCli(), '-i', input, '-o', cssOutput, '--watch=always'], {
             stdio: ['pipe', 'ignore', 'pipe'],
-            shell: !useLocal,
             cwd: process.cwd()
           })
 
@@ -757,13 +762,12 @@ async function run() {
 
     configs.forEach(({input, cssOutput, name, isCustom}) => {
       console.log(`🎨 Compiling ${name} (${isCustom ? 'Custom' : 'Default'}) CSS...`)
-      try {
-        execSync(`npx @tailwindcss/cli -i "${input}" -o "${cssOutput}" --minify`, {
-          stdio: 'inherit',
-          cwd: process.cwd()
-        })
-      } catch (error) {
-        console.error(`❌ Build failed for ${name}:`, error.message)
+      const result = spawnSync(process.execPath, [tailwindCli(), '-i', input, '-o', cssOutput, '--minify'], {
+        stdio: 'inherit',
+        cwd: process.cwd()
+      })
+      if (result.error || result.status !== 0) {
+        console.error(`❌ Build failed for ${name}:`, result.error?.message ?? `exit code ${result.status}`)
         hasError = true
       }
     })
