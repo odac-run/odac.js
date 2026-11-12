@@ -1,3 +1,18 @@
+### ✨ What's New
+
+- **lang:** declare the served language on the page and survive broken language files
+- **lang:** make Odac.__() synchronous by serving translations from memory
+
+### 🛠️ Fixes & Improvements
+
+- **request:** wait for the body when request() is called without a key
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### minor
 
 - Merge pull request #56 from odac-run/dev
