@@ -31,7 +31,7 @@ You are an AI Agent operating within the **ODAC Framework** repository. This doc
 - **Session Safety:** `Odac.Request.setSession()` MUST be called before accessing `Odac.Request.session()`.
 - **Structured Logging:** No `console.log`. Use the internal JSON logger with appropriate levels.
 - **Native APIs:** Prefer native Node.js/Browser APIs (like `fetch`) over external libraries to minimize overhead.
-- **Token Rotation:** In `Auth.js`, use the 60-second grace period for rotated tokens. Never delete them immediately.
+- **Token Rotation:** In `Auth.js`, use the 30-second grace period (`auth.rotationGrace`) for rotated tokens. Never delete them immediately.
 - **Ajax Parsing:** `odac.js` must automatically parse JSON responses if headers allow.
 
 ## 5. Testing & Documentation
