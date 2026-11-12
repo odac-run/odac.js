@@ -37,6 +37,23 @@ describe('Internal.magicVerify() redirect safety', () => {
     expect(Odac._captured.redirect).toBe('/dashboard')
   })
 
+  it.each([
+    ['tab', '/\t/evil.example'],
+    ['newline', '/\n/evil.example'],
+    ['carriage return', '/\r/evil.example'],
+    ['tab between backslashes', '/\t\\evil.example']
+  ])('blocks a %s that the URL parser strips into //evil', async (_, target) => {
+    const Odac = makeOdac(target)
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/')
+  })
+
+  it('keeps the query string and hash of a same-site path', async () => {
+    const Odac = makeOdac('/dashboard?tab=1#top')
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/dashboard?tab=1#top')
+  })
+
   it('blocks protocol-relative redirect (//evil.com)', async () => {
     const Odac = makeOdac('//evil.com')
     await Internal.magicVerify(Odac)

@@ -1,5 +1,28 @@
 const nodeCrypto = require('crypto')
 
+// Placeholder origin used to resolve a redirect target exactly the way a browser would.
+const REDIRECT_BASE = 'http://odac.invalid'
+
+/**
+ * Returns `target` when it is a same-site absolute path, otherwise '/'.
+ * Why: prefix checks missed inputs the WHATWG URL parser rewrites: it drops tabs and
+ * newlines anywhere ('/\t/evil' becomes '//evil') and treats '\' as '/'. Resolving with the
+ * same parser browsers use and comparing origins rejects every protocol-relative variant.
+ * @param {*} target Redirect target from the request or config.
+ * @returns {string}
+ */
+function sameSitePath(target) {
+  if (typeof target !== 'string' || !target.startsWith('/')) return '/'
+  let url
+  try {
+    url = new URL(target, REDIRECT_BASE)
+  } catch {
+    return '/'
+  }
+  if (url.origin !== REDIRECT_BASE) return '/'
+  return url.pathname + url.search + url.hash
+}
+
 class Internal {
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
@@ -432,14 +455,7 @@ class Internal {
     // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
     let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
 
-    // Security: Prevent open redirect attacks by only allowing same-site absolute
-    // paths. Reject protocol-relative ('//evil') and backslash variants ('/\evil',
-    // '/\/evil') — browsers normalize '\' to '/', turning them into '//evil'.
-    if (!redirectUrl.startsWith('/') || /^\/[\\/]/.test(redirectUrl)) {
-      redirectUrl = '/'
-    }
-
-    Odac.Request.redirect(redirectUrl)
+    Odac.Request.redirect(sameSitePath(redirectUrl))
     Odac.Request.end('')
   }
 
