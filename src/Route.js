@@ -1,3 +1,4 @@
+const nodeCrypto = require('crypto')
 const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
@@ -784,7 +785,8 @@ class Route {
   }
 
   async request(req, res) {
-    let id = `${Date.now()}${Math.random().toString(36).substr(2, 9)}`
+    // Same generator as the WebSocket upgrade path; Odac.Request.id may be used to correlate logs.
+    const id = nodeCrypto.randomUUID()
     let param
     try {
       // Instance construction parses the request (query/cookies/body wiring) and

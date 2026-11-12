@@ -219,7 +219,7 @@ module.exports = {
       server.on('upgrade', (req, socket, head) => {
         socket.on('error', () => socket.destroy())
         try {
-          const id = nodeCrypto.randomBytes(16).toString('hex')
+          const id = nodeCrypto.randomUUID()
           const param = Odac.instance(id, req, null)
           Odac.Route.handleWebSocketUpgrade(req, socket, head, param)
         } catch (e) {

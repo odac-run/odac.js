@@ -84,6 +84,15 @@ describe('Route.request()', () => {
     })
   })
 
+  it('gives each request a random UUID', async () => {
+    route.routes = {}
+    await route.request({}, {})
+    await route.request({}, {})
+    const [[first], [second]] = global.Odac.instance.mock.calls
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(first).not.toBe(second)
+  })
+
   // A HEAD response carries no body. Piping a stream result (image route, user
   // controllers) would read the whole source only for Node to discard it.
   describe('stream results', () => {
