@@ -12,6 +12,7 @@ Real-time data streaming using Server-Sent Events (SSE).
 ## Core Rules
 1.  **Usage**: Use `Odac.stream(callback)` to keep the connection open.
 2.  **Safety**: Always use `Odac.setInterval` and `Odac.setTimeout` inside streams; they are automatically cleaned up on disconnect.
+    -   Handle errors inside timer callbacks. A rejected async callback is only logged, but a synchronous `throw` is an uncaught exception: the worker drains its connections and restarts.
 3.  **Return**: You must `return Odac.stream(...)` from the controller.
 
 ## Reference Patterns
