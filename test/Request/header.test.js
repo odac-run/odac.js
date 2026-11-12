@@ -31,6 +31,20 @@ describe('Request.header()', () => {
     delete global.Odac
   })
 
+  it('reads request headers by any casing without scanning them', () => {
+    const {request} = build({'x-requested-with': 'xhr', 'user-agent': 'UA'})
+    let scans = 0
+    request.req.headers = new Proxy(request.req.headers, {
+      ownKeys: target => {
+        scans++
+        return Reflect.ownKeys(target)
+      }
+    })
+    const results = [request.header('X-Requested-With'), request.header('user-agent'), request.header('X-Missing')]
+    expect(results).toEqual(['xhr', 'UA', undefined])
+    expect(scans).toBe(0)
+  })
+
   it('sends the configured security headers and no Server banner', () => {
     const {request, res} = build()
     request.end('ok')

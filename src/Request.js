@@ -561,11 +561,13 @@ class OdacRequest {
    * @param {string} key Header name.
    * @param {*} [value] New value; null removes the header; omitted reads the request header.
    */
+  /**
+   * Reads a request header (`value` omitted) or sets/removes (`null`) a response header.
+   * Why: Node lower-cases incoming header names, so a read is one property lookup instead of
+   * a scan over every header; writes replace any differently-cased duplicate.
+   */
   header(key, value) {
-    if (value === undefined) {
-      for (const header of Object.keys(this.req.headers)) if (header.toLowerCase() === key.toLowerCase()) return this.req.headers[header]
-      return undefined
-    }
+    if (value === undefined) return this.req.headers[key.toLowerCase()]
     const existing = this.#headerName(key)
     if (existing !== undefined) delete this.#headers[existing]
     if (value !== null) this.#headers[key] = value
