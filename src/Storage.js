@@ -18,6 +18,21 @@ function isExpiredFormRecord(key, value, now) {
   )
 }
 
+// CSRF tokens (Token.js) are session sub-keys `_token:<hash>` whose value is their expiry.
+function isExpiredToken(key, value, now) {
+  return typeof key === 'string' && key.includes(':_token:') && typeof value === 'number' && now > value
+}
+
+// A session expires a lifetime after its last activity (`_active`, written by Request at most
+// once per touch interval), or after its creation when it was never touched again.
+function sessionExpired(db, key, created, now, expirationMs) {
+  if (now - created <= expirationMs) return false
+  const active = db.get(key.slice(0, -'_created'.length) + '_active')
+  return typeof active !== 'number' || now - active > expirationMs
+}
+
+const SESSION_LIFETIME = 7 * 24 * 60 * 60 * 1000
+
 // Marks a queued remove in the pending-writes map.
 const REMOVED = Symbol('removed')
 
@@ -30,6 +45,9 @@ class OdacStorage {
     this.db = null
     this.ready = false
     this.gcInterval = null
+    // How long a session lives after its last activity. Request uses it for the cookie expiry
+    // and the GC for eviction.
+    this.sessionLifetime = SESSION_LIFETIME
   }
 
   init() {
@@ -171,7 +189,7 @@ class OdacStorage {
 
   // --- Session Garbage Collector ---
 
-  startSessionGC(intervalMs = 60 * 60 * 1000, expirationMs = 7 * 24 * 60 * 60 * 1000) {
+  startSessionGC(intervalMs = 60 * 60 * 1000, expirationMs = this.sessionLifetime) {
     if (!this.ready) {
       console.warn('[Storage] GC not started: Storage not ready')
       return null
@@ -220,13 +238,13 @@ class OdacStorage {
     let count = 0
 
     for (const {key, value} of this.db.getRange({start: 'sess:', end: 'sess:~', snapshot: false})) {
-      if (key.endsWith(':_created') && now - value > expirationMs) {
+      if (key.endsWith(':_created') && sessionExpired(this.db, key, value, now, expirationMs)) {
         const prefix = key.replace(':_created', '')
         for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
           this.db.remove(subKey)
         }
         count++
-      } else if (isExpiredFormRecord(key, value, now)) {
+      } else if (isExpiredFormRecord(key, value, now) || isExpiredToken(key, value, now)) {
         this.db.remove(key)
       }
     }
@@ -253,13 +271,13 @@ class OdacStorage {
         lastKey = key
         hasMore = true
 
-        if (key.endsWith(':_created') && now - value > expirationMs) {
+        if (key.endsWith(':_created') && sessionExpired(this.db, key, value, now, expirationMs)) {
           const prefix = key.replace(':_created', '')
           for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
             this.db.remove(subKey)
           }
           count++
-        } else if (isExpiredFormRecord(key, value, now)) {
+        } else if (isExpiredFormRecord(key, value, now) || isExpiredToken(key, value, now)) {
           this.db.remove(key)
         }
       }

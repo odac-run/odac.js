@@ -64,6 +64,9 @@ const val = Odac.session('key');
 // Destroy session
 Odac.session('key', null);
 ```
+- Session records are created on the first write only; reads never create one.
+- Expiry slides: 7 days after the last activity (recorded at most hourly).
+- Bound to the version-free User-Agent: browser updates keep the session.
 
 ### 4. Realtime Broadcasting (Ipc)
 ```javascript

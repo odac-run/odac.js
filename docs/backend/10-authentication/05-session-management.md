@@ -179,6 +179,13 @@ Odac.session('theme', 'dark')
 const theme = Odac.session('theme')
 ```
 
+How the session store behaves:
+
+- **Created on first write.** Reading from a visitor without a session returns `null` and stores nothing, so bots and health checks do not fill the store.
+- **Sliding expiry.** A session expires 7 days after its last activity (not after its creation). Activity is recorded at most once per hour, and the `odac_session` cookie's expiry is renewed with it.
+- **Bound to the browser.** The session is tied to the User-Agent with version numbers removed: a browser update keeps the session, a different browser or platform does not.
+- **CSRF tokens** (`Odac.token()`) are stored one key per token, so tokens issued in parallel by different workers are never lost. Each token is valid once, for the session lifetime.
+
 
 ### Best Practices
 

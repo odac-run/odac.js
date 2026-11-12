@@ -12,6 +12,9 @@ function fakeDb(entries) {
   const removed = []
   return {
     removed,
+    get(key) {
+      return entries.find(entry => entry.key === key)?.value
+    },
     getRange() {
       // Return a shallow copy so removal during iteration is safe.
       return entries.slice()
@@ -39,6 +42,42 @@ describe('OdacStorage._cleanSessionsSimple()', () => {
     Date.now = realNow
     Storage.db = null
     Storage.ready = false
+  })
+
+  describe('sliding expiry', () => {
+    const DAY = 24 * 60 * 60 * 1000
+
+    it('keeps a session created long ago that was active within the lifetime', () => {
+      const db = fakeDb([
+        {key: 'sess:pub:pri:_active', value: NOW - DAY},
+        {key: 'sess:pub:pri:_created', value: NOW - 30 * DAY}
+      ])
+      Storage.db = db
+      Storage._cleanSessionsSimple(7 * DAY)
+      expect(db.removed).toEqual([])
+    })
+
+    it('removes a session whose last activity is older than the lifetime', () => {
+      const db = fakeDb([
+        {key: 'sess:pub:pri:_active', value: NOW - 8 * DAY},
+        {key: 'sess:pub:pri:_created', value: NOW - 30 * DAY}
+      ])
+      db.getKeys = () => ['sess:pub:pri:_active', 'sess:pub:pri:_created']
+      Storage.db = db
+      Storage._cleanSessionsSimple(7 * DAY)
+      expect(db.removed).toEqual(['sess:pub:pri:_active', 'sess:pub:pri:_created'])
+    })
+
+    it('evicts expired CSRF tokens and keeps live ones', () => {
+      const db = fakeDb([
+        {key: 'sess:pub:pri:_created', value: NOW},
+        {key: 'sess:pub:pri:_token:old', value: NOW - 1},
+        {key: 'sess:pub:pri:_token:new', value: NOW + DAY}
+      ])
+      Storage.db = db
+      Storage._cleanSessionsSimple(7 * DAY)
+      expect(db.removed).toEqual(['sess:pub:pri:_token:old'])
+    })
   })
 
   it('evicts an expired form record without waiting for the parent session', () => {

@@ -36,6 +36,11 @@ function parseUrlEncoded(input, target) {
   }
 }
 
+const DEFAULT_SESSION_LIFETIME = 7 * 24 * 60 * 60 * 1000
+// Last activity is recorded at most this often, so an active session costs one write per
+// interval instead of one per request.
+const SESSION_TOUCH_INTERVAL = 60 * 60 * 1000
+
 // application/json and structured-syntax suffixes such as application/vnd.api+json.
 const JSON_CONTENT_TYPE = /^application\/(?:[\w.-]+\+)?json\s*(?:;|$)/i
 
@@ -56,6 +61,8 @@ class OdacRequest {
   #ended = false
   #sessions = {}
   #sessionUaHash = null
+  #sessionPrefix = null
+  #pendingClient = null
   variables = {}
   sharedData = {}
   isAjaxLoad = false
@@ -605,20 +612,112 @@ class OdacRequest {
     })
   }
 
+  /**
+   * Issues the per-browser client id (`odac_client` cookie) that forms and token requests
+   * are bound to.
+   * Why: the id is stored in the session only once the session exists. A visitor that never
+   * writes session data (bots, health checks, plain page views) gets the cookie but no
+   * session record; the first write persists the id issued in this request.
+   */
   setSession() {
-    if (!this.cookie('odac_client') || !this.session('_client') || this.session('_client') !== this.cookie('odac_client')) {
-      let client = nodeCrypto.randomBytes(16).toString('hex')
-      this.cookie('odac_client', client, {expires: null, httpOnly: false})
-      this.session('_client', client)
+    const cookieClient = this.cookie('odac_client')
+    if (this.#resolveSession(false)) {
+      const client = this.session('_client')
+      if (cookieClient && client === cookieClient) return
+    } else if (this.#pendingClient && this.#pendingClient === cookieClient) {
+      return
     }
+    const client = nodeCrypto.randomBytes(16).toString('hex')
+    this.cookie('odac_client', client, {expires: null, httpOnly: false})
+    if (this.#sessionPrefix) this.session('_client', client)
+    else this.#pendingClient = client
   }
 
-  // The User-Agent cannot change within a request; hash it once.
+  // The User-Agent cannot change within a request; hash it once. Version numbers are left
+  // out, so a browser update keeps the session while another browser or platform does not.
   #uaHash() {
     return (this.#sessionUaHash ??= nodeCrypto
       .createHash('sha256')
-      .update(this.req.headers['user-agent'] ?? '.')
+      .update((this.req.headers['user-agent'] ?? '.').replace(/\d+(?:[._]\d+)*/g, ''))
       .digest('hex'))
+  }
+
+  // Sessions created before version-free hashing are keyed by the full User-Agent.
+  #legacyUaHash() {
+    return nodeCrypto
+      .createHash('sha256')
+      .update(this.req.headers['user-agent'] ?? '.')
+      .digest('hex')
+  }
+
+  #lifetime() {
+    return global.Odac.Storage.sessionLifetime ?? DEFAULT_SESSION_LIFETIME
+  }
+
+  #sessionCookie(pub) {
+    this.cookie('odac_session', pub, {expires: new Date(Date.now() + this.#lifetime()).toUTCString()})
+  }
+
+  /**
+   * Finds this request's session, optionally creating one.
+   * Why: reads never create a session, so a request that only checks for session data
+   * leaves nothing behind in storage. Last activity is refreshed for the sliding expiry.
+   * @param {boolean} create Whether to start a session when there is none.
+   * @returns {string|null} The session's storage key prefix.
+   */
+  #resolveSession(create) {
+    if (this.#sessionPrefix) return this.#sessionPrefix
+    const Storage = global.Odac.Storage
+    const pub = this.cookie('odac_session')
+    if (typeof pub === 'string' && pub) {
+      const prefix = `sess:${pub}:${this.#uaHash()}:`
+      if (Storage.get(`${prefix}_created`)) return this.#openSession(pub, prefix)
+      const legacy = `sess:${pub}:${this.#legacyUaHash()}:`
+      if (legacy !== prefix && Storage.get(`${legacy}_created`)) {
+        this.#moveSession(legacy, prefix)
+        return this.#openSession(pub, prefix)
+      }
+    }
+    if (!create) return null
+
+    // Every cookieless request gets its own session. Reusing a recent session by IP and
+    // User-Agent merged unrelated visitors behind the same NAT into one session.
+    const fresh = this.#newSessionId(this.#uaHash())
+    const prefix = `sess:${fresh}:${this.#uaHash()}:`
+    Storage.put(`${prefix}_created`, Date.now())
+    this.#sessionPrefix = prefix
+    this.#sessionCookie(fresh)
+    if (this.#pendingClient) {
+      Storage.put(`${prefix}_client`, this.#pendingClient)
+      this.#sessions[`${prefix}_client`] = this.#pendingClient
+      this.#pendingClient = null
+    }
+    return prefix
+  }
+
+  #openSession(pub, prefix) {
+    this.#sessionPrefix = prefix
+    const Storage = global.Odac.Storage
+    const now = Date.now()
+    const last = Storage.get(`${prefix}_active`) ?? Storage.get(`${prefix}_created`)
+    if (!(now - last < SESSION_TOUCH_INTERVAL)) {
+      Storage.put(`${prefix}_active`, now)
+      this.#sessionCookie(pub)
+    }
+    return prefix
+  }
+
+  #moveSession(fromPrefix, toPrefix) {
+    const Storage = global.Odac.Storage
+    for (const [key, value] of Storage.entries(fromPrefix)) {
+      Storage.put(toPrefix + key.slice(fromPrefix.length), value)
+      Storage.remove(key)
+    }
+    const cached = this.#sessions
+    this.#sessions = {}
+    for (const key of Object.keys(cached)) {
+      this.#sessions[key.startsWith(fromPrefix) ? toPrefix + key.slice(fromPrefix.length) : key] = cached[key]
+    }
   }
 
   #newSessionId(pri) {
@@ -637,46 +736,36 @@ class OdacRequest {
    */
   regenerateSession() {
     const pri = this.#uaHash()
-    const oldPub = this.cookie('odac_session')
+    const oldPrefix = this.#resolveSession(false)
     const pub = this.#newSessionId(pri)
     const prefix = `sess:${pub}:${pri}:`
 
-    if (oldPub) {
-      const oldPrefix = `sess:${oldPub}:${pri}:`
-      for (const [key, value] of global.Odac.Storage.entries(oldPrefix)) {
-        global.Odac.Storage.put(prefix + key.slice(oldPrefix.length), value)
-        global.Odac.Storage.remove(key)
-      }
-      const cached = this.#sessions
-      this.#sessions = {}
-      for (const key of Object.keys(cached)) {
-        if (key.startsWith(oldPrefix)) this.#sessions[prefix + key.slice(oldPrefix.length)] = cached[key]
-      }
-    }
-
+    if (oldPrefix) this.#moveSession(oldPrefix, prefix)
     global.Odac.Storage.put(`${prefix}_created`, Date.now())
-    this.cookie('odac_session', pub)
+    global.Odac.Storage.put(`${prefix}_active`, Date.now())
+    this.#sessionPrefix = prefix
+    this.#sessionCookie(pub)
+    if (this.#pendingClient) {
+      global.Odac.Storage.put(`${prefix}_client`, this.#pendingClient)
+      this.#sessions[`${prefix}_client`] = this.#pendingClient
+      this.#pendingClient = null
+    }
   }
 
   // - SESSION
+  /**
+   * Reads (`value` omitted), writes or removes (`value` null) a session value.
+   * Why: only a write creates a session; reading from a visitor without one returns null.
+   */
   session(key, value) {
-    const pri = this.#uaHash()
-    let pub = this.cookie('odac_session')
-    if (!pub || !global.Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
-      // Every cookieless request gets its own session. Reusing a recent session by IP and
-      // User-Agent merged unrelated visitors behind the same NAT into one session.
-      pub = this.#newSessionId(pri)
-      global.Odac.Storage.put(`sess:${pub}:${pri}:_created`, Date.now())
-      this.cookie('odac_session', `${pub}`)
-    }
+    const prefix = this.#resolveSession(value !== undefined && value !== null)
+    if (!prefix) return key === '_client' && value === undefined ? this.#pendingClient : null
 
-    const dbKey = `sess:${pub}:${pri}:${key}`
+    const dbKey = prefix + key
     if (value === undefined) {
       if (Object.prototype.hasOwnProperty.call(this.#sessions, dbKey)) return this.#sessions[dbKey]
-      const dbValue = global.Odac.Storage.get(dbKey) ?? null
-      return dbValue
+      return global.Odac.Storage.get(dbKey) ?? null
     } else if (value === null) {
-      delete this.#sessions[dbKey]
       delete this.#sessions[dbKey]
       global.Odac.Storage.remove(dbKey)
     } else {
