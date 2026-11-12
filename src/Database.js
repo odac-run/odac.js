@@ -180,7 +180,10 @@ const manager = new DatabaseManager()
  * Normalizes a count() result into a plain number.
  * Postgres returns counts as strings, and Knex wraps them in [{'count(*)': n}].
  */
-const normalizeCountResult = result => {
+const normalizeCountResult = (result, builder) => {
+  // A grouped count is one row per group; collapsing it only when a single group matched
+  // made the return type depend on the data (a number for one group, an array for two).
+  if (builder?._statements?.some(statement => statement.grouping === 'group')) return result
   const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
   if (!isScalar) return result
 
@@ -314,7 +317,7 @@ const buildQueryBuilder = (knexInstance, tableName) => {
       const executeFn = () => new Promise((res, rej) => originalCacheThen(res, rej))
       return readCache
         .get(connectionKey, prop, this, executeFn, this._odacCacheTtl)
-        .then(result => (this._odacIsCount ? normalizeCountResult(result) : result))
+        .then(result => (this._odacIsCount ? normalizeCountResult(result, this) : result))
         .then(resolve, reject)
     }
 
@@ -388,7 +391,7 @@ const buildQueryBuilder = (knexInstance, tableName) => {
   const originalThen = qb.then
   qb.then = function (resolve, reject) {
     if (this._odacIsCount) {
-      return originalThen.call(this, result => resolve(normalizeCountResult(result)), reject)
+      return originalThen.call(this, result => resolve(normalizeCountResult(result, this)), reject)
     }
     return originalThen.call(this, resolve, reject)
   }
