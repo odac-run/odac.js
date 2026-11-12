@@ -22,12 +22,12 @@ class OdacWebSocket {
     this.connect()
   }
 
-  connect() {
+  async connect() {
     if (this.#isClosed) return
 
     if (this.#tokenProvider) {
       try {
-        const freshToken = this.#tokenProvider()
+        const freshToken = await this.#tokenProvider()
         if (freshToken) {
           let current = Array.isArray(this.#protocols) ? this.#protocols : this.#protocols ? [this.#protocols] : []
           this.#protocols = current.filter(p => !p.startsWith('odac-token-'))
@@ -36,6 +36,7 @@ class OdacWebSocket {
       } catch (e) {
         console.error('Odac WebSocket tokenProvider error:', e)
       }
+      if (this.#isClosed) return
     }
 
     this.#socket = this.#protocols.length > 0 ? new WebSocket(this.#url, this.#protocols) : new WebSocket(this.#url)
@@ -117,11 +118,12 @@ if (typeof window !== 'undefined') {
     #data = null
     fn = {}
     #page = null
-    #token = {hash: [], data: false}
+    #token = {hash: [], data: false, pending: null}
     #formSubmitHandlers = new Map()
     #formElementSelectors = new WeakMap()
     #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
+    #pendingHash = ''
 
     constructor() {
       // In constructor we can't call this.data() easily if it uses 'this' for caching properly before init
@@ -409,7 +411,7 @@ if (typeof window !== 'undefined') {
         document.removeEventListener('submit', oldHandler)
       }
 
-      const handler = e => {
+      const handler = async e => {
         const formElement = e.target.closest(formSelector)
         if (!formElement) return
 
@@ -557,15 +559,16 @@ if (typeof window !== 'undefined') {
           formElement.querySelectorAll(`.${invalidClass}`).forEach(el => el.classList.remove(invalidClass))
         }
 
+        const token = await this.tokenAsync()
         let datastring, cache, contentType, processData
         if (formElement.querySelector('input[type=file]')) {
           datastring = new FormData(formElement)
-          datastring.append('_token', this.token())
+          datastring.append('_token', token)
           cache = false
           contentType = false
           processData = false
         } else {
-          datastring = this.#serialize(formElement) + '&_token=' + this.token()
+          datastring = this.#serialize(formElement) + '&_token=' + encodeURIComponent(token)
           cache = true
           contentType = 'application/x-www-form-urlencoded; charset=UTF-8'
           processData = true
@@ -751,8 +754,9 @@ if (typeof window !== 'undefined') {
       document.querySelectorAll(formSelector).forEach(formEl => this.#formElementSelectors.set(formEl, formSelector))
     }
 
-    get(url, callback) {
-      url = url + (url.includes('?') ? '&' : '?') + '_token=' + this.token()
+    async get(url, callback) {
+      const token = await this.tokenAsync()
+      url = url + (url.includes('?') ? '&' : '?') + '_token=' + encodeURIComponent(token)
       this.#ajax({url: url, success: callback})
     }
 
@@ -769,7 +773,8 @@ if (typeof window !== 'undefined') {
       else localStorage.setItem(key, value)
     }
 
-    token() {
+    // Shared by token() and tokenAsync(): rotated tokens arrive in X-Odac-Token headers.
+    #listenForTokens() {
       if (!this.#token.listener) {
         document.addEventListener('odac:ajaxSuccess', event => {
           const {detail} = event
@@ -786,27 +791,75 @@ if (typeof window !== 'undefined') {
         })
         this.#token.listener = true
       }
+    }
+
+    // One token request in flight at a time, shared by every caller waiting for it.
+    #requestToken() {
+      if (!this.#token.pending) {
+        const pending = new Promise(resolve => {
+          this.#ajax({
+            url: '/',
+            type: 'GET',
+            dataType: 'json',
+            headers: {'X-Odac': 'token', 'X-Odac-Client': this.client()},
+            success: data => {
+              if (data && data.token) this.#token.hash.push(data.token)
+              resolve()
+            },
+            error: () => resolve()
+          })
+        })
+        // Cleared after assignment: a request that completes synchronously must not leave a
+        // settled promise behind that would stop every later refill.
+        const tracked = pending.finally(() => {
+          if (this.#token.pending === tracked) this.#token.pending = null
+        })
+        this.#token.pending = tracked
+      }
+      return this.#token.pending
+    }
+
+    #takeToken() {
+      this.#token.hash = this.#token.hash.filter(n => n)
+      const token = this.#token.hash.shift()
+      // Keep one token in reserve so the next caller rarely has to wait.
+      if (!this.#token.hash.length) this.#requestToken()
+      return token
+    }
+
+    /**
+     * Returns a CSRF token without blocking the page.
+     * Why: token() falls back to a synchronous request when no token is cached, which
+     * freezes the main thread on a slow network. Every built-in caller uses this instead.
+     * @returns {Promise<string|undefined>}
+     */
+    async tokenAsync() {
+      this.#listenForTokens()
+      if (!this.#token.hash.filter(n => n).length) await this.#requestToken()
+      return this.#takeToken()
+    }
+
+    /**
+     * Returns a CSRF token synchronously.
+     * Kept for existing callers; when no token is cached it has to block on a synchronous
+     * request. Prefer `await Odac.tokenAsync()`.
+     */
+    token() {
+      this.#listenForTokens()
       if (!this.#token.hash.length) {
         const req = new XMLHttpRequest()
         req.open('GET', '/', false)
         req.setRequestHeader('X-Odac', 'token')
         req.setRequestHeader('X-Odac-Client', this.client())
         req.send(null)
-        const req_data = JSON.parse(req.response)
-        if (req_data.token) this.#token.hash.push(req_data.token)
+        try {
+          const req_data = JSON.parse(req.response)
+          if (req_data && req_data.token) this.#token.hash.push(req_data.token)
+        } catch {
+          // Not a token response (expired session, proxy error page): no token.
+        }
       }
-      this.#token.hash = this.#token.hash.filter(n => n)
-      const return_token = this.#token.hash.shift()
-      if (!this.#token.hash.length)
-        this.#ajax({
-          url: '/',
-          type: 'GET',
-          headers: {'X-Odac': 'token', 'X-Odac-Client': this.client()},
-          success: data => {
-            if (data.token) this.#token.hash.push(data.token)
-          }
-        })
-      return return_token
+      return this.#takeToken()
     }
 
     textToHtml(str) {
@@ -838,9 +891,31 @@ if (typeof window !== 'undefined') {
       if (this.#isNavigating) return false
 
       const currentUrl = window.location.href
-      url = new URL(url, currentUrl).href
-      if (url === '' || url.startsWith('javascript:') || url.startsWith('data:') || url.startsWith('vbscript:') || url.includes('#'))
+      let target
+      try {
+        target = new URL(url, currentUrl)
+      } catch {
         return false
+      }
+      if (target.protocol !== 'http:' && target.protocol !== 'https:') return false
+      // Only this origin's pages are fetched and written into the DOM; anything else is a
+      // normal browser navigation.
+      if (target.origin !== new URL(currentUrl).origin) {
+        window.location.assign(target.href)
+        return false
+      }
+
+      const hash = target.hash
+      target.hash = ''
+      const current = new URL(currentUrl)
+      current.hash = ''
+      if (hash && target.href === current.href) {
+        // An anchor on the current page: the browser scrolls to it.
+        window.location.hash = hash
+        return false
+      }
+      url = target.href
+      this.#pendingHash = hash
 
       this.#isNavigating = true
 
@@ -915,7 +990,7 @@ if (typeof window !== 'undefined') {
           }
 
           const transition = document.startViewTransition(() => {
-            if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
+            if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl + this.#pendingHash)
 
             const newPage = xhr.getResponseHeader('X-Odac-Page')
             if (newPage !== null) {
@@ -981,7 +1056,7 @@ if (typeof window !== 'undefined') {
             window.location.href = finalUrl
             return
           }
-          if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl)
+          if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl + this.#pendingHash)
 
           const newPage = xhr.getResponseHeader('X-Odac-Page')
           if (newPage !== null) {
@@ -1047,7 +1122,19 @@ if (typeof window !== 'undefined') {
 
       if (callback && typeof callback === 'function') callback(this.page(), data.variables)
 
-      window.scrollTo({top: 0, behavior: 'smooth'})
+      // A link such as /docs#install lands on its section instead of the top of the page.
+      const hash = this.#pendingHash
+      this.#pendingHash = ''
+      let anchor = null
+      if (hash) {
+        try {
+          anchor = document.getElementById(decodeURIComponent(hash.slice(1)))
+        } catch {
+          anchor = null
+        }
+      }
+      if (anchor) anchor.scrollIntoView({behavior: 'smooth'})
+      else window.scrollTo({top: 0, behavior: 'smooth'})
       this.#isNavigating = false
     }
 
@@ -1090,20 +1177,23 @@ if (typeof window !== 'undefined') {
         if (!anchor) return
         const url = anchor.getAttribute('href')
         const target = anchor.getAttribute('target')
-        if (
-          !url ||
-          url === '' ||
-          url.startsWith('javascript:') ||
-          url.startsWith('data:') ||
-          url.startsWith('vbscript:') ||
-          url.startsWith('#')
-        )
+        if (!url || url.startsWith('#')) return
+        if (target !== null && target !== '_self') return
+        // Compare origins, not substrings: '//evil.example/x' matches a[href^="/"] and
+        // 'https://evil.example/?site.com' contains the host, yet both leave the site.
+        let destination
+        try {
+          destination = new URL(url, window.location.href)
+        } catch {
           return
-        const isExternal = url.includes('://') && !url.includes(window.location.host)
-        if ((target === null || target === '_self') && !isExternal) {
-          e.preventDefault()
-          odacInstance.load(url, callback)
         }
+        const here = new URL(window.location.href)
+        if (destination.protocol !== 'http:' && destination.protocol !== 'https:') return
+        if (destination.origin !== here.origin) return
+        // An anchor on the current page is the browser's job.
+        if (destination.hash && destination.pathname === here.pathname && destination.search === here.search) return
+        e.preventDefault()
+        odacInstance.load(destination.href, callback)
       })
 
       window.addEventListener('popstate', () => {
@@ -1117,9 +1207,11 @@ if (typeof window !== 'undefined') {
         reconnectTimer = null,
         isClosed = false
 
-      const connect = () => {
+      const connect = async () => {
         if (isClosed) return
-        const urlWithToken = url + (url.includes('?') ? '&' : '?') + '_token=' + encodeURIComponent(this.token())
+        const token = await this.tokenAsync()
+        if (isClosed) return
+        const urlWithToken = url + (url.includes('?') ? '&' : '?') + '_token=' + encodeURIComponent(token)
         eventSource = new EventSource(urlWithToken)
         eventSource.onopen = e => {
           if (onOpen) onOpen(e)
@@ -1163,7 +1255,7 @@ if (typeof window !== 'undefined') {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
       const wsUrl = `${protocol}//${window.location.host}${path}`
       const protocols = []
-      const tokenProvider = token ? () => this.token() : null
+      const tokenProvider = token ? () => this.tokenAsync() : null
 
       return new OdacWebSocket(wsUrl, protocols, {...options, tokenProvider})
     }
@@ -1203,23 +1295,23 @@ if (typeof window !== 'undefined') {
             emit('error', data)
             break
           case 'requestToken':
-            worker.port.postMessage({type: 'provideToken', token: this.token()})
+            this.tokenAsync().then(token => worker.port.postMessage({type: 'provideToken', token}))
             break
         }
       }
 
       worker.port.start()
 
-      const token = options.token ? this.token() : null
-
-      worker.port.postMessage({
-        type: 'connect',
-        path,
-        host: window.location.host,
-        protocol: window.location.protocol === 'https:' ? 'wss:' : 'ws:',
-        token,
-        options
-      })
+      Promise.resolve(options.token ? this.tokenAsync() : null).then(token =>
+        worker.port.postMessage({
+          type: 'connect',
+          path,
+          host: window.location.host,
+          protocol: window.location.protocol === 'https:' ? 'wss:' : 'ws:',
+          token,
+          options
+        })
+      )
 
       return {
         on: (event, handler) => {

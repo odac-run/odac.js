@@ -1,3 +1,5 @@
+const flush = () => new Promise(resolve => setImmediate(resolve))
+
 // Odac.form() previously swallowed transport failures: `error` only logged, so
 // a 5xx / dropped connection left the app's own busy state hanging forever.
 // The handler now feeds the callback a server-shaped failure response.
@@ -85,6 +87,8 @@ describe('Odac.form()', () => {
     global.FormData = mockWindow.FormData
     delete require.cache[require.resolve('../../client/odac.js')]
     require('../../client/odac.js')
+    // The token endpoint shares mockXhr with the form request; serve tokens directly.
+    window.Odac.tokenAsync = jest.fn(async () => 'test-token')
     jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
     jest.spyOn(console, 'error').mockImplementation(() => {})
   })
@@ -105,12 +109,14 @@ describe('Odac.form()', () => {
     delete global.Odac
   })
 
-  test('invokes the callback with a failure response when the request fails', () => {
+  test('invokes the callback with a failure response when the request fails', async () => {
     const callback = jest.fn()
     const formElement = makeFormElement()
 
     window.Odac.form('#contact', callback)
     submit(formElement)
+    // Form submission awaits Odac.tokenAsync() before sending.
+    await flush()
 
     mockXhr.status = 500
     mockXhr.statusText = 'Internal Server Error'
@@ -123,12 +129,14 @@ describe('Odac.form()', () => {
     expect(payload.status).toBe('Internal Server Error')
   })
 
-  test('invokes the callback when the connection drops', () => {
+  test('invokes the callback when the connection drops', async () => {
     const callback = jest.fn()
     const formElement = makeFormElement()
 
     window.Odac.form('#contact', callback)
     submit(formElement)
+    // Form submission awaits Odac.tokenAsync() before sending.
+    await flush()
 
     mockXhr.onerror()
 
@@ -136,11 +144,13 @@ describe('Odac.form()', () => {
     expect(callback.mock.calls[0][0].result.success).toBe(false)
   })
 
-  test('does not redirect to a string callback on failure', () => {
+  test('does not redirect to a string callback on failure', async () => {
     const formElement = makeFormElement()
 
     window.Odac.form('#contact', '/done')
     submit(formElement)
+    // Form submission awaits Odac.tokenAsync() before sending.
+    await flush()
 
     mockXhr.status = 500
     mockXhr.onload()
@@ -148,12 +158,14 @@ describe('Odac.form()', () => {
     expect(window.location.href).toBe('http://localhost/')
   })
 
-  test('passes result.data through to the callback on success', () => {
+  test('passes result.data through to the callback on success', async () => {
     const callback = jest.fn()
     const formElement = makeFormElement()
 
     window.Odac.form({form: '#contact', messages: false}, callback)
     submit(formElement)
+    // Form submission awaits Odac.tokenAsync() before sending.
+    await flush()
 
     mockXhr.status = 200
     mockXhr.responseText = JSON.stringify({result: {success: true, message: 'ok', data: {avatar: 'a1b2.png'}}})

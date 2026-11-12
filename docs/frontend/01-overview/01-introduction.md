@@ -126,7 +126,11 @@ Odac.get('/api/users', function(data) {
 
 ## Managing CSRF tokens with `Odac.token()`
 
-`odac.js` automatically manages CSRF tokens for you. The `Odac.token()` method will return a valid token for your requests. The `Odac.form()` and `Odac.get()` methods use this automatically, so you usually don't need to call it yourself.
+`odac.js` automatically manages CSRF tokens for you. `Odac.form()`, `Odac.get()`, `Odac.listen()` and `Odac.ws()` fetch tokens on their own, so you usually don't need to call it yourself.
+
+When you do, prefer `await Odac.tokenAsync()`. `Odac.token()` returns synchronously and therefore has to block the page on a synchronous request when no token is cached yet.
+
+Links handled by in-place navigation are those on the same origin. Links to other origins (including protocol-relative `//host/...`) are left to the browser, an anchor on the current page (`/docs#install` while on `/docs`) scrolls natively, and a hash link to another page loads it and then scrolls to the section.
 
 ## Other Utility Functions
 

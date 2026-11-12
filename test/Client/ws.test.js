@@ -84,7 +84,8 @@ describe('Odac.ws()', () => {
     expect(openHandler).toHaveBeenCalled()
   })
 
-  test('should use fresh token on reconnect', () => {
+  test('should use fresh token on reconnect', async () => {
+    const flush = () => new Promise(resolve => setImmediate(resolve))
     let tokenCounter = 0
     mockXhr.response = JSON.stringify({token: 'initial-token'})
     mockXhr.responseText = JSON.stringify({token: 'initial-token'})
@@ -98,6 +99,7 @@ describe('Odac.ws()', () => {
     mockDocument.cookie = 'odac_client=test-client'
 
     window.Odac.ws('/test-ws', {token: true, autoReconnect: true, reconnectDelay: 100})
+    await flush()
     const firstCall = WebSocket.mock.calls[0]
     expect(firstCall[1]).toEqual(expect.arrayContaining([expect.stringMatching(/^odac-token-/)]))
     const firstToken = firstCall[1][0]
@@ -108,6 +110,7 @@ describe('Odac.ws()', () => {
     global.setTimeout = jest.fn(fn => fn())
     socketInstance.readyState = 3
     socketInstance.onclose({code: 1006})
+    await flush()
 
     expect(WebSocket.mock.calls.length).toBeGreaterThan(1)
     const secondCall = WebSocket.mock.calls[1]
