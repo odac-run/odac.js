@@ -138,6 +138,25 @@ class OdacStorage {
     return Promise.resolve(this.db.committed)
   }
 
+  /**
+   * Entries whose key starts with `prefix`, including this process's queued writes.
+   * Why: getRange() sees only committed data. A caller that moves a key space (session
+   * regeneration at login) must also see writes and removes made earlier in the request.
+   * @param {string} prefix
+   * @returns {Map<string, *>}
+   */
+  entries(prefix) {
+    const result = new Map()
+    if (!this.ready) return result
+    for (const {key, value} of this.db.getRange({start: prefix, end: prefix + '~'})) result.set(key, value)
+    for (const [key, entry] of this.#pending) {
+      if (typeof key !== 'string' || !key.startsWith(prefix)) continue
+      if (entry.value === REMOVED) result.delete(key)
+      else result.set(key, entry.value)
+    }
+    return result
+  }
+
   // --- Range Operations ---
 
   getRange(options = {}) {

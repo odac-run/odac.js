@@ -52,6 +52,15 @@ describe('Auth.register()', () => {
       expect(await knex('users').count({n: '*'})).toEqual([{n: 1}])
     })
 
+    it('does not return driver error messages to the caller', async () => {
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+      // SQLite: "table users has no column named missing_column" must stay in the log.
+      const result = await auth.register({email: 'b@example.com', password: 'x', missing_column: 1}, {autoLogin: false})
+
+      expect(result).toEqual({success: false, error: 'Registration failed'})
+      console.error.mockRestore()
+    })
+
     it('stores the password as a scrypt hash', async () => {
       await auth.register({email: 'a@example.com', password: 's3cret'}, {autoLogin: false})
 

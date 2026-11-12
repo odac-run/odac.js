@@ -105,4 +105,21 @@ describe('Internal.customForm()', () => {
       expect(out.errors).toEqual({email: 'Already registered', name: 'Too short'})
     })
   })
+
+  describe('table forms', () => {
+    it('does not return database error messages to the client', async () => {
+      const Odac = makeOdac(undefined, {action: undefined, table: 'contacts', fields: []})
+      Odac.DB = {contacts: {insert: jest.fn().mockRejectedValue(new Error('SQLITE_ERROR: table contacts has no column named secret'))}}
+      global.Odac = {Config: {request: {}}}
+      const logged = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+      const out = await Internal.customForm(Odac)
+
+      expect(out.result.success).toBe(false)
+      expect(out.errors._odac_form).not.toMatch(/SQLITE|column|contacts/)
+      expect(logged.mock.calls[0][0]).toContain('no column named secret')
+      logged.mockRestore()
+      delete global.Odac
+    })
+  })
 })

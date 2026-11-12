@@ -613,9 +613,11 @@ class Internal {
           })
         }
 
+        // Driver messages expose table/column names and submitted values; log them instead.
+        console.error(JSON.stringify({level: 'ERROR', message: 'Form insert failed', table: Odac.formConfig.table, error: error.message}))
         return Odac.return({
           result: {success: false},
-          errors: {_odac_form: error.message || 'Database error occurred'}
+          errors: {_odac_form: 'The form could not be saved. Please try again.'}
         })
       }
     }

@@ -66,7 +66,8 @@ describe('Auth.verifyMagicLink()', () => {
     expires_at: new Date(Date.now() + 15 * 60 * 1000),
     id: 1,
     ip: '127.0.0.1',
-    token_hash: 'hashed_token',
+    // SHA-256 of 'raw_token', the format magic() stores.
+    token_hash: '$sha256$93542b1bf28e0d003358c48956e3e804ec6955c75d89e16cccf6dee3bd5358ec',
     ...overrides
   })
 
@@ -84,6 +85,7 @@ describe('Auth.verifyMagicLink()', () => {
       header: jest.fn(() => 'TestBrowser'),
       host: 'example.com',
       ip: '127.0.0.1',
+      regenerateSession: jest.fn(),
       res: {},
       session: jest.fn(() => null),
       ssl: false
@@ -113,7 +115,9 @@ describe('Auth.verifyMagicLink()', () => {
       },
       Var: jest.fn(() => ({
         hash: jest.fn(() => 'hashed_value'),
+        hashAsync: jest.fn(async () => 'hashed_value'),
         hashCheck: jest.fn(() => true),
+        hashCheckAsync: jest.fn(async () => true),
         is: jest.fn(() => false),
         md5: jest.fn(() => 'md5_value')
       }))

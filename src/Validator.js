@@ -362,7 +362,7 @@ class Validator {
                     } else {
                       const userData = this.#odac.Auth.user(arg)
                       if (this.#odac.Var(userData).is('hash')) {
-                        error = !scalar || !this.#odac.Var(userData).hashCheck(text)
+                        error = !scalar || !(await this.#odac.Var(userData).hashCheckAsync(text))
                       } else {
                         error = value !== userData
                       }

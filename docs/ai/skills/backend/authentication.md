@@ -17,7 +17,7 @@ ODAC provides built-in drivers for session handling (Memory/Redis) and multiple 
 2.  **Session Integrity**: `Odac.Request.setSession()` MUST be called before accessing `Odac.Request.session()`.
 3.  **Password Security**: The framework handles BCrypt hashing automatically via `Odac.Auth`.
 4.  **Magic Links**: Use `Odac.Auth.magic(email)` for passwordless flows.
-5.  **Token Rotation**: Enterprise-grade rotation is enabled by default. It uses a 60s grace period to prevent race conditions in SPAs.
+5.  **Token Rotation**: Enterprise-grade rotation is enabled by default. The rotated token stays valid for a 30 s grace period (`auth.rotationGrace`) to prevent race conditions in SPAs; concurrent requests rotate only once.
 6.  **Persistence**: Cookies use the configured `maxAge` to persist beyond browser closure.
 7.  **Token Accessor**: Use `Odac.Auth.token()` to access the active auth session record (e.g., auth ID, IP, timestamps). Returns `false` if no active session.
 

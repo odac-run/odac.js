@@ -27,6 +27,7 @@ describe('Request.session()', () => {
       Route: {routes: {www: {}}},
       Request: {},
       Storage: {
+        entries: prefix => new Map([...store].filter(([key]) => key.startsWith(prefix))),
         get: key => store.get(key),
         put: (key, value) => store.set(key, value),
         remove: key => store.delete(key)
@@ -68,6 +69,40 @@ describe('Request.session()', () => {
     const next = makeRequest(`odac_session=${sessionCookie(request)}`)
     expect(next.session('a')).toBe(1)
     expect(next.session('b')).toBe(2)
+  })
+
+  describe('regenerateSession()', () => {
+    it('moves the data to a new identifier and retires the old one', () => {
+      const before = makeRequest()
+      before.session('cart', ['item'])
+      const planted = sessionCookie(before)
+
+      const login = makeRequest(`odac_session=${planted}`)
+      login.regenerateSession()
+      const fresh = sessionCookie(login)
+
+      expect(fresh).not.toBe(planted)
+      expect(login.session('cart')).toEqual(['item'])
+      expect(makeRequest(`odac_session=${fresh}`).session('cart')).toEqual(['item'])
+      // The planted identifier no longer resolves: a request with it starts a new session.
+      const attacker = makeRequest(`odac_session=${planted}`)
+      expect(attacker.session('cart')).toBeNull()
+      expect(sessionCookie(attacker)).not.toBe(planted)
+    })
+
+    it('keeps values written earlier in the same request', () => {
+      const request = makeRequest()
+      request.session('step', 1)
+      request.regenerateSession()
+      expect(request.session('step')).toBe(1)
+    })
+
+    it('creates a session when the visitor had none', () => {
+      const request = makeRequest()
+      request.regenerateSession()
+      expect(sessionCookie(request)).toBeTruthy()
+      expect(makeRequest(`odac_session=${sessionCookie(request)}`).session('x')).toBeNull()
+    })
   })
 
   it('stores no IP-based lock entries', () => {

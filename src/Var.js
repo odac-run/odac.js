@@ -37,6 +37,25 @@ const GCM_IV_LENGTH = 12
 const GCM_TAG_LENGTH = 16
 const GCM_KEY_INFO = 'odac:var:encrypt:v3'
 
+const SCRYPT_KEY_LENGTH = 64
+
+function scryptAsync(value, salt) {
+  return new Promise((resolve, reject) => {
+    nodeCrypto.scrypt(value, salt, SCRYPT_KEY_LENGTH, (error, key) => (error ? reject(error) : resolve(key)))
+  })
+}
+
+// A stored hash whose digest has the wrong length (truncated or edited) made timingSafeEqual
+// throw instead of failing the check.
+function parseScryptHash(value) {
+  if (typeof value !== 'string' || !value.startsWith('$scrypt$')) return null
+  const parts = value.split('$')
+  if (parts.length < 4 || !/^[0-9a-f]+$/i.test(parts[3])) return null
+  const hash = Buffer.from(parts[3], 'hex')
+  if (hash.length !== SCRYPT_KEY_LENGTH) return null
+  return {salt: parts[2], hash}
+}
+
 function isDefaultKey(key) {
   if (Buffer.isBuffer(key)) return key.equals(DEFAULT_ENCRYPT_KEY_DIGEST)
   return key === DEFAULT_ENCRYPT_KEY
@@ -175,22 +194,51 @@ class Var {
     return GCM_PREFIX + Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64')
   }
 
+  /**
+   * Hashes the value with scrypt (synchronous).
+   * Why: kept for scripts and existing callers; request handlers should use hashAsync(), since
+   * scrypt is deliberately slow and the synchronous form blocks the event loop meanwhile.
+   * @returns {string} `$scrypt$<salt>$<hex>`
+   */
   hash() {
     const salt = nodeCrypto.randomBytes(16).toString('hex')
-    const derivedKey = nodeCrypto.scryptSync(this.#value, salt, 64)
+    const derivedKey = nodeCrypto.scryptSync(this.#value, salt, SCRYPT_KEY_LENGTH)
     return `$scrypt$${salt}$${derivedKey.toString('hex')}`
   }
 
+  /**
+   * Hashes the value with scrypt on the libuv thread pool.
+   * Why: password hashing on the request path (login, registration) must not stall every
+   * other request on the worker. Produces the same format as hash().
+   * @returns {Promise<string>}
+   */
+  async hashAsync() {
+    const salt = nodeCrypto.randomBytes(16).toString('hex')
+    const derivedKey = await scryptAsync(this.#value, salt)
+    return `$scrypt$${salt}$${derivedKey.toString('hex')}`
+  }
+
+  /**
+   * Checks a candidate against a hash produced by hash()/hashAsync() (synchronous).
+   * @param {string} check Candidate value.
+   * @returns {boolean} false for a mismatch or a malformed hash; never throws.
+   */
   hashCheck(check) {
-    if (!this.#value.startsWith('$scrypt$')) return false
-    const parts = this.#value.split('$')
-    if (parts.length < 4) return false
+    const parsed = parseScryptHash(this.#value)
+    if (!parsed) return false
+    return nodeCrypto.timingSafeEqual(parsed.hash, nodeCrypto.scryptSync(String(check), parsed.salt, SCRYPT_KEY_LENGTH))
+  }
 
-    const salt = parts[2]
-    const originalHash = Buffer.from(parts[3], 'hex')
-
-    const derivedKey = nodeCrypto.scryptSync(check, salt, 64)
-    return nodeCrypto.timingSafeEqual(originalHash, derivedKey)
+  /**
+   * Asynchronous hashCheck().
+   * Why: see hashAsync(); used for every password and legacy token verification.
+   * @param {string} check Candidate value.
+   * @returns {Promise<boolean>}
+   */
+  async hashCheckAsync(check) {
+    const parsed = parseScryptHash(this.#value)
+    if (!parsed) return false
+    return nodeCrypto.timingSafeEqual(parsed.hash, await scryptAsync(String(check), parsed.salt))
   }
 
   html() {

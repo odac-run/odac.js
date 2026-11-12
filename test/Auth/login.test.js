@@ -9,7 +9,8 @@ describe('Auth.login() throttling', () => {
   let lookups
   const stored = new Var('s3cret').hash()
 
-  const makeAuth = (ip = '203.0.113.9') => new Auth({cookie: jest.fn(), header: name => (name === 'user-agent' ? 'TestBrowser' : null), ip})
+  const makeAuth = (ip = '203.0.113.9') =>
+    new Auth({cookie: jest.fn(), header: name => (name === 'user-agent' ? 'TestBrowser' : null), ip, regenerateSession: jest.fn()})
 
   const usersTable = () => {
     const query = {
@@ -22,10 +23,14 @@ describe('Auth.login() throttling', () => {
     return query
   }
 
+  let tokenInserts
   const tokensTable = () => {
     const query = {
       delete: () => Promise.resolve(0),
-      insert: () => Promise.resolve([1]),
+      insert: row => {
+        tokenInserts.push(row)
+        return Promise.resolve([1])
+      },
       where: () => query
     }
     return query
@@ -34,6 +39,7 @@ describe('Auth.login() throttling', () => {
   beforeEach(() => {
     store = new Map()
     lookups = 0
+    tokenInserts = []
     global.Odac = {
       Config: {auth: {table: 'users', token: 'user_tokens'}},
       DB: {
@@ -101,6 +107,24 @@ describe('Auth.login() throttling', () => {
 
     for (let i = 0; i < 4; i++) await fail()
     await expect(makeAuth().loginThrottled({email: 'a@example.com', password: 'x'})).resolves.toBe(false)
+  })
+
+  it('moves the visitor to a new session id and writes explicit token timestamps', async () => {
+    const auth = makeAuth()
+    const request = {cookie: jest.fn(), header: () => 'TestBrowser', ip: '203.0.113.9', regenerateSession: jest.fn()}
+    await expect(new Auth(request).login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)
+
+    expect(request.regenerateSession).toHaveBeenCalledTimes(1)
+    expect(tokenInserts[0].date).toBeInstanceOf(Date)
+    expect(tokenInserts[0].active).toBeInstanceOf(Date)
+    await expect(auth.login({email: 'a@example.com', password: 'wrong'})).resolves.toBe(false)
+  })
+
+  it('verifies the password without the synchronous scrypt', async () => {
+    const sync = jest.spyOn(Var.prototype, 'hashCheck')
+    await expect(makeAuth().login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)
+    expect(sync).not.toHaveBeenCalled()
+    sync.mockRestore()
   })
 
   it('does not throttle logins without a password (auto-login, magic link)', async () => {

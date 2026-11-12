@@ -586,20 +586,59 @@ class OdacRequest {
     }
   }
 
-  // - SESSION
-  session(key, value) {
-    // The User-Agent cannot change within a request; hash it once.
-    const pri = (this.#sessionUaHash ??= nodeCrypto
+  // The User-Agent cannot change within a request; hash it once.
+  #uaHash() {
+    return (this.#sessionUaHash ??= nodeCrypto
       .createHash('sha256')
       .update(this.req.headers['user-agent'] ?? '.')
       .digest('hex'))
+  }
+
+  #newSessionId(pri) {
+    let pub
+    do {
+      pub = nodeCrypto.randomBytes(16).toString('hex')
+    } while (global.Odac.Storage.get(`sess:${pub}:${pri}:_created`))
+    return pub
+  }
+
+  /**
+   * Moves the current session's data to a new session identifier.
+   * Why: an identifier the visitor held before signing in, possibly planted by an attacker
+   * (session fixation), must not turn into an authenticated session. Auth.login() calls it;
+   * the data carries over and the old identifier stops resolving.
+   */
+  regenerateSession() {
+    const pri = this.#uaHash()
+    const oldPub = this.cookie('odac_session')
+    const pub = this.#newSessionId(pri)
+    const prefix = `sess:${pub}:${pri}:`
+
+    if (oldPub) {
+      const oldPrefix = `sess:${oldPub}:${pri}:`
+      for (const [key, value] of global.Odac.Storage.entries(oldPrefix)) {
+        global.Odac.Storage.put(prefix + key.slice(oldPrefix.length), value)
+        global.Odac.Storage.remove(key)
+      }
+      const cached = this.#sessions
+      this.#sessions = {}
+      for (const key of Object.keys(cached)) {
+        if (key.startsWith(oldPrefix)) this.#sessions[prefix + key.slice(oldPrefix.length)] = cached[key]
+      }
+    }
+
+    global.Odac.Storage.put(`${prefix}_created`, Date.now())
+    this.cookie('odac_session', pub)
+  }
+
+  // - SESSION
+  session(key, value) {
+    const pri = this.#uaHash()
     let pub = this.cookie('odac_session')
     if (!pub || !global.Odac.Storage.get(`sess:${pub}:${pri}:_created`)) {
       // Every cookieless request gets its own session. Reusing a recent session by IP and
       // User-Agent merged unrelated visitors behind the same NAT into one session.
-      do {
-        pub = nodeCrypto.randomBytes(16).toString('hex')
-      } while (global.Odac.Storage.get(`sess:${pub}:${pri}:_created`))
+      pub = this.#newSessionId(pri)
       global.Odac.Storage.put(`sess:${pub}:${pri}:_created`, Date.now())
       this.cookie('odac_session', `${pub}`)
     }

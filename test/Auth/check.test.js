@@ -97,7 +97,8 @@ describe('Auth.check()', () => {
       },
       Var: jest.fn(() => ({
         hash: jest.fn(() => 'hashed_value'),
-        hashCheck: jest.fn(() => true)
+        hashCheck: jest.fn(() => true),
+        hashCheckAsync: jest.fn(async () => true)
       }))
     }
   })
@@ -647,7 +648,7 @@ describe('Auth.check()', () => {
   })
 
   it('accepts a legacy scrypt-hashed token for backward compatibility', async () => {
-    // #verifyToken routes $scrypt$ tokens through Odac.Var().hashCheck() (mocked true).
+    // #verifyToken routes $scrypt$ tokens through Odac.Var().hashCheckAsync() (mocked true).
     const dbMock = createDbMock([freshRecord({token_y: '$scrypt$deadbeef$cafe'})])
     global.Odac.DB.user_tokens = dbMock
     global.Odac.DB.users = dbMock
@@ -766,7 +767,7 @@ describe('Auth.check()', () => {
 
     it('runs a scrypt verification even when the account does not exist', async () => {
       global.Odac.DB.users = usersTable([])
-      const hashCheck = jest.spyOn(Var.prototype, 'hashCheck')
+      const hashCheck = jest.spyOn(Var.prototype, 'hashCheckAsync')
 
       await expect(authInstance.check({email: 'ghost@example.com', password: 'guess'})).resolves.toBe(false)
 

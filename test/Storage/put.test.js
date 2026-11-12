@@ -41,6 +41,16 @@ describe('OdacStorage writes', () => {
     expect(removeSync).not.toHaveBeenCalled()
   })
 
+  it('lists committed and pending entries by prefix', async () => {
+    Storage.putSync('sess:p:1', 'committed')
+    Storage.putSync('sess:p:2', 'removed later')
+    Storage.putSync('sess:q:1', 'other prefix')
+    Storage.put('sess:p:3', 'pending')
+    Storage.remove('sess:p:2')
+
+    expect(Object.fromEntries(Storage.entries('sess:p:'))).toEqual({'sess:p:1': 'committed', 'sess:p:3': 'pending'})
+  })
+
   it('reads its own writes before they are committed', () => {
     Storage.put('sess:a', {x: 1})
     expect(Storage.get('sess:a')).toEqual({x: 1})

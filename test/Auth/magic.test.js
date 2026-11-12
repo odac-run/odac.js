@@ -104,6 +104,64 @@ describe('Auth.magic()', () => {
     }
   )
 
+  it('reports a failed delivery instead of "Magic link sent!" and drops the stored link', async () => {
+    global.Odac.Config.url = 'https://www.example.com'
+    const deleted = []
+    const mail = {from: () => mail, send: () => Promise.resolve(false), subject: () => mail, to: () => mail}
+    global.Odac.Mail = () => mail
+    global.Odac.DB = new Proxy(
+      {fn: {now: () => new Date()}},
+      {
+        get: (target, prop) => {
+          if (prop in target) return target[prop]
+          const query = table()
+          query.where = (...args) => {
+            const scoped = table()
+            scoped.delete = () => {
+              deleted.push(args)
+              return Promise.resolve(1)
+            }
+            return scoped
+          }
+          return query
+        }
+      }
+    )
+
+    const result = await new Auth(makeRequest()).magic('victim@example.com')
+
+    expect(result).toEqual({success: false, error: 'Failed to send email'})
+    expect(deleted).toContainEqual(['token_hash', inserted[0].token_hash])
+  })
+
+  it('refuses to send when the rate limit cannot be checked', async () => {
+    global.Odac.Config.url = 'https://www.example.com'
+    const failing = table()
+    failing.where = () => {
+      const query = table()
+      query.where = () => query
+      query.then = (resolve, reject) => Promise.reject(new Error('db down')).then(resolve, reject)
+      return query
+    }
+    global.Odac.DB = new Proxy({fn: {now: () => new Date()}}, {get: (target, prop) => (prop in target ? target[prop] : failing)})
+
+    const result = await new Auth(makeRequest()).magic('victim@example.com')
+
+    expect(result.success).toBe(false)
+    expect(sent).toHaveLength(0)
+    expect(inserted).toHaveLength(0)
+  })
+
+  it('stores a SHA-256 token hash and an explicit created_at', async () => {
+    global.Odac.Config.url = 'https://www.example.com'
+    const {link} = await linkFor(makeRequest())
+    const token = new URL(link).searchParams.get('token')
+    const crypto = require('crypto')
+
+    expect(inserted[0].token_hash).toBe('$sha256$' + crypto.createHash('sha256').update(token).digest('hex'))
+    expect(inserted[0].created_at).toBeInstanceOf(Date)
+  })
+
   it('rejects a configured url that is not http(s)', async () => {
     global.Odac.Config.url = 'javascript:alert(1)'
     const {result} = await linkFor(makeRequest())
