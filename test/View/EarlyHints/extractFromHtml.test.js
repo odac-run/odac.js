@@ -140,4 +140,47 @@ describe('EarlyHints.extractFromHtml()', () => {
     expect(resources).toHaveLength(1)
     expect(resources[0]).toEqual({href: '/css/main.css', as: 'style'})
   })
+
+  it('reads defer and async as attributes, not as text anywhere in the tag', () => {
+    const html = `
+      <html>
+        <head>
+          <script src="/js/deferred-loader.js"></script>
+          <script src="/js/async-utils.js" data-async-x="1"></script>
+          <link rel="stylesheet" href="/css/defer-fallback.css">
+          <script src="/js/later.js" defer></script>
+          <script src="/js/lazy.js" async=""></script>
+        </head>
+      </html>
+    `
+    expect(earlyHints.extractFromHtml(html)).toEqual([
+      {href: '/css/defer-fallback.css', as: 'style'},
+      {href: '/js/deferred-loader.js', as: 'script'},
+      {href: '/js/async-utils.js', as: 'script'}
+    ])
+  })
+
+  it('recognises query strings, .mjs, unquoted attributes and rel lists', () => {
+    const html = `
+      <html>
+        <head>
+          <link rel=stylesheet href=/css/app.css?v=3>
+          <link rel="preload stylesheet" href="/css/b.css#x">
+          <script src='/js/app.mjs?v=1'></script>
+          <link rel="preload" as="font" href="/fonts/a.woff2?v=2">
+        </head>
+      </html>
+    `
+    expect(earlyHints.extractFromHtml(html)).toEqual([
+      {href: '/css/app.css?v=3', as: 'style'},
+      {href: '/css/b.css#x', as: 'style'},
+      {href: '/js/app.mjs?v=1', as: 'script'},
+      {href: '/fonts/a.woff2?v=2', as: 'font', crossorigin: 'anonymous'}
+    ])
+  })
+
+  it('does not hint module scripts as classic scripts', () => {
+    const html = '<html><head><script type="module" src="/js/main.js"></script></head></html>'
+    expect(earlyHints.extractFromHtml(html)).toEqual([])
+  })
 })
