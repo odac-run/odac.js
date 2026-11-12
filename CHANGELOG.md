@@ -1,3 +1,109 @@
+### minor
+
+- Merge pull request #56 from odac-run/dev
+
+### ⚙️ Engine Tuning
+
+- generate request ids with crypto.randomUUID()
+
+### ⚡️ Performance Upgrades
+
+- commit session writes asynchronously instead of per call
+- load language files once per worker instead of on every request
+- read request headers with one lookup instead of scanning all of them
+- run the session GC in batches that yield to the event loop
+- serialize object responses once and send binary bodies untouched
+
+### ✨ What's New
+
+- add cluster-wide rate limiting for HTTP routes
+- add login hooks in hook/auth.js
+- cap the write-buffer insert queue with direct-write backpressure
+- **init:** allow the sqlite3 install script in new projects
+- **lang:** add __() and __x() as globals in browser code
+- **lang:** add lang:sync, lang:check and lang:prune commands
+- **lang:** add translation contexts for text with several meanings
+- **lang:** keep all language files in sync when keys are collected
+- **lang:** keep keys used at runtime when pruning
+- **lang:** serve only supported languages and fall back to the default one
+- **lang:** translate text in browser code with Odac.__() and Odac.__x()
+- send failed magic links back to a page that explains why
+
+### 📚 Documentation
+
+- align AGENTS.md token rotation grace period with the code (30 seconds)
+- **lang:** fix language file examples and best practices
+- note how timer callback errors are handled in the streaming skill
+- point translation docs at storage/language and keep it tracked
+
+### 🛠️ Fixes & Improvements
+
+- add WebSocket heartbeat, backpressure, origin and protocol checks
+- align cron ticks to minute boundaries and support full cron syntax
+- allow only known where() operators in ClickHouse queries and render Dates in UTC
+- answer 500 on view render errors, write compiled views atomically and cache prod lookups
+- apply Ipc.set() ttl on the redis driver
+- capture the loading route file before Route.set() awaits
+- check lock ownership by default and harden the memory Ipc primary
+- close file streams when downloads are aborted or fail
+- compare link origins, support hash links and fetch tokens asynchronously
+- compile mail templates with the shared view compiler and safe locals
+- create sessions lazily with sliding expiry and store CSRF tokens per key
+- **database:** tell a driver that fails to load apart from a missing one
+- detect early-hint resources from parsed tag attributes
+- encode cookie values, accept only string auth tokens and relax Secure for local HTTP
+- end long-lived connections so worker shutdown can finish
+- enforce the default encryption key guard and switch to AES-GCM
+- escape shared data so it cannot break out of its script tag
+- fill skeleton placeholders without replacement patterns or rescans
+- flush buffered writes before tearing down IPC on shutdown
+- forward route options through auth.post/get and middleware chains
+- frame multi-line SSE payloads and stop at a full socket buffer
+- guard production data against destructive auto-migrations
+- harden magic links, token rotation, logout and login sessions
+- harden worker supervision, pool sizing and startup checks
+- invalidate the read cache for transaction writes after commit
+- keep grouped count() results as rows
+- keep hot reload running after load errors and sweep every stale route
+- keep long downloads from being cut by the request timeout
+- keep odac.json from reaching Object.prototype and warn on unset ${VAR}
+- keep passwords out of auth queries and return auto-increment user ids
+- keep the Knex chain intact on cache-invalidating writes
+- keep WebSocket close races and handler errors from crashing the worker
+- key learned early hints by view and bound the cache
+- let abort() finish every response and await it on controller errors
+- load .env for CLI migrations with the server's parser
+- log unhandled rejections and drain on uncaught exceptions
+- make the write buffer survive rejected rows, failed flushes and slow locks
+- make Var.replace() replace every match and transliterate slugs
+- never attach a cookieless request to another visitor's session
+- only accept proxy connection headers from trusted peers
+- parse .env values with shell rules for comments, quotes and export
+- parse multipart bodies lazily, bound fields by maxBodySize and store uploads in storage
+- parse query strings and bodies without truncating values or splitting UTF-8
+- pass TLS, charset, timezone and connection URLs to database drivers
+- percent-decode HTTP and WebSocket route parameters
+- release body waiters on empty and rejected request bodies
+- remove superseded image variants and re-check source mtimes in production
+- remove the template's seeded admin and require hashed passwords
+- resolve magic-link redirects with the URL parser to block tab/newline bypasses
+- run the Tailwind CLI without a shell in odac build and dev
+- send default security headers and declare UTF-8 on HTML pages
+- send queued cookies and headers with SSE responses
+- serve static files with safe types, validators and byte ranges
+- ship the template .gitignore so new projects ignore .env and storage
+- stop building magic links from a client-supplied Host header
+- stop host-less WebSocket upgrades from crashing the worker
+- throttle failed password logins and make brute() limits stick
+- validate falsy and non-string values and tighten format and MIME checks
+- version read-cache invalidation instead of tracking key indexes
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - serve HEAD requests on GET routes without bypassing CSRF
