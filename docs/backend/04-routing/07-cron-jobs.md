@@ -120,7 +120,7 @@ Odac.Route.cron('periodic')
 
 ## Raw Cron Expression
 You can use standard UNIX cron expressions (Minute Hour Day Month WeekDay) using the `.raw()` method.
-Supported formats for each field: `*`, `*/n` (interval), `n` (exact match).
+Supported formats for each field: `*`, `n` (exact match), lists (`1,15`), ranges (`1-5`) and steps (`*/15`, `0-30/10`). Week days are `0`–`7` (both `0` and `7` are Sunday). As in POSIX cron, when both day-of-month and day-of-week are restricted, a job runs when either matches.
 
 ```javascript
 // Run every 15 minutes
@@ -128,6 +128,9 @@ Odac.Route.cron('quarter-task').raw('*\/15 * * * *')
 
 // Run at 14:30 on Mondays
 Odac.Route.cron('weekly-meeting').raw('30 14 * * 1')
+
+// Every half hour during office hours on weekdays
+Odac.Route.cron('sync').raw('0,30 9-17 * * 1-5')
 ```
 ```
 
@@ -156,8 +159,10 @@ Odac.Route.cron('monthly-cleanup')
 
 ## Important Notes
 
-- The cron system checks every minute
-- Jobs run at the first suitable time after their last update
+- The cron system checks at every minute boundary, in the server's local time (`everyDay`/`everyHour` count local days and hours too). If a check runs late (blocked event loop, machine sleep), the missed minutes are evaluated afterwards, up to 5 of them
+- Jobs run at the first suitable minute after they are registered
+- Jobs run on the primary process; keep heavy work out of them (it delays the memory Ipc for every worker) or hand it to a queue
+- With the `redis` Ipc driver, a job runs on only one instance per minute; with the `memory` driver every instance runs its own jobs
 - If the same job is defined multiple times, the last definition takes precedence
 - Controller files are re-required on each execution
 - Inline functions are stored in memory and executed directly
