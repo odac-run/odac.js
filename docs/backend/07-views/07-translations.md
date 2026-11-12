@@ -109,10 +109,17 @@ Use nested `<odac>` tags to insert dynamic values:
 2. Odac looks up this key in the language file
 3. `%s1` is replaced with the actual value
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Hello %s1": "Hello %s1",
+  "Hello %s1": "Hello %s1"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Hello %s1": "Merhaba %s1"
 }
 ```
@@ -127,10 +134,17 @@ Use nested `<odac>` tags to insert dynamic values:
 
 This creates the key `%s1 %s2` and replaces both placeholders.
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "%s1 %s2": "%s1 %s2",
+  "%s1 %s2": "%s1 %s2"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "%s1 %s2": "%s1 %s2"
 }
 ```
@@ -141,10 +155,17 @@ This creates the key `%s1 %s2` and replaces both placeholders.
 <odac translate>Hello <odac>John</odac>, how are you?</odac>
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Hello %s1, how are you?": "Hello %s1, how are you?",
+  "Hello %s1, how are you?": "Hello %s1, how are you?"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Hello %s1, how are you?": "Merhaba %s1, nasılsın?"
 }
 ```
@@ -163,10 +184,17 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 <!-- Output: Click <a href="/help">here</a> for help -->
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help",
+  "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Click <a href=\"/help\">here</a> for help": "Yardım için <a href=\"/help\">buraya</a> tıklayın"
 }
 ```
@@ -179,10 +207,17 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </odac>
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!",
+  "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Welcome <strong>%s1</strong>!": "Hoş geldin <strong>%s1</strong>!"
 }
 ```
@@ -213,12 +248,19 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
   "Welcome back, %s1!": "Welcome back, %s1!",
+  "You have %s1 new notifications": "You have %s1 new notifications"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Welcome back, %s1!": "Tekrar hoş geldin, %s1!",
-  "You have %s1 new notifications": "You have %s1 new notifications",
   "You have %s1 new notifications": "%s1 yeni bildiriminiz var"
 }
 ```
@@ -273,16 +315,23 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
   "Price: $%s1": "Price: $%s1",
-  "Price: $%s1": "Fiyat: $%s1",
   "%s1 units in stock": "%s1 units in stock",
-  "%s1 units in stock": "Stokta %s1 adet",
   "Out of stock": "Out of stock",
+  "Add to Cart": "Add to Cart"
+}
+```
+
+```json
+// storage/language/tr.json
+{
+  "Price: $%s1": "Fiyat: $%s1",
+  "%s1 units in stock": "Stokta %s1 adet",
   "Out of stock": "Stokta yok",
-  "Add to Cart": "Add to Cart",
   "Add to Cart": "Sepete Ekle"
 }
 ```
@@ -315,10 +364,17 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Language file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.",
+  "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>."
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "\"Kayıt Ol\" butonuna tıklayarak <a href=\"/terms\">Hizmet Şartlarımızı</a> ve <a href=\"/privacy\">Gizlilik Politikamızı</a> kabul etmiş olursunuz."
 }
 ```
@@ -433,12 +489,12 @@ Prefer literal keys where you can (e.g. a map from status to `Odac.__('Shipped')
 
 ### Best Practices
 
-1. **Use descriptive keys**: Make translation keys meaningful and context-aware
+1. **Use descriptive keys**: Make translation keys meaningful; use `context` when the same text means different things
 2. **Keep keys consistent**: Use the same key for the same text across your app
-3. **Organize language files**: Group related translations together
+3. **Group with prefixes**: Files are sorted by key, so a shared prefix (`nav.`, `form.`) keeps related entries together
 4. **Escape HTML carefully**: Only use `raw` with trusted content
-5. **Test all languages**: Ensure translations work correctly in all supported languages
-6. **Handle missing translations**: Provide fallback values
+5. **Check in CI**: Run `npx odac lang:check --strict` to catch missing and unused keys before release
+6. **Use literal keys**: Computed keys cannot be detected by `lang:check` and `lang:prune`; list them in `lang.keep`
 
 **Good language file structure:**
 ```json
