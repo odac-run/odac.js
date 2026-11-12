@@ -63,6 +63,36 @@ Supported configuration options:
 }
 ```
 
+### SQLite
+
+```json
+{
+  "database": {
+    "type": "sqlite",
+    "filename": "./storage/app.sqlite3"
+  }
+}
+```
+
+Requires the `sqlite3` driver: `npm install sqlite3`. Each type needs its own driver package (`mysql2`, `pg`, `sqlite3`, `@clickhouse/client`); ODAC does not install them.
+
+`sqlite3` is a native addon whose binary is fetched by an install script. npm 12 and later skip dependency install scripts unless the project's `package.json` allows them. Projects created with `odac init` already allow it:
+
+```json
+"allowScripts": {
+  "sqlite3": true
+}
+```
+
+Without that entry the package lands in `node_modules` without its binary, and ODAC fails at startup with `Database driver "sqlite3" is installed but failed to load`. In an existing project, allow the script once and rebuild:
+
+```bash
+npm install-scripts approve sqlite3
+npm rebuild sqlite3
+```
+
+`approve` writes a version-pinned entry such as `"sqlite3@6.0.1": true`, which has to be approved again after every `sqlite3` upgrade. A name-only entry (`"sqlite3": true`, as in `odac init` projects, or `npm install-scripts approve sqlite3 --no-allow-scripts-pin`) allows any version.
+
 ### ClickHouse (Analytics)
 
 ClickHouse is an OLAP (analytics) database. It is best used as a **secondary, append-only connection** for events, logs, and metrics — alongside a MySQL/PostgreSQL primary for transactional data. See [ClickHouse Support](./07-clickhouse.md) for the full scope, schema fields, and limitations.

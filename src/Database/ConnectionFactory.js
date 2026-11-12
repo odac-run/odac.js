@@ -81,6 +81,32 @@ const DRIVER_PACKAGES = {
   sqlite3: 'sqlite3'
 }
 
+/** @type {Set<string>} Drivers that ship a native addon built or fetched by an install script */
+const NATIVE_DRIVERS = new Set(['sqlite3'])
+
+/**
+ * Loads a database driver package, telling a missing driver apart from one that fails to load.
+ * Why: npm 12+ blocks dependency install scripts unless `allowScripts` covers them, so sqlite3
+ * installs without its native binding. Reporting that as "not installed" sent users to
+ * `npm install`, which leaves the binding missing.
+ * @param {string} pkg Driver package name.
+ * @throws {Error} When the package is absent, or present but its module throws on load.
+ */
+function loadDriver(pkg) {
+  try {
+    require(pkg)
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND' && err.message.startsWith(`Cannot find module '${pkg}'`)) {
+      throw new Error(`Database driver "${pkg}" is not installed. Run: npm install ${pkg}`, {cause: err})
+    }
+    const hint = NATIVE_DRIVERS.has(pkg)
+      ? ` Its native addon is missing or was built for another Node version. Run: npm rebuild ${pkg}` +
+        ` (npm 12+ skips install scripts unless allowed: npm install-scripts approve ${pkg})`
+      : ''
+    throw new Error(`Database driver "${pkg}" is installed but failed to load.${hint}\nCause: ${err.message}`, {cause: err})
+  }
+}
+
 // Connections the whole cluster may open to one database when the config sets
 // no connectionLimit. Sized to fit PostgreSQL's default max_connections (100)
 // with room for admin sessions and other clients.
@@ -135,13 +161,7 @@ function buildConnections(databaseConfig, {processCount = 1} = {}) {
     const connection = buildConnectionConfig(db, client)
 
     const pkg = DRIVER_PACKAGES[client]
-    if (pkg) {
-      try {
-        require(pkg)
-      } catch {
-        throw new Error(`Database driver "${pkg}" is not installed. Run: npm install ${pkg}`)
-      }
-    }
+    if (pkg) loadDriver(pkg)
 
     connections[key] = knex({
       client,
