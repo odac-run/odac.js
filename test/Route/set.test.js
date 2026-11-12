@@ -36,6 +36,25 @@ describe('Route.set()', () => {
     expect(route.routes.test_route.get['/test'].type).toBe('function')
   })
 
+  // The controller load awaits fs.stat; another route file may start loading meanwhile.
+  it('registers a controller route under the file that was loading when set() ran', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-set-'))
+    fs.mkdirSync(path.join(dir, 'controller', 'get'), {recursive: true})
+    fs.writeFileSync(path.join(dir, 'controller', 'get', 'home.js'), 'module.exports = () => "home"')
+    global.__dir = dir
+    try {
+      global.Odac.Route.buff = 'first'
+      route.set('get', '/home', 'home')
+      global.Odac.Route.buff = 'second'
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.first.get['/home'].type).toBe('controller')
+      expect(route.routes.second).toBeUndefined()
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true})
+    }
+  })
+
   it('should handle array of methods', () => {
     global.Odac.Route.buff = 'test_route'
     const handler = jest.fn()

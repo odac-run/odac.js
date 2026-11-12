@@ -807,6 +807,9 @@ class Route {
     }
 
     const capturedMiddlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+    // Captured now: the load task below awaits fs.stat, and buff names whichever route file
+    // is loading by the time it resumes.
+    const routeName = Odac.Route.buff
 
     if (Array.isArray(type)) {
       type = type.map(t => t.toLowerCase())
@@ -823,7 +826,7 @@ class Route {
     type = type.toLowerCase()
 
     const isFunction = typeof file === 'function'
-    let path = `${__dir}/route/${Odac.Route.buff}.js`
+    let path = `${__dir}/route/${routeName}.js`
 
     let action = null
 
@@ -842,17 +845,17 @@ class Route {
       }
     }
 
-    if (!this.routes[Odac.Route.buff]) this.routes[Odac.Route.buff] = {}
-    if (!this.routes[Odac.Route.buff][type]) this.routes[Odac.Route.buff][type] = {}
+    if (!this.routes[routeName]) this.routes[routeName] = {}
+    if (!this.routes[routeName][type]) this.routes[routeName][type] = {}
 
     const task = async () => {
-      if (this.routes[Odac.Route.buff][type][url]) {
-        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
+      if (this.routes[routeName][type][url]) {
+        this.routes[routeName][type][url].loaded = routes2[routeName]
         if (!isFunction) {
           try {
             const stat = await fsPromises.stat(path)
-            if (this.routes[Odac.Route.buff][type][url].mtime < stat.mtimeMs) {
-              delete this.routes[Odac.Route.buff][type][url]
+            if (this.routes[routeName][type][url].mtime < stat.mtimeMs) {
+              delete this.routes[routeName][type][url]
               delete require.cache[require.resolve(path)]
             } else {
               return
@@ -862,42 +865,42 @@ class Route {
           }
         } else {
           // Update inline function reference on hot reload
-          this.routes[Odac.Route.buff][type][url].cache = file
-          this.routes[Odac.Route.buff][type][url].file = file
-          this.routes[Odac.Route.buff][type][url].mtime = Date.now()
-          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
-          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-          this.routes[Odac.Route.buff][type][url].action = action
+          this.routes[routeName][type][url].cache = file
+          this.routes[routeName][type][url].file = file
+          this.routes[routeName][type][url].mtime = Date.now()
+          this.routes[routeName][type][url].middlewares = capturedMiddlewares
+          this.routes[routeName][type][url].token = options.token ?? true
+          this.routes[routeName][type][url].action = action
           return
         }
       }
 
       if (isFunction) {
-        if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
-        this.routes[Odac.Route.buff][type][url].cache = file
-        this.routes[Odac.Route.buff][type][url].type = 'function'
-        this.routes[Odac.Route.buff][type][url].file = file
-        this.routes[Odac.Route.buff][type][url].mtime = Date.now()
-        this.routes[Odac.Route.buff][type][url].path = path
-        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-        this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-        this.routes[Odac.Route.buff][type][url].action = action
+        if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
+        this.routes[routeName][type][url].cache = file
+        this.routes[routeName][type][url].type = 'function'
+        this.routes[routeName][type][url].file = file
+        this.routes[routeName][type][url].mtime = Date.now()
+        this.routes[routeName][type][url].path = path
+        this.routes[routeName][type][url].loaded = routes2[routeName]
+        this.routes[routeName][type][url].token = options.token ?? true
+        this.routes[routeName][type][url].action = action
 
-        this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+        this.routes[routeName][type][url].middlewares = capturedMiddlewares
       } else {
         try {
           const stat = await fsPromises.stat(path)
-          if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
-          this.routes[Odac.Route.buff][type][url].cache = require(path)
-          this.routes[Odac.Route.buff][type][url].type = 'controller'
-          this.routes[Odac.Route.buff][type][url].file = file
-          this.routes[Odac.Route.buff][type][url].mtime = stat.mtimeMs
-          this.routes[Odac.Route.buff][type][url].path = path
-          this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-          this.routes[Odac.Route.buff][type][url].action = action
+          if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
+          this.routes[routeName][type][url].cache = require(path)
+          this.routes[routeName][type][url].type = 'controller'
+          this.routes[routeName][type][url].file = file
+          this.routes[routeName][type][url].mtime = stat.mtimeMs
+          this.routes[routeName][type][url].path = path
+          this.routes[routeName][type][url].loaded = routes2[routeName]
+          this.routes[routeName][type][url].token = options.token ?? true
+          this.routes[routeName][type][url].action = action
 
-          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+          this.routes[routeName][type][url].middlewares = capturedMiddlewares
         } catch (err) {
           if (file && typeof file === 'string') {
             if (err.code === 'ENOENT') {
