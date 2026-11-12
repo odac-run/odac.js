@@ -23,6 +23,14 @@ Routes are defined in the `route/` directory. ODAC uses a two-phase routing stra
 3.  **Middlewares**: Chain logic using `.use('name')`. Global middlewares reside in `middleware/`.
 4.  **Error Handling**: Use `Odac.Route.error(code, controller)` for custom 404/500 pages.
 5.  **Auth Guard**: `Odac.Route.auth` automatically checks authentication before running the route.
+6.  **Rate Limiting**: Built in. Never hand-roll a limiter with an in-memory `Map`; it is per worker and wrong under the cluster.
+    -   Per route: `{rateLimit: {max, window = 60000, key}}` in the options of `get`/`post`/any verb (and `auth.get`/`auth.post`). Each route + verb has its own budget.
+    -   Shared budget across routes: `Odac.Route.use(Odac.Route.rateLimit({max, window, name}))`. Give it a stable `name`.
+    -   `key(Odac)` defaults to the client IP. Return `null`/`undefined`/`''` to exempt a request.
+    -   Counted through `Odac.Ipc`, so the limit covers all workers (and all hosts with Redis). Fixed, clock-aligned windows; up to `2 × max` in a burst across a boundary.
+    -   Runs after the auth gate, before session/CSRF/controller. Over the limit: `429` + `Retry-After` (customize with `Odac.Route.error(429, ...)`). Every counted response carries `RateLimit-Limit/Remaining/Reset`.
+    -   Fails open (logged) if IPC is unreachable or `key` throws. An invalid declaration throws at route-file load.
+    -   WebSocket `rateLimit` on `ws()` is different: it limits messages per connection.
 
 ## Reference Patterns
 
@@ -53,7 +61,24 @@ Odac.Route.error(500, 'errors/ServerError');
 Odac.Route.post('/api/webhook', 'Api@webhook', { token: false });
 ```
 
-### 5. Realtime & WebSocket Routes
+### 5. Rate-Limited Routes
+```javascript
+// 5 requests per minute per IP
+Odac.Route.post('/contact', 'Contact@send', { rateLimit: { max: 5, window: 60000 } });
+
+// Per account instead of per IP
+Odac.Route.auth.post('/api/export', 'Api@export', {
+  rateLimit: { max: 10, window: 3600000, key: Odac => Odac.Auth.user()?.id }
+});
+
+// One budget for a group of routes
+Odac.Route
+  .use(Odac.Route.rateLimit({ max: 100, name: 'api-writes' }))
+  .post('/api/upload', 'Api@upload')
+  .post('/api/import', 'Api@import');
+```
+
+### 6. Realtime & WebSocket Routes
 ```javascript
 // Public WebSocket
 Odac.Route.ws('/chat', 'Chat');
@@ -67,3 +92,4 @@ Odac.Route.authWs('/game/{roomId}', 'Game@join');
 -   **Static First**: Prefer exact URL matches over parametric ones where possible (faster).
 -   **Controller Isolation**: Place error controllers in `controller/errors/` for better organization.
 -   **Parametric Safety**: Do not use too many nested dynamic segments in a single route.
+-   **Throttle Expensive Endpoints**: Put `rateLimit` on public form targets, search, exports and uploads. Login is already brute-force protected by the framework.

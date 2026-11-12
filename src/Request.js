@@ -163,7 +163,7 @@ class OdacRequest {
     if (this.res.writableEnded) return
     if (this.res.headersSent) return this.res.destroy()
     this.status(code)
-    let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout'}[code] ?? null
+    let result = {401: 'Unauthorized', 404: 'Not Found', 408: 'Request Timeout', 429: 'Too Many Requests'}[code] ?? null
     const errorRoute = this.#odac.Route?.routes?.[this.route]?.error?.[code]
     if (errorRoute && typeof errorRoute.cache === 'function') {
       try {

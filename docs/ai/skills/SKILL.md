@@ -26,7 +26,7 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [backend/migrations.md](backend/migrations.md) - Schema-first, auto-run, cluster-safe DB migrations
 - [backend/odac-var.md](backend/odac-var.md) - Odac.Var (Fluent String Manipulation, Hashing, Encryption)
 - [backend/request_response.md](backend/request_response.md) - Handling Odac.Request and Odac.Response
-- [backend/routing.md](backend/routing.md) - Route definitions, Middlewares, and Error Pages
+- [backend/routing.md](backend/routing.md) - Route definitions, Middlewares, Rate Limiting, and Error Pages
 - [backend/storage.md](backend/storage.md) - Persistent key-value storage (LMDB)
 - [backend/streaming.md](backend/streaming.md) - Server-Sent Events (SSE) and Streaming API
 - [backend/structure.md](backend/structure.md) - Project organization and Service Classes

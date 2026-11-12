@@ -8,6 +8,7 @@ const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
 const Image = require('./View/Image.js')
 const MiddlewareChain = require('./Route/Middleware.js')
+const RateLimit = require('./Route/RateLimit.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
 let routes2 = {}
@@ -258,6 +259,9 @@ class Route {
           // Odac.Auth.user() synchronously (memoized: no-op for # routes
           // whose auth gate above already succeeded).
           if (Odac.Auth) await Odac.Auth.check()
+          // After the auth gate (so a custom key can use Odac.Auth.user()), before the session
+          // and CSRF work a flood would otherwise still pay for.
+          if (controller.rateLimit && !(await RateLimit.consume(Odac, controller.rateLimit))) return
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
           Odac.Request.setSession()
           const page = controller.cache?.file || controller.file
@@ -861,6 +865,18 @@ class Route {
     return new MiddlewareChain(this, [...middlewares.flat()])
   }
 
+  /**
+   * Creates a rate-limit middleware whose single budget is shared by every route it wraps.
+   *
+   * Why: the per-route `{rateLimit}` option limits one route; this covers a group
+   * (`Odac.Route.use(Odac.Route.rateLimit({max: 100})).post(...).post(...)`).
+   * @param {{max: number, window?: number, key?: function, name?: string}} options
+   * @returns {function} Middleware.
+   */
+  rateLimit(options) {
+    return RateLimit.middleware(options)
+  }
+
   set(type, url, file, options = {}) {
     // Odac.Route.buff names the route file currently being loaded; set() reads
     // it to bucket the route. It only exists during synchronous loading. A route
@@ -893,6 +909,8 @@ class Route {
     if (url.length && url.endsWith('/')) url = url.slice(0, -1)
 
     type = type.toLowerCase()
+    // Validated now so a bad declaration fails the route file load, not the first request.
+    const rateLimit = options.rateLimit ? RateLimit.normalize(options.rateLimit, `${routeName}:${type}:${url}`) : undefined
 
     const isFunction = typeof file === 'function'
     let path = `${__dir}/route/${routeName}.js`
@@ -917,6 +935,15 @@ class Route {
     if (!this.routes[routeName]) this.routes[routeName] = {}
     if (!this.routes[routeName][type]) this.routes[routeName][type] = {}
 
+    // Declaration-derived fields, refreshed on every (re)registration.
+    const applyOptions = entry => {
+      entry.file = file
+      entry.middlewares = capturedMiddlewares
+      entry.token = options.token ?? true
+      entry.action = action
+      entry.rateLimit = rateLimit
+    }
+
     const task = async () => {
       if (this.routes[routeName][type][url]) {
         this.routes[routeName][type][url].loaded = routes2[routeName]
@@ -928,11 +955,7 @@ class Route {
               delete require.cache[require.resolve(path)]
             } else {
               // The controller is unchanged, but the route file may have changed what wraps it.
-              const existing = this.routes[routeName][type][url]
-              existing.file = file
-              existing.middlewares = capturedMiddlewares
-              existing.token = options.token ?? true
-              existing.action = action
+              applyOptions(this.routes[routeName][type][url])
               return
             }
           } catch {
@@ -941,11 +964,8 @@ class Route {
         } else {
           // Update inline function reference on hot reload
           this.routes[routeName][type][url].cache = file
-          this.routes[routeName][type][url].file = file
           this.routes[routeName][type][url].mtime = Date.now()
-          this.routes[routeName][type][url].middlewares = capturedMiddlewares
-          this.routes[routeName][type][url].token = options.token ?? true
-          this.routes[routeName][type][url].action = action
+          applyOptions(this.routes[routeName][type][url])
           return
         }
       }
@@ -954,28 +974,20 @@ class Route {
         if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
         this.routes[routeName][type][url].cache = file
         this.routes[routeName][type][url].type = 'function'
-        this.routes[routeName][type][url].file = file
         this.routes[routeName][type][url].mtime = Date.now()
         this.routes[routeName][type][url].path = path
         this.routes[routeName][type][url].loaded = routes2[routeName]
-        this.routes[routeName][type][url].token = options.token ?? true
-        this.routes[routeName][type][url].action = action
-
-        this.routes[routeName][type][url].middlewares = capturedMiddlewares
+        applyOptions(this.routes[routeName][type][url])
       } else {
         try {
           const stat = await fsPromises.stat(path)
           if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
           this.routes[routeName][type][url].cache = require(path)
           this.routes[routeName][type][url].type = 'controller'
-          this.routes[routeName][type][url].file = file
           this.routes[routeName][type][url].mtime = stat.mtimeMs
           this.routes[routeName][type][url].path = path
           this.routes[routeName][type][url].loaded = routes2[routeName]
-          this.routes[routeName][type][url].token = options.token ?? true
-          this.routes[routeName][type][url].action = action
-
-          this.routes[routeName][type][url].middlewares = capturedMiddlewares
+          applyOptions(this.routes[routeName][type][url])
         } catch (err) {
           if (file && typeof file === 'string') {
             if (err.code === 'ENOENT') {

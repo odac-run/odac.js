@@ -29,7 +29,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `backend/ipc.md`: Inter-Process Communication and state sharing.
 - `backend/mail.md`: Transactional email sending.
 - `backend/request_response.md`: Handling Odac.Request and Odac.Response.
-- `backend/routing.md`: Route definitions, Middlewares, and Error Pages.
+- `backend/routing.md`: Route definitions, Middlewares, Rate Limiting, and Error Pages.
 - `backend/storage.md`: Persistent key-value storage (LMDB).
 - `backend/streaming.md`: Server-Sent Events (SSE) and Streaming API.
 - `backend/structure.md`: Project organization and Service Classes.

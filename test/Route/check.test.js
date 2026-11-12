@@ -418,6 +418,131 @@ describe('Route.check()', () => {
     })
   })
 
+  // HTTP routes had no throttle. The limit runs after the auth gate and before
+  // the session, CSRF check and controller, so a rejected flood costs no more.
+  describe('rateLimit option', () => {
+    const RateLimit = require('../../src/Route/RateLimit')
+    let store
+
+    const createMockOdac = (method = 'post', {authed = true} = {}) => {
+      const Odac = {
+        Auth: {check: jest.fn().mockResolvedValue(authed), user: () => null},
+        Config: {},
+        Ipc: {incrBy: jest.fn(async key => store.set(key, (store.get(key) ?? 0) + 1).get(key))},
+        Request: {
+          abort: jest.fn(async () => {
+            Odac.Request.res.finished = true
+          }),
+          cookie: jest.fn(() => null),
+          data: {url: {}},
+          header: jest.fn(() => ''),
+          host: 'example.com',
+          ip: '203.0.113.7',
+          isAjaxLoad: false,
+          method,
+          page: null,
+          request: jest.fn().mockResolvedValue(null),
+          res: {finished: false, writableEnded: false},
+          route: 'test_route',
+          setSession: jest.fn(),
+          ssl: false,
+          url: '/send'
+        },
+        request: jest.fn().mockResolvedValue(null),
+        token: jest.fn().mockReturnValue(true)
+      }
+      return Odac
+    }
+
+    const register = (type, handler, rateLimit, extra = {}) => {
+      route.routes = {
+        test_route: {
+          [type]: {'/send': {cache: handler, file: handler, token: false, mtime: Date.now(), rateLimit, ...extra}}
+        }
+      }
+    }
+
+    beforeEach(() => {
+      store = new Map()
+    })
+
+    it('runs the controller until the limit and answers 429 after it', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      register('post', handler, RateLimit.normalize({max: 2}, 'test_route:post:/send'))
+
+      const results = []
+      for (let i = 0; i < 3; i++) {
+        const Odac = createMockOdac()
+        await route.check(Odac)
+        results.push(Odac)
+      }
+
+      expect(handler).toHaveBeenCalledTimes(2)
+      expect(results[2].Request.abort).toHaveBeenCalledWith(429)
+      expect(results[2].Request.header).toHaveBeenCalledWith('Retry-After', expect.any(String))
+    })
+
+    it('rejects before the session and CSRF check run', async () => {
+      const handler = jest.fn()
+      register('post', handler, RateLimit.normalize({max: 1}, 's'), {token: true})
+      await route.check(createMockOdac())
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(Odac.Request.abort).not.toHaveBeenCalledWith(401)
+      expect(Odac.Request.setSession).not.toHaveBeenCalled()
+    })
+
+    it('does not count requests that fail the auth gate', async () => {
+      const handler = jest.fn()
+      register('#post', handler, RateLimit.normalize({max: 1}, 's'))
+
+      const Odac = createMockOdac('post', {authed: false})
+      await route.check(Odac)
+
+      expect(Odac.Ipc.incrBy).not.toHaveBeenCalled()
+    })
+
+    it('applies to HEAD requests on a limited GET route', async () => {
+      const handler = jest.fn()
+      register('get', handler, RateLimit.normalize({max: 1}, 's'))
+      await route.check(createMockOdac('get'))
+
+      const Odac = createMockOdac('head')
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves routes without the option uncounted', async () => {
+      const handler = jest.fn()
+      register('post', handler, undefined)
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Ipc.incrBy).not.toHaveBeenCalled()
+      expect(handler).toHaveBeenCalled()
+    })
+
+    it('stops the chain from a Route.rateLimit() middleware', async () => {
+      const handler = jest.fn()
+      const limiter = route.rateLimit({max: 1})
+      register('post', handler, undefined, {middlewares: [limiter]})
+      await route.check(createMockOdac())
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(Odac.Request.abort).not.toHaveBeenCalledWith(403)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+  })
+
   describe('CSRF token enforcement (1.3)', () => {
     const createMockOdac = (method, url) => ({
       Auth: {check: jest.fn().mockResolvedValue(true)},

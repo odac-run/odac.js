@@ -108,45 +108,23 @@ module.exports = async (Odac) => {
 ```
 
 #### Rate Limiting
+
+ODAC has a built-in rate limiter, so you don't need to write one. `Odac.Route.rateLimit()` returns a middleware that gives every route it wraps one shared budget. The count is shared by all workers, and by all hosts when IPC uses Redis:
+
 ```javascript
 // middleware/rateLimit.js
-const requests = new Map()
-let lastCleanup = Date.now()
-
-module.exports = async (Odac) => {
-  const ip = Odac.Request.ip
-  const now = Date.now()
-  const limit = 100
-  const window = 60000
-  
-  if (now - lastCleanup > window) {
-    for (const [key, times] of requests.entries()) {
-      const recent = times.filter(time => now - time < window)
-      if (recent.length === 0) {
-        requests.delete(key)
-      } else {
-        requests.set(key, recent)
-      }
-    }
-    lastCleanup = now
-  }
-  
-  if (!requests.has(ip)) {
-    requests.set(ip, [])
-  }
-  
-  const userRequests = requests.get(ip).filter(time => now - time < window)
-  
-  if (userRequests.length >= limit) {
-    return Odac.abort(429, 'Too many requests')
-  }
-  
-  userRequests.push(now)
-  requests.set(ip, userRequests)
-}
+module.exports = Odac.Route.rateLimit({max: 100, window: 60000, name: 'api'})
 ```
 
-> **Note:** This example uses in-memory storage for simplicity. For production environments with multiple server instances, consider using Redis or Memcached for distributed rate limiting.
+```javascript
+// route/www.js — /api/upload and /api/import share 100 requests per minute per IP
+Odac.Route
+  .use('rateLimit')
+  .post('/api/upload', 'api.upload')
+  .post('/api/import', 'api.import')
+```
+
+Use the `rateLimit` route option when one route needs its own limit. See [API and Data Routes](03-api-and-data-routes.md#rate-limiting) for every option and the response headers.
 
 #### Premium Check with View
 ```javascript

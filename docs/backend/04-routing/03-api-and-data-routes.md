@@ -40,3 +40,30 @@ Defines a route that responds to `POST` requests, typically used for form submis
 Odac.Route.post('/login', 'auth.login');
 ```
 
+#### Rate Limiting
+
+Add `rateLimit` to the options of `get`, `post` or any other verb (including `Odac.Route.auth.post`/`auth.get`) to limit how often a client may call the route:
+
+```javascript
+// At most 5 messages per minute from each IP
+Odac.Route.post('/contact', 'contact.send', {rateLimit: {max: 5, window: 60000}});
+
+// Limit signed-in users by account instead of IP
+Odac.Route.auth.post('/api/export', 'api.export', {
+  rateLimit: {max: 10, window: 3600000, key: Odac => Odac.Auth.user()?.id}
+});
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `max` | required | Requests allowed per window |
+| `window` | `60000` | Window length in milliseconds |
+| `key` | client IP | `(Odac) => string`. Return `null`, `undefined` or `''` to exempt a request |
+
+- Each route and verb has its own budget. To give several routes one budget, use the [rate-limit middleware](08-middleware.md#rate-limiting).
+- Counters live in `Odac.Ipc`, so the limit covers all workers, and all hosts when IPC uses Redis.
+- Windows are fixed and aligned to the clock. A client can send up to `2 × max` requests in a short burst that crosses a window boundary.
+- The limit is checked after authentication and before the session, CSRF check and controller. Requests that fail the auth gate of an `auth` route are not counted.
+- Every counted response gets `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` (seconds until the window resets) headers. Over the limit, ODAC answers `429 Too Many Requests` with `Retry-After` and doesn't run the controller. You can render your own page with `Odac.Route.error(429, ...)`.
+- If the counter store can't be reached, or your `key` function throws, the request goes through and the error is logged. An IPC outage won't block your whole app.
+- An invalid declaration (`max: 0`, a `window` that isn't a number) throws when the route file loads.
