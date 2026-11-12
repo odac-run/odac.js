@@ -489,17 +489,38 @@ class Route {
       if (this.middlewares[name] && this.middlewares[name].mtime >= mtime - 1000) continue
 
       delete require.cache[require.resolve(path)]
-      this.middlewares[name] = {
-        path,
-        mtime,
-        handler: require(path)
+      try {
+        this.middlewares[name] = {path, mtime, handler: require(path)}
+      } catch (err) {
+        // A file saved mid-edit must not stop hot reload; the previous handler stays until
+        // the file loads again (mtime is recorded so the same broken save is not retried).
+        if (this.middlewares[name]) this.middlewares[name].mtime = mtime
+        console.error(`\x1b[31m[Odac]\x1b[0m Failed to load middleware: \x1b[33m${path}\x1b[0m`)
+        console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
       }
     }
   }
 
+  /**
+   * Loads middleware, class and route files, reloading those that changed.
+   * Why: runs at startup and every 5 s in debug mode; any failure is logged and `loading` is
+   * always released, so one broken save can never stop hot reload for the rest of the run.
+   */
   async #init() {
     if (this.loading) return
     this.loading = true
+    try {
+      await this.#loadAll()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      delete Odac.Route.buff
+      this._pendingRouteLoads = []
+      this.loading = false
+    }
+  }
+
+  async #loadAll() {
     await this.#loadMiddlewares()
     const classDir = `${__dir}/class/`
     try {
@@ -537,76 +558,103 @@ class Route {
       // Class dir might not exist
     }
 
+    let dir
     try {
-      const dir = await fsPromises.readdir(`${__dir}/route/`)
-      for (const file of dir) {
-        if (!file.endsWith('.js')) continue
-        const filePath = `${__dir}/route/${file}`
-        const stat = await fsPromises.stat(filePath)
-        let mtime = stat.mtimeMs
-        Odac.Route.buff = file.replace('.js', '')
-
-        if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
-          delete require.cache[require.resolve(filePath)]
-          Cron.clear(Odac.Route.buff)
-          routes2[Odac.Route.buff] = mtime
-          const routeModule = require(filePath)
-          if (typeof routeModule === 'function') {
-            // routeModule calls .set(), which pushes promises to _pendingRouteLoads
-            routeModule(Odac)
-          }
-        }
-
-        // Wait for all route sets to complete for this file
-        await Promise.all(this._pendingRouteLoads)
-        this._pendingRouteLoads = []
-
-        // Clean up deleted routes logic
-        for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
-          if (!this.routes[Odac.Route.buff]) continue
-          if (!this.routes[Odac.Route.buff][type]) continue
-          for (const route in this.routes[Odac.Route.buff][type]) {
-            const routeObj = this.routes[Odac.Route.buff][type][route]
-            if (!routeObj) continue
-
-            if (routes2[Odac.Route.buff] > routeObj.loaded) {
-              if (routeObj.path) {
-                try {
-                  delete require.cache[require.resolve(routeObj.path)]
-                } catch {
-                  // Silently fail
-                }
-              }
-              delete this.routes[Odac.Route.buff][type][route]
-            } else if (routeObj) {
-              if (typeof routeObj.type === 'function') continue
-              // Check if controller file modified
-              try {
-                const cStat = await fsPromises.stat(routeObj.path)
-                if (routeObj.mtime < cStat.mtimeMs) {
-                  delete require.cache[require.resolve(routeObj.path)]
-                  routeObj.cache = require(routeObj.path)
-                  routeObj.mtime = cStat.mtimeMs
-                }
-              } catch {
-                // Controller file might have been deleted?
-              }
-            }
-          }
-        }
-        delete Odac.Route.buff
-      }
+      dir = await fsPromises.readdir(`${__dir}/route/`)
     } catch (e) {
-      if (e.code === 'ENOENT') {
-        console.error(`[ODAC] Route directory not found: \x1b[33m${__dir}/route/\x1b[0m`)
-      } else {
-        console.error(e)
-      }
+      if (e.code === 'ENOENT') console.error(`[ODAC] Route directory not found: \x1b[33m${__dir}/route/\x1b[0m`)
+      else console.error(e)
+      dir = []
+    }
+
+    for (const file of dir) {
+      if (!file.endsWith('.js')) continue
+      await this.#loadRouteFile(file)
+      await this.#reloadChangedControllers(file.replace('.js', ''))
     }
 
     Cron.init()
     this.#buildParamIndex()
-    this.loading = false
+  }
+
+  /**
+   * Loads one route file when it is new or changed, then drops the routes it no longer
+   * defines. If the file throws, its previous routes are kept so a half-saved edit does not
+   * take the site down; the next save reloads it.
+   */
+  async #loadRouteFile(file) {
+    const filePath = `${__dir}/route/${file}`
+    const name = file.replace('.js', '')
+    const stat = await fsPromises.stat(filePath)
+    const mtime = stat.mtimeMs
+    if (routes2[name] && routes2[name] >= mtime - 1000) return
+
+    Odac.Route.buff = name
+    delete require.cache[require.resolve(filePath)]
+    Cron.clear(name)
+    routes2[name] = mtime
+    const previousWs = this.#wsServer.unrouteSite(name)
+
+    try {
+      const routeModule = require(filePath)
+      // routeModule calls .set(), which pushes promises to _pendingRouteLoads
+      if (typeof routeModule === 'function') routeModule(Odac)
+    } catch (err) {
+      this.#wsServer.restoreRoutes(previousWs)
+      console.error(`\x1b[31m[Odac]\x1b[0m Failed to load route file: \x1b[33m${filePath}\x1b[0m`)
+      console.error(err)
+      await Promise.allSettled(this._pendingRouteLoads)
+      this._pendingRouteLoads = []
+      delete Odac.Route.buff
+      return
+    }
+
+    // Wait for all route sets to complete for this file
+    await Promise.all(this._pendingRouteLoads)
+    this._pendingRouteLoads = []
+    delete Odac.Route.buff
+
+    // Drop routes of every type (page, post, put, error, ...) the file no longer defines.
+    const site = this.routes[name]
+    if (!site) return
+    for (const type of Object.keys(site)) {
+      for (const url of Object.keys(site[type])) {
+        const routeObj = site[type][url]
+        if (!routeObj) continue
+
+        if (routes2[name] > routeObj.loaded) {
+          if (routeObj.type === 'controller' && routeObj.path) {
+            try {
+              delete require.cache[require.resolve(routeObj.path)]
+            } catch {
+              // Controller file already gone
+            }
+          }
+          delete site[type][url]
+        }
+      }
+    }
+  }
+
+  // Controllers edited without touching the route file are reloaded in place.
+  async #reloadChangedControllers(name) {
+    const site = this.routes[name]
+    if (!site) return
+    for (const type of Object.keys(site)) {
+      for (const routeObj of Object.values(site[type])) {
+        if (routeObj?.type !== 'controller' || !routeObj.path) continue
+        try {
+          const cStat = await fsPromises.stat(routeObj.path)
+          if (routeObj.mtime >= cStat.mtimeMs) continue
+          delete require.cache[require.resolve(routeObj.path)]
+          routeObj.cache = require(routeObj.path)
+          routeObj.mtime = cStat.mtimeMs
+        } catch (err) {
+          if (err.code !== 'ENOENT')
+            console.error(`\x1b[31m[Odac]\x1b[0m Failed to reload controller: \x1b[33m${routeObj.path}\x1b[0m`, err.message)
+        }
+      }
+    }
   }
 
   async init() {
@@ -858,6 +906,12 @@ class Route {
               delete this.routes[routeName][type][url]
               delete require.cache[require.resolve(path)]
             } else {
+              // The controller is unchanged, but the route file may have changed what wraps it.
+              const existing = this.routes[routeName][type][url]
+              existing.file = file
+              existing.middlewares = capturedMiddlewares
+              existing.token = options.token ?? true
+              existing.action = action
               return
             }
           } catch {

@@ -613,6 +613,31 @@ class WebSocketServer {
     this.#routes.set(site === null ? path : `${site}\u0000${path}`, {handler, options, path, site})
   }
 
+  /**
+   * Removes every route registered for `site` and returns them.
+   * Why: hot reload re-runs a route file; sockets it no longer defines must stop matching.
+   * @param {string} site
+   * @returns {Array<[string, object]>} The removed entries, for restoreRoutes().
+   */
+  unrouteSite(site) {
+    const removed = []
+    for (const [key, config] of this.#routes) {
+      if (config.site !== site) continue
+      removed.push([key, config])
+      this.#routes.delete(key)
+    }
+    return removed
+  }
+
+  /**
+   * Puts back routes removed by unrouteSite() that were not registered again, used when a
+   * route file fails to load so its previous sockets keep working.
+   * @param {Array<[string, object]>} entries
+   */
+  restoreRoutes(entries) {
+    for (const [key, config] of entries) if (!this.#routes.has(key)) this.#routes.set(key, config)
+  }
+
   getRoute(path, site = null) {
     return (site !== null && this.#match(path, site)) || this.#match(path, null)
   }
