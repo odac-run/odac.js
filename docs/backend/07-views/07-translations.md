@@ -86,9 +86,9 @@ All language files therefore list the same entries in the same order (sorted by 
 
 ### Editing Language Files on a Running App
 
-Language files can be edited while the app runs, by hand, through an upload or from an admin panel, with no restart and no cache to clear. Each worker loads a file once and checks every 2 seconds whether it changed on disk, so an edit is served within about 2 seconds:
+Language files can be edited while the app runs, by hand, through an upload or from an admin panel, with no restart and no cache to clear. Each worker loads every language file at startup and checks every 2 seconds, in the background, whether one changed on disk, so an edit is served within about 2 seconds. A language file added while the app runs is picked up the same way.
 
-- **Server-rendered text** uses the new translations from the next request.
+- **Server-rendered text** uses the new translations once the changed file has been read; the request that notices the change is still served the previous version, so lookups never wait for the disk.
 - **Browser code** (`view/js/`) gets them on the next AJAX navigation, as on a full page load.
 - **Pages cached with `Odac.cache()`** are refreshed by the ODAC Proxy's background revalidation when their content changes, before their TTL runs out.
 
@@ -541,6 +541,8 @@ module.exports = async function(Odac) {
   Odac.View.skeleton('main').set('content', 'dashboard')
 }
 ```
+
+`Odac.__()`, `Odac.__x()`, `Odac.Lang.get()` and `Odac.Lang.getx()` are synchronous and return a string: every language file is loaded into memory when the app starts, so a lookup never waits for the disk. Existing code that writes `await Odac.__(...)` keeps working.
 
 ### Managing Language Files
 

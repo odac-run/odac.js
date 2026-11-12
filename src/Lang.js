@@ -31,15 +31,19 @@ function warn(message, fields) {
 
 /**
  * Per-process language data shared by every request.
- * Why: Lang is instantiated for every request and WebSocket upgrade. Reading and parsing the
- * language file there blocked the event loop on each one, static files and 404s included.
- * The file is now loaded once per worker, asynchronously, and re-read only when its mtime
- * changes.
+ * Why: Lang is instantiated for every request and WebSocket upgrade, and `Odac.__()` is
+ * synchronous. Every language file is therefore read once per worker at startup, without
+ * blocking the event loop, and kept in memory; lookups never touch the disk. Files are
+ * re-checked in the background and re-read only when their mtime changes
+ * (stale-while-revalidate: the lookup that notices a stale file is still served the
+ * version in memory).
  */
 class LanguageStore {
   // lang -> {data, mtimeMs, checkedAt, loading, failedMtimeMs}
   #entries = new Map()
-  // Language codes that have a file in storage/language/, refreshed in the background.
+  // Language codes that have a file in storage/language/, refreshed in the background. A
+  // code is added only once its file is loaded, so language selection never picks a
+  // language whose translations are not in memory yet.
   #available = null
   #availableCheckedAt = 0
   #scanning = null
@@ -50,6 +54,9 @@ class LanguageStore {
   #saveTimer = null
   #saving = Promise.resolve()
   #warned = new Set()
+  #notReadyWarned = false
+  // Incremented by reset(), so background work started before it is discarded.
+  #generation = 0
   // Entries looked up while collecting: id -> day last recorded (see Lang/Runtime.js).
   #seen = new Map()
   // Entries whose day changed and is not written yet: id -> {key, context, seen}.
@@ -115,18 +122,44 @@ class LanguageStore {
     entry.mtimeMs = mtimeMs
   }
 
+  // Starts a background re-check of a language file unless one is running or it was
+  // checked within RECHECK_INTERVAL_MS. Returns the running check, if any.
+  #revalidate(lang, entry) {
+    if (!entry.loading && Date.now() - entry.checkedAt >= RECHECK_INTERVAL_MS) {
+      entry.loading = this.#refresh(lang, entry)
+        .catch(e => warn('Language file could not be checked', {lang, error: e?.message ?? String(e)}))
+        .finally(() => (entry.loading = null))
+    }
+    return entry.loading
+  }
+
   async #scan() {
-    this.#available = new Set(await Files.listLanguages(this.#dir()))
+    // A scan still running when reset() is called must not touch the new state.
+    const generation = this.#generation
+    const codes = await Files.listLanguages(this.#dir())
+    if (generation !== this.#generation) return
+    // Languages served without a file of their own (the default, lang.supported) are loaded
+    // too, so a file created for them later is noticed by the regular re-check.
+    const wanted = new Set(codes)
+    wanted.add(Catalog.defaultLanguage(this.#config))
+    for (const code of Catalog.configuredLanguages(this.#config) ?? []) wanted.add(code)
+    // Only languages never loaded are awaited; the others are re-checked on their own schedule.
+    await Promise.all([...wanted].filter(code => this.#entry(code).checkedAt === 0).map(code => this.#revalidate(code, this.#entry(code))))
+    if (generation !== this.#generation) return
+    this.#available = new Set(codes)
     this.#availableCheckedAt = Date.now()
   }
 
   /**
-   * Lists the language files on disk once, so the first request already sees them.
-   * Why: language selection is synchronous (it runs in the Lang constructor); it reads a
-   * snapshot that this primes at startup and that refreshes in the background afterwards.
+   * Lists the language files on disk and loads every one of them into memory.
+   * Why: translation and language selection are synchronous (`Odac.__()`, the Lang
+   * constructor), so the translations must be in memory before the first request. Awaited
+   * once at startup; afterwards it runs in the background to notice added files.
+   * @param {object} [config] The application config (default and supported languages).
    * @returns {Promise<void>}
    */
-  init() {
+  init(config) {
+    if (config) this.#config = config
     if (!this.#scanning) this.#scanning = this.#scan().finally(() => (this.#scanning = null))
     return this.#scanning
   }
@@ -155,16 +188,23 @@ class LanguageStore {
   }
 
   /**
+   * Returns the translations of a language from memory, never waiting for the disk.
+   * Why: lookups are synchronous. A stale file is re-checked in the background and its new
+   * version is served from the next lookup on. A language not loaded at startup (one added
+   * to the config at runtime) has no translations until its first load finishes.
    * @param {string} lang Validated two-letter code.
-   * @returns {Promise<object>} Null-prototype map of key -> translation.
+   * @returns {object} Null-prototype map of key -> translation.
    */
-  async load(lang) {
+  load(lang) {
     const entry = this.#entry(lang)
-    if (Date.now() - entry.checkedAt >= RECHECK_INTERVAL_MS && !entry.loading) {
-      entry.loading = this.#refresh(lang, entry).finally(() => (entry.loading = null))
-    }
-    if (entry.loading) await entry.loading
+    this.#revalidate(lang, entry)
     return entry.data
+  }
+
+  /** Resolves once background scans and file re-checks have finished. Used by tests. */
+  async settle() {
+    await this.#scanning
+    await Promise.all([...this.#entries.values()].map(entry => entry.loading))
   }
 
   /**
@@ -277,6 +317,18 @@ class LanguageStore {
     warn('Missing translation', context ? {lang, key, context} : {lang, key})
   }
 
+  /**
+   * Logs once that translations were requested before the language files were loaded.
+   * Why: keys are then served untranslated, which in a script that skipped Odac.init()
+   * otherwise looks like missing translations.
+   * @returns {void}
+   */
+  warnNotReady() {
+    if (this.#notReadyWarned) return
+    this.#notReadyWarned = true
+    warn('Translation requested before the language files were loaded; serving the key')
+  }
+
   /** Resolves once pending writes are on disk. Used by tests. */
   async flush() {
     clearTimeout(this.#saveTimer)
@@ -287,12 +339,14 @@ class LanguageStore {
 
   /** Drops cached data and pending timers. Used by tests. */
   reset() {
+    this.#generation++
     clientCache.clear()
     clearTimeout(this.#saveTimer)
     this.#saveTimer = null
     this.#entries.clear()
     this.#pending.clear()
     this.#warned.clear()
+    this.#notReadyWarned = false
     this.#seen.clear()
     this.#seenPending.clear()
     this.#available = null
@@ -356,7 +410,11 @@ class Lang {
    * active language falls back to the default language, then to the key itself. Untranslated
    * keys are added to the language file when `lang.collect` is on (default: debug mode); every
    * key looked up is then also recorded for `odac lang:prune` (see Lang/Runtime.js).
-   * @returns {Promise<string>}
+   * Synchronous: translations are served from memory (see LanguageStore), so the result can
+   * be used directly in expressions; `await` on it is harmless.
+   * @param {string} key
+   * @param {...*} args Placeholder values.
+   * @returns {string}
    */
   get(key, ...args) {
     return this.#translate(key, '', args)
@@ -372,26 +430,27 @@ class Lang {
    * @param {string} key
    * @param {string} context
    * @param {...*} args Placeholder values.
-   * @returns {Promise<string>}
+   * @returns {string}
    */
   getx(key, context, ...args) {
     return this.#translate(key, Catalog.normalizeContext(context), args)
   }
 
-  async #translate(key, context, args) {
+  #translate(key, context, args) {
     if (typeof key !== 'string') return key
-    const lang = await this.#resolved()
-    const data = await store.load(lang)
+    const lang = this.#resolved()
+    const data = store.load(lang)
     const collect = this.#collect()
     if (collect) store.seen(key, context)
 
     let str = Catalog.lookup(data, key, context)
     if (str === undefined) {
       const config = this.#odac.Config
-      if (collect && !Catalog.has(data, key, context)) store.collect(key, context, config)
+      // Before the files are loaded every key looks missing; nothing is collected then.
+      if (collect && store.ready && !Catalog.has(data, key, context)) store.collect(key, context, config)
       const fallback = Catalog.defaultLanguage(config)
       if (fallback !== lang) {
-        str = Catalog.lookup(await store.load(fallback), key, context)
+        str = Catalog.lookup(store.load(fallback), key, context)
         if (config?.debug) {
           store.warnMissing(lang, key, context)
           // Opt-in debug aid: makes text served from the fallback visible on the page.
@@ -417,12 +476,13 @@ class Lang {
     const config = this.#odac.Config
     const entries = await frontendKeys.entries(__dir, !!config?.debug)
     if (entries.length === 0) return null
-    const lang = await this.#resolved()
-    const data = await store.load(lang)
+    const lang = this.#resolved()
+    const data = store.load(lang)
     const def = Catalog.defaultLanguage(config)
-    const fallback = def === lang ? null : await store.load(def)
+    const fallback = def === lang ? null : store.load(def)
 
-    if (this.#collect()) for (const {key, context} of entries) if (!Catalog.has(data, key, context)) store.collect(key, context, config)
+    if (this.#collect() && store.ready)
+      for (const {key, context} of entries) if (!Catalog.has(data, key, context)) store.collect(key, context, config)
 
     const cached = clientCache.get(lang)
     if (cached && cached.entries === entries && cached.data === data && cached.fallback === fallback) return cached.payload
@@ -448,11 +508,13 @@ class Lang {
     return configured === undefined ? !!this.#odac.Config?.debug : !!configured
   }
 
-  // A language chosen before the directory was listed is re-checked once it is.
-  async #resolved() {
+  // A language chosen before the language files were loaded is chosen again once they are.
+  // Until then (Lang used before Odac.init(), e.g. in a script) keys are served
+  // untranslated; the constructor has already started loading them.
+  #resolved() {
     if (this.#provisional) {
-      if (!store.ready) await store.init()
-      this.#choose()
+      if (store.ready) this.#choose()
+      else if (this.#odac.Config?.debug) store.warnNotReady()
     }
     return this.#lang
   }
@@ -488,10 +550,10 @@ class Lang {
    * that configures nothing keeps whatever its skeleton says, since `en` would only be a guess.
    * `varies` is true when another Accept-Language could select another language. A language
    * chosen through set(code) (from the URL or the session) does not depend on that header.
-   * @returns {Promise<{lang: string, dir: 'ltr'|'rtl', varies: boolean}|null>}
+   * @returns {{lang: string, dir: 'ltr'|'rtl', varies: boolean}|null}
    */
-  async served() {
-    const lang = await this.#resolved()
+  served() {
+    const lang = this.#resolved()
     const config = this.#odac.Config
     const multilingual = store.languages(config).size > 1
     if (!multilingual && config?.lang?.default == null && !Catalog.configuredLanguages(config)) return null
@@ -522,7 +584,7 @@ class Lang {
   #choose() {
     const config = this.#odac.Config
     const supported = store.languages(config)
-    this.#provisional = !store.ready && !Catalog.configuredLanguages(config)
+    this.#provisional = !store.ready
     this.#lang = this.#candidates.find(code => Catalog.isLanguageCode(code) && supported.has(code)) ?? Catalog.defaultLanguage(config)
   }
 }

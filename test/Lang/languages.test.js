@@ -103,12 +103,44 @@ describe('Lang language selection', () => {
     expect(lang.current()).toBe('en')
   })
 
-  it('resolves the language on first lookup when the directory was not listed yet', async () => {
+  it('chooses the language again once the files are loaded when created before', async () => {
     writeLang('tr', {hello: 'Merhaba'})
     header = 'tr'
+    jest.spyOn(console, 'error').mockImplementation(() => {})
     const lang = new Lang(mockOdac)
-    expect(await lang.get('hello')).toBe('Merhaba')
+    expect(lang.current()).toBe('en')
+    await Lang.store.init()
+    expect(lang.get('hello')).toBe('Merhaba')
     expect(lang.current()).toBe('tr')
+  })
+
+  it('loads a language file added at runtime before selecting its language', async () => {
+    await Lang.store.init()
+    header = 'tr'
+    writeLang('tr', {hello: 'Merhaba'})
+    const now = Date.now()
+    jest.spyOn(Date, 'now').mockReturnValue(now + 3000)
+    new Lang(mockOdac) // triggers the background rescan
+    await Lang.store.settle()
+    expect(new Lang(mockOdac).get('hello')).toBe('Merhaba')
+  })
+
+  it('discards a scan that was still running when the store was reset', async () => {
+    new Lang(mockOdac) // starts a background scan of an empty directory
+    Lang.store.reset()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    writeLang('en', {hello: 'Hello'})
+    await Lang.store.init()
+    expect(new Lang(mockOdac).get('hello')).toBe('Hello')
+  })
+
+  it('loads the languages of lang.supported that have a file at startup', async () => {
+    writeLang('tr', {hello: 'Merhaba'})
+    mockOdac.Config.lang.supported = ['tr']
+    await Lang.store.init(mockOdac.Config)
+    const lang = new Lang(mockOdac)
+    lang.set('tr')
+    expect(lang.get('hello')).toBe('Merhaba')
   })
 
   it('notices a language file added at runtime', async () => {

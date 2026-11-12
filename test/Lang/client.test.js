@@ -68,6 +68,8 @@ describe('Lang.client()', () => {
     const future = new Date(Date.now() + 5000)
     fs.utimesSync(path.join(root, 'storage/language/tr.json'), future, future)
     jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000)
+    await tr().client() // notices the edit; re-read in the background
+    await Lang.store.settle()
     const next = await tr().client()
     expect(next).not.toBe(first)
     expect(next.t.Hello).toBe('Selam')
