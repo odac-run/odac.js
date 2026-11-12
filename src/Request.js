@@ -17,6 +17,28 @@ function safeDecode(value) {
   }
 }
 
+/**
+ * Parses an application/x-www-form-urlencoded string (query string or form body).
+ *
+ * Why: a naive split('=') truncated values containing '=' (base64, nested URLs) and left
+ * '+' undecoded, so native browser form submissions kept '+' instead of spaces. Pairs
+ * without '=' are skipped and the last duplicate wins, matching the historical contract.
+ *
+ * @param {string} input Raw encoded string without the leading '?'.
+ * @param {object} target Object the decoded pairs are written into.
+ */
+function parseUrlEncoded(input, target) {
+  for (const pair of input.split('&')) {
+    const eq = pair.indexOf('=')
+    if (eq === -1) continue
+    const key = safeDecode(pair.slice(0, eq).replace(/\+/g, ' '))
+    target[key] = safeDecode(pair.slice(eq + 1).replace(/\+/g, ' '))
+  }
+}
+
+// application/json and structured-syntax suffixes such as application/vnd.api+json.
+const JSON_CONTENT_TYPE = /^application\/(?:[\w.-]+\+)?json\s*(?:;|$)/i
+
 class OdacRequest {
   #odac
   #complete = false
@@ -161,29 +183,25 @@ class OdacRequest {
   }
 
   #data() {
-    let split = this.url.split('?')
-    if (split[1]) {
-      let data = split[1].split('&')
-      for (let i = 0; i < data.length; i++) {
-        if (data[i].indexOf('=') === -1) continue
-        let key = safeDecode(data[i].split('=')[0])
-        let val = safeDecode(data[i].split('=')[1] || '')
-        this.data.get[key] = val
-      }
-    }
+    const queryStart = this.url.indexOf('?')
+    if (queryStart !== -1) parseUrlEncoded(this.url.slice(queryStart + 1), this.data.get)
 
     const contentType = this.req.headers['content-type'] || ''
     if (contentType.startsWith('multipart/form-data')) {
       return this.#multipart()
     }
 
-    // Non-multipart: urlencoded or JSON (buffered path)
-    let body = ''
+    // Non-multipart: urlencoded or JSON (buffered path). Chunks stay raw until 'end' so a
+    // multi-byte UTF-8 character split across two chunks is decoded intact, and the size
+    // limit counts bytes rather than UTF-16 code units.
+    const chunks = []
+    let received = 0
     this.req.on('data', chunk => {
-      body += chunk.toString()
+      chunks.push(chunk)
+      received += chunk.length
       const maxBodySize = global.Odac.Config.request.maxBodySize
-      if (body.length > maxBodySize) {
-        body = ''
+      if (received > maxBodySize) {
+        chunks.length = 0
         this.status(413)
         this.end()
         this.req.removeAllListeners('data')
@@ -193,28 +211,27 @@ class OdacRequest {
       }
 
       for (const event of this.#event.data) {
-        event.callback(event.active ? chunk : body)
+        event.callback(event.active ? chunk : Buffer.concat(chunks))
         event.active = true
       }
     })
 
     this.req.on('end', () => {
       if (this.#complete) return
-      if (!body) return this.#finish()
-      if (body.startsWith('{') && body.endsWith('}')) {
+      if (received === 0) return this.#finish()
+      const body = Buffer.concat(chunks, received).toString('utf8')
+      chunks.length = 0
+      // The body's own shape is not trusted to pick the parser: only a declared JSON media
+      // type is parsed as JSON, so a text/plain form cannot smuggle a JSON payload in.
+      if (JSON_CONTENT_TYPE.test(contentType)) {
         try {
-          this.data.post = JSON.parse(body)
+          const parsed = JSON.parse(body)
+          if (parsed !== null && typeof parsed === 'object') this.data.post = parsed
         } catch {
-          // invalid JSON, ignore
+          // Invalid JSON leaves post empty, the same as an absent body.
         }
       } else {
-        let data = body.split('&')
-        for (let i = 0; i < data.length; i++) {
-          if (data[i].indexOf('=') === -1) continue
-          let key = safeDecode(data[i].split('=')[0])
-          let val = safeDecode(data[i].split('=')[1] || '')
-          this.data.post[key] = val
-        }
+        parseUrlEncoded(body, this.data.post)
       }
       this.#finish()
     })

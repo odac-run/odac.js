@@ -104,5 +104,74 @@ describe('Request.#data()', () => {
       await expect(pending).resolves.toBeUndefined()
       expect(res.writeHead).toHaveBeenCalledWith(413, expect.anything())
     })
+
+    it('counts bytes, not characters, against maxBodySize', async () => {
+      // 'ş' is two bytes: 3 characters but 6 bytes must exceed a 5-byte limit.
+      global.Odac.Config.request.maxBodySize = 5
+      const {req, res, request} = build({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      const pending = request.request('a')
+      req.write('a=şşş')
+      await expect(pending).resolves.toBeUndefined()
+      expect(res.writeHead).toHaveBeenCalledWith(413, expect.anything())
+    })
+  })
+
+  describe('urlencoded values', () => {
+    it('keeps everything after the first "=" in a query value', () => {
+      const {request} = build({url: '/?a=abc==&next=/x?y=1'})
+      expect(request.data.get.a).toBe('abc==')
+      expect(request.data.get.next).toBe('/x?y=1')
+    })
+
+    it('decodes "+" as a space in query strings and form bodies', async () => {
+      const {req, request} = build({method: 'POST', url: '/?q=hello+world', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      expect(request.data.get.q).toBe('hello world')
+      req.end('name=John+Doe&plus=%2B')
+      await expect(request.request('name')).resolves.toBe('John Doe')
+      expect(request.data.post.plus).toBe('+')
+    })
+
+    it('keeps "=" inside form body values', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      req.end('token=YWJj==')
+      await expect(request.request('token')).resolves.toBe('YWJj==')
+    })
+
+    it('decodes a multi-byte character split across chunks', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'application/x-www-form-urlencoded'}})
+      const bytes = Buffer.from('city=İstanbul')
+      // Split inside the two-byte 'İ' (bytes 5 and 6).
+      req.write(bytes.subarray(0, 6))
+      req.end(bytes.subarray(6))
+      await expect(request.request('city')).resolves.toBe('İstanbul')
+    })
+  })
+
+  describe('json body', () => {
+    it.each(['application/json', 'application/json; charset=utf-8', 'application/vnd.api+json'])(
+      'parses the body as JSON for %s',
+      async contentType => {
+        const {req, request} = build({method: 'POST', headers: {'content-type': contentType}})
+        req.end('{"qty":2,"tags":["a"]}')
+        await expect(request.request('qty')).resolves.toBe(2)
+        expect(request.data.post.tags).toEqual(['a'])
+      }
+    )
+
+    it('does not parse a JSON-looking body without a JSON content type', async () => {
+      const {req, request} = build({method: 'POST', headers: {'content-type': 'text/plain'}})
+      req.end('{"role":"admin"}')
+      await expect(request.request('role')).resolves.toBeUndefined()
+    })
+
+    it('ignores invalid JSON and non-object JSON values', async () => {
+      const bad = build({method: 'POST', headers: {'content-type': 'application/json'}})
+      bad.req.end('{"a":')
+      await expect(bad.request.request()).resolves.toEqual({})
+
+      const scalar = build({method: 'POST', headers: {'content-type': 'application/json'}})
+      scalar.req.end('42')
+      await expect(scalar.request.request()).resolves.toEqual({})
+    })
   })
 })
