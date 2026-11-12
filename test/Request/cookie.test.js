@@ -60,4 +60,57 @@ describe('Request.cookie()', () => {
     const {request} = build({headers: {cookie: 'data={"x":1}'}})
     expect(request.cookie('data')).toEqual({x: 1})
   })
+
+  describe('writing', () => {
+    function sent(request) {
+      let headers = {}
+      request.res = {headersSent: false, writeHead: (status, h) => (headers = h), end: jest.fn(), on: jest.fn()}
+      request.print()
+      return [].concat(headers['Set-Cookie'] ?? [])
+    }
+
+    it('percent-encodes values so they cannot inject attributes', () => {
+      const {request} = build()
+      request.cookie('name', 'x; Domain=evil.example')
+      const [line] = sent(request)
+      expect(line.startsWith('name=x%3B%20Domain%3Devil.example;')).toBe(true)
+      expect(line).not.toMatch(/; Domain=/)
+    })
+
+    it('round-trips encoded values and objects', () => {
+      const {request} = build({headers: {cookie: 'name=a%3Bb%20c; obj=%7B%22x%22%3A1%7D'}})
+      expect(request.cookie('name')).toBe('a;b c')
+      expect(request.cookie('obj')).toEqual({x: 1})
+    })
+
+    it('splits the Cookie header with or without a space after ;', () => {
+      const {request} = build({headers: {cookie: 'a=1;b=2'}})
+      expect(request.cookie('b')).toBe('2')
+    })
+
+    it('writes flag attributes without a value and keeps max-age=0', () => {
+      const {request} = build()
+      request.cookie('a', '1', {'max-age': 0, expires: null})
+      const [line] = sent(request)
+      expect(line).toBe('a=1; max-age=0; path=/; secure; httpOnly; sameSite=Lax')
+    })
+
+    it('rejects invalid names and option values', () => {
+      const {request} = build()
+      expect(() => request.cookie('a=b', '1')).toThrow(TypeError)
+      expect(() => request.cookie('a', '1', {path: '/; Domain=evil'})).toThrow(TypeError)
+    })
+
+    it('drops Secure for plain HTTP only in debug mode', () => {
+      global.Odac.Config.debug = true
+      const {request: dev} = build()
+      dev.cookie('a', '1')
+      expect(sent(dev)[0]).not.toMatch(/secure/)
+
+      global.Odac.Config.debug = false
+      const {request: prod} = build()
+      prod.cookie('a', '1')
+      expect(sent(prod)[0]).toMatch(/; secure/)
+    })
+  })
 })

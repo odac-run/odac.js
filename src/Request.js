@@ -41,6 +41,9 @@ const DEFAULT_SESSION_LIFETIME = 7 * 24 * 60 * 60 * 1000
 // interval instead of one per request.
 const SESSION_TOUCH_INTERVAL = 60 * 60 * 1000
 
+// RFC 6265 cookie-name (an RFC 7230 token).
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
+
 // application/json and structured-syntax suffixes such as application/vnd.api+json.
 const JSON_CONTENT_TYPE = /^application\/(?:[\w.-]+\+)?json\s*(?:;|$)/i
 
@@ -163,14 +166,21 @@ class OdacRequest {
     this.end(result)
   }
 
-  // - SET COOKIE
+  /**
+   * Reads a request cookie (`value` omitted) or queues a Set-Cookie (`value` given).
+   * Why: values are percent-encoded on write and decoded on read, so a value holding `;`,
+   * `,` or spaces cannot inject cookie attributes. A `{...}` value is parsed as JSON so object
+   * cookies round-trip; the browser controls that type, so code that needs a string (tokens,
+   * ids) must check it. `Secure` is on by default except for plain-HTTP requests in debug
+   * mode, where browsers such as Safari would drop the cookie on http://localhost.
+   */
   cookie(key, value, options = {}) {
     if (value === undefined) {
       if (this.#cookies.data[key]) return this.#cookies.data[key]
-      const raw = this.req.headers.cookie?.split('; ').find(c => c.startsWith(key + '='))
+      const raw = this.req.headers.cookie?.split(/;\s*/).find(c => c.startsWith(key + '='))
       // Split on the first '=' only so base64 / padded values (which contain '=')
       // survive intact instead of being truncated by a naive split('=')[1].
-      value = raw ? raw.slice(raw.indexOf('=') + 1) : null
+      value = raw ? safeDecode(raw.slice(raw.indexOf('=') + 1)) : null
       if (value && value.startsWith('{') && value.endsWith('}')) {
         try {
           value = JSON.parse(value)
@@ -180,15 +190,22 @@ class OdacRequest {
       }
       return value
     }
+    if (!COOKIE_NAME.test(key)) throw new TypeError(`ODAC: invalid cookie name "${key}"`)
     this.#cookies.data[key] = value
     if (options.path === undefined) options.path = '/'
     if (options.expires === undefined) options.expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 365).toUTCString()
-    if (options.secure === undefined) options.secure = true
+    if (options.secure === undefined) options.secure = this.ssl || !global.Odac.Config.debug
     if (options.httpOnly === undefined) options.httpOnly = true
     if (options.sameSite === undefined) options.sameSite = 'Lax'
     if (typeof value === 'object') value = JSON.stringify(value)
-    let cookie = `${key}=${value}`
-    for (const option of Object.keys(options)) if (options[option]) cookie += `; ${option}=${options[option]}`
+    let cookie = `${key}=${encodeURIComponent(value)}`
+    for (const option of Object.keys(options)) {
+      const setting = options[option]
+      if (!setting && setting !== 0) continue
+      if (setting === true) cookie += `; ${option}`
+      else if (/[;\r\n]/.test(String(setting))) throw new TypeError(`ODAC: invalid cookie option ${option}`)
+      else cookie += `; ${option}=${setting}`
+    }
     this.#cookies.sent.push(cookie)
   }
 

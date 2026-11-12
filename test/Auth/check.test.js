@@ -237,6 +237,15 @@ describe('Auth.check()', () => {
     expect(xSet[2].maxAge).toBeUndefined()
   })
 
+  it('rejects token cookies that parsed as JSON objects before querying', async () => {
+    reqMock.cookie.mockImplementation(name => ({odac_x: {token_x: 1}, odac_y: 'old_y'})[name] ?? null)
+    const dbMock = createDbMock([])
+    global.Odac.DB.user_tokens = dbMock
+
+    await expect(authInstance.check()).resolves.toBe(false)
+    expect(dbMock.where).not.toHaveBeenCalled()
+  })
+
   it('should NOT rotate when tokenAge is within rotationAge threshold', async () => {
     const recentDate = Date.now() - 5 * 60 * 1000 // 5 mins ago -> within 15 min rotationAge
 

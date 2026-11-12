@@ -123,7 +123,9 @@ class Auth {
       let odac_y = this.#request.cookie('odac_y')
       let browser = this.#request.header('user-agent')
 
-      if (!odac_x || !odac_y || !browser) return false
+      // Cookie values are client-controlled and may parse as JSON objects; only strings are
+      // tokens, so an object never reaches the query as a binding.
+      if (typeof odac_x !== 'string' || typeof odac_y !== 'string' || !odac_x || !odac_y || !browser) return false
 
       const tokenTable = Odac.Config.auth.token || 'odac_auth'
       const primaryKey = Odac.Config.auth.key || 'id'
@@ -708,7 +710,7 @@ class Auth {
     // Only this device signs out. Deleting every token of the user with the same User-Agent
     // also signed out other devices running the same browser build.
     if (this.#token) await Odac.DB[tokenTable].where('id', this.#token.id).delete()
-    else if (odacX) await Odac.DB[tokenTable].where('token_x', odacX).delete()
+    else if (typeof odacX === 'string' && odacX) await Odac.DB[tokenTable].where('token_x', odacX).delete()
     // The token this one replaced is still valid for the rotation grace period; it has no
     // link to its successor, so rotated rows of this user and browser go with it.
     if (browser) {
