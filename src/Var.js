@@ -23,6 +23,44 @@ function isUrl(value) {
   }
 }
 
+// Letters that Unicode decomposition does not reduce to ASCII; the rest (é, ü, ş, ç, ğ, ö, İ)
+// lose their marks through NFKD.
+const TRANSLITERATION = {
+  ı: 'i',
+  ß: 'ss',
+  æ: 'ae',
+  Æ: 'AE',
+  ø: 'o',
+  Ø: 'O',
+  đ: 'd',
+  Đ: 'D',
+  ł: 'l',
+  Ł: 'L',
+  œ: 'oe',
+  Œ: 'OE',
+  þ: 'th',
+  Þ: 'TH'
+}
+
+// Strings get every occurrence replaced; arrays and plain objects are walked; anything else
+// is returned unchanged.
+function replaceDeep(value, pairs) {
+  if (typeof value === 'string') {
+    for (const [search, replacement] of pairs) {
+      if (search === '') continue
+      value = value.replaceAll(search, () => String(replacement))
+    }
+    return value
+  }
+  if (Array.isArray(value)) return value.map(item => replaceDeep(item, pairs))
+  if (value && typeof value === 'object') {
+    const result = {}
+    for (const key of Object.keys(value)) result[key] = replaceDeep(value[key], pairs)
+    return result
+  }
+  return value
+}
+
 const DEFAULT_ENCRYPT_KEY = 'odac'
 // Config.init() replaces the configured key with its SHA-256 digest, so the default key
 // must also be recognised in that form or the production guard below never fires.
@@ -321,16 +359,16 @@ class Var {
     return value
   }
 
+  /**
+   * Replaces every occurrence of each search string: replace('a', 'b') or replace({a: 'b'}).
+   * Why: templates repeat placeholders ({{name}} twice), so only replacing the first match
+   * left the rest in place, and the two-argument form was read as an object with keys
+   * '0' and '1'. Replacement values are inserted literally ($& and $1 are not patterns).
+   * Arrays and objects are processed value by value and keep their shape.
+   */
   replace(...args) {
-    args = this.#parse(args)
-    if (args.length == 1) args = args[0]
-    if (['array', 'object'].includes(typeof this.#value)) {
-      let new_value = {}
-      for (const key of Object.keys(this.#value)) new_value[key] = Odac.Var(this.#value[key]).replace(args)
-      return new_value
-    }
-    for (const arg of Object.keys(args)) this.#value = this.#value.replace(arg, args[arg])
-    return this.#value
+    const pairs = args.length >= 2 ? {[args[0]]: args[1]} : args[0] && typeof args[0] === 'object' ? args[0] : {}
+    return replaceDeep(this.#value, Object.entries(pairs))
   }
 
   save(path) {
@@ -342,13 +380,24 @@ class Var {
     return fs.writeFileSync(path, this.#value)
   }
 
+  /**
+   * Builds a URL slug: lower-case ASCII letters and digits joined by `separator`.
+   * Why: accented and Turkish letters are transliterated (Çağrı Şükür → cagri-sukur) instead
+   * of being dropped, runs of other characters become one separator, and none is left at
+   * either end ('Hello World!' → 'hello-world').
+   * @param {string} [separator='-']
+   * @returns {string}
+   */
   slug(separator = '-') {
-    let str = this.#value
-    str = str.replace(/[^a-zA-Z0-9\s]/g, separator)
-    str = str.replace(/[\s]/g, separator)
-    str = str.replace(/[-]+/g, separator)
-    str = str.toLowerCase()
-    return str
+    const ascii = String(this.#value ?? '')
+      .replace(/[^\p{ASCII}]/gu, c => TRANSLITERATION[c] ?? c)
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+    return ascii
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .join(separator)
   }
 
   format(format) {

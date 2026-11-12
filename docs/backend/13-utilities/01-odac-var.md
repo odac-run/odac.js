@@ -137,6 +137,10 @@ Odac.Var('Hello {{name}}, welcome to {{site}}').replace({
 })
 // Returns: 'Hello John, welcome to Odac'
 
+// Every occurrence is replaced; values are inserted literally ($& is not a pattern)
+Odac.Var('{{name}} and {{name}}').replace({'{{name}}': 'Jo'})
+// Returns: 'Jo and Jo'
+
 // Works with arrays/objects recursively
 const data = {
   title: 'Welcome {{name}}',
@@ -169,6 +173,10 @@ Odac.Var('Product Name 2024').slug()
 // Custom separator
 Odac.Var('Hello World').slug('_')
 // Returns: 'hello_world'
+
+// Accented and Turkish letters are transliterated, not dropped
+Odac.Var('Çağrı Şükür').slug()
+// Returns: 'cagri-sukur'
 ```
 
 #### format() - Format string with pattern
