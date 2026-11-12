@@ -57,6 +57,7 @@ module.exports = function(Odac) {
 - `Odac.cache(seconds)` — positive integer only. Throws `TypeError` otherwise.
 - Overrides any previously set `Cache-Control` header for the request.
 - **ODAC Proxy is smart:** automatically invalidates cache when content changes or dynamic content is detected.
+- **Multilingual pages:** a language picked from `Accept-Language` sends `Vary: Accept-Language` and the proxy does not cache it. Cache per-language URLs (`/{lang}/...` + `Odac.Lang.set()`) instead.
 - **Despite smart invalidation, never use on:** user-specific pages (dashboards, profiles, account pages), pages with session data, auth state, or per-user content. Do not rely on auto-detection as a safety net.
 
 **Good candidates:** marketing pages, blog posts, docs, product listings (no personalization), static pages (about, FAQ, contact).

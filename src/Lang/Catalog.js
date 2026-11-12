@@ -19,6 +19,8 @@ const LANGUAGE_CODE = /^[a-z]{2}$/
 // A context is part of an entry's identity and becomes a JSON key; bounded so a template
 // typo cannot produce unbounded keys.
 const MAX_CONTEXT_LENGTH = 100
+// ISO 639-1 languages written right to left.
+const RTL_LANGUAGES = new Set(['ar', 'dv', 'fa', 'he', 'ps', 'sd', 'ug', 'ur', 'yi'])
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
 
@@ -30,6 +32,17 @@ const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key
  */
 function isLanguageCode(code) {
   return typeof code === 'string' && LANGUAGE_CODE.test(code)
+}
+
+/**
+ * Returns the writing direction of a language.
+ * Why: `<html dir>` has to follow the served language, or an Arabic or Hebrew page renders
+ * left to right.
+ * @param {string} code A two-letter language code.
+ * @returns {'ltr'|'rtl'}
+ */
+function direction(code) {
+  return RTL_LANGUAGES.has(code) ? 'rtl' : 'ltr'
 }
 
 /**
@@ -266,6 +279,7 @@ module.exports = {
   build,
   configuredLanguages,
   defaultLanguage,
+  direction,
   entries,
   entryId,
   format,

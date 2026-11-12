@@ -56,6 +56,10 @@ The ODAC Proxy is intelligent about cache invalidation. You don't need to manual
 
 > Even though the ODAC Proxy can detect dynamic content and cancel caching, you should not rely on this as a safety net. If a page is user-specific, simply don't call `Odac.cache()`.
 
+### Multilingual Pages
+
+A page whose language is picked from the visitor's `Accept-Language` header is sent with `Vary: Accept-Language`, and the ODAC Proxy does not cache it, so one visitor's language is never served to another. To cache multilingual pages, put the language in the URL (`/tr/about`) and select it with `Odac.Lang.set()`; see *One URL, Several Languages* in the translations guide.
+
 ### TTL Reference
 
 | Scenario | Recommended TTL |

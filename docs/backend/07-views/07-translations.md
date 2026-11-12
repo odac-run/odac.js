@@ -44,6 +44,32 @@ storage/
 }
 ```
 
+### Configuration
+
+Translations work without any configuration. Every setting lives under `lang` in `odac.json`:
+
+```json
+{
+  "lang": {
+    "default": "tr",
+    "supported": ["tr", "en", "de"],
+    "collect": false,
+    "keep": ["status.*", "Some exact key"],
+    "highlightMissing": true
+  }
+}
+```
+
+| Setting | Type | Default | Purpose |
+|---------|------|---------|---------|
+| `default` | string | `"en"` | The fallback language, and the language your keys are written in. Missing translations are served from it. Set it when your site is not in English; it also makes ODAC write `<html lang>` (see [The Page Language](#the-page-language)). Case-insensitive; a value that is not a two-letter code falls back to `en`. |
+| `supported` | string[] | not set: the files in `storage/language/` | Strict whitelist of the languages a request may be served in. Other language files are ignored, `default` is always included, and entries that are not two-letter codes are dropped. See [Supported Languages](#supported-languages). |
+| `collect` | boolean | `debug` | Adds keys missing from the language files while the app runs. `true` enables it in production, `false` disables it in debug mode too. See [Missing Keys](#missing-keys). |
+| `keep` | string[] | `[]` | Keys `odac lang:check` and `lang:prune` must treat as used: exact keys, or prefixes ending in `*`. For keys built at runtime. See [Keys Built at Runtime](#keys-built-at-runtime). |
+| `highlightMissing` | boolean | `false` | Debug mode only: renders text served from the default language as `⟦text⟧`. See [Spotting Missing Translations](#spotting-missing-translations). |
+
+Language files themselves are not configurable: they are always `storage/language/<code>.json`.
+
 ### Missing Keys
 
 In development (`debug` mode) a key without an entry is added to **every** language file at once: the default language gets the key itself as its value, every other language gets `""` (not translated yet). Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too.
@@ -56,7 +82,25 @@ In development (`debug` mode) a key without an entry is added to **every** langu
 }                                          }
 ```
 
-All language files therefore list the same entries in the same order (sorted by key), which keeps them easy to compare and keeps diffs small. Writes from several workers are serialized, and a language file that is not valid JSON (for example while you are editing it) is never overwritten; a warning is logged instead. Language files are loaded once per worker and re-read when they change on disk.
+All language files therefore list the same entries in the same order (sorted by key), which keeps them easy to compare and keeps diffs small. Writes from several workers are serialized, and a language file that is not valid JSON (for example while you are editing it) is never overwritten; a warning is logged instead.
+
+### Editing Language Files on a Running App
+
+Language files can be edited while the app runs, by hand, through an upload or from an admin panel, with no restart and no cache to clear. Each worker loads a file once and checks every 2 seconds whether it changed on disk, so an edit is served within about 2 seconds:
+
+- **Server-rendered text** uses the new translations from the next request.
+- **Browser code** (`view/js/`) gets them on the next AJAX navigation, as on a full page load.
+- **Pages cached with `Odac.cache()`** are refreshed by the ODAC Proxy's background revalidation when their content changes, before their TTL runs out.
+
+A file that is not valid JSON (a typo, or a file read while it was still being written) does not take the translations down. ODAC keeps serving the last valid version of that language and logs a warning once per broken version of the file:
+
+```json
+{"level": "WARN", "message": "Language file is not valid JSON; serving its last valid version", "lang": "tr"}
+```
+
+It reads the file again on every check, so the fix is served as soon as the file is valid again. A file that cannot be read at all (permissions) is handled the same way, with `Language file could not be read`. Deleting a language file is not an error: its keys are then served from the default language.
+
+When a panel or script writes language files, write them atomically (write a temporary file, then rename it over the original), so no worker ever reads half a file.
 
 To remove a key, use `odac lang:prune` (see [Managing Language Files](#managing-language-files)); deleting it from a single file by hand is undone the next time keys are synced, because the other files still have it.
 
@@ -432,7 +476,58 @@ module.exports = async function(Odac) {
 }
 ```
 
-`Odac.Lang.set()` accepts only two-letter codes of supported languages; anything else falls back as described above. `Odac.Lang.current()` returns the active code.
+`Odac.Lang.set()` accepts only two-letter codes of supported languages; anything else falls back as described above. `Odac.Lang.current()` returns the active code, `Odac.Lang.dir()` its writing direction (`'rtl'` for Arabic, Hebrew, Persian, Urdu and a few others, `'ltr'` otherwise).
+
+### The Page Language
+
+ODAC writes the served language into every page, so you never maintain it by hand:
+
+```html
+<!-- skeleton/main.html -->
+<html lang="en">
+
+<!-- served to a Turkish visitor -->
+<html lang="tr" dir="ltr" data-odac-skeleton="main" ...>
+
+<!-- served to an Arabic visitor -->
+<html lang="ar" dir="rtl" data-odac-skeleton="main" ...>
+```
+
+- `lang` and `dir` on `<html>` replace whatever the skeleton has. Screen readers, the browser's "Translate this page" offer, `hyphens: auto` and case mapping all read them: `text-transform: uppercase` turns `i` into `İ` only under `lang="tr"`.
+- The response carries `Content-Language: tr`.
+- AJAX navigation updates `<html lang dir>` when the language changes.
+
+This happens when the application declares its languages: it has more than one language, or sets `lang.default` or `lang.supported` in `odac.json`. A single-language application that configures neither keeps the skeleton's `lang` as written, because the framework would otherwise have to guess `en`. If your site is in one language other than English, set `lang.default`:
+
+```json
+{
+  "lang": {"default": "tr"}
+}
+```
+
+### One URL, Several Languages
+
+When the language comes from the `Accept-Language` header, the same URL returns different HTML to different visitors. ODAC then adds `Vary: Accept-Language` to the response, so no shared cache serves one visitor's language to another. The ODAC Proxy does not cache such responses, even with `Odac.cache()`.
+
+A language chosen with `Odac.Lang.set()` does not depend on that header and gets no `Vary: Accept-Language`. That leads to the recommended setup for public, cacheable or search-indexed pages: put the language in the URL.
+
+```javascript
+// route/www.js
+Odac.Route.page('/{lang}/about', 'About')
+
+// controller/About.js
+module.exports = function (Odac) {
+  Odac.Lang.set(Odac.request('lang'))
+  Odac.cache(3600) // one cache entry per URL, so per language
+  Odac.View.skeleton('main').set('content', 'about')
+}
+```
+
+Things to keep in mind when several languages share one URL:
+
+- **Search engines**: crawlers mostly send no `Accept-Language` (Googlebot crawls mainly from the US), so only the default language gets indexed, and `hreflang` alternates need a separate URL per language. Keep shared URLs for pages behind a login (dashboards, account pages).
+- **User choice**: `Accept-Language` alone does not let a visitor pick another language. Store the choice (user record, session) and pass it to `Odac.Lang.set()`. If you read it from a cookie, the page also differs per cookie: do not `Odac.cache()` it.
+- **Mail and background jobs**: they have no visitor request; pass the user's stored language to `Odac.Lang.set()` instead of relying on the header.
 
 ### Using Translation Helper in Controllers
 

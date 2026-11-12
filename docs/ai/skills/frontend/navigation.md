@@ -20,6 +20,7 @@ On every subsequent navigation:
 1. The client sends the current parts state to the server via `X-Odac-Parts`.
 2. The server returns only the parts that changed (`output`) plus the new parts manifest (`parts`).
 3. The client fades out and updates only the changed elements. Unchanged parts (e.g. a shared sidebar) are never touched.
+4. The title, `<html lang dir>` (when the language changed) and browser translations follow the new page.
 
 ## Rules
 1.  **Zero-config auto-navigation**: Works automatically when the skeleton has `data-odac-navigate` elements. No `Odac.action()` call needed for basic navigation.

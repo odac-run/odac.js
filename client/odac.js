@@ -430,6 +430,27 @@ if (typeof window !== 'undefined') {
       return this.#lang
     }
 
+    /**
+     * Applies the served language to `<html lang dir>` after an AJAX navigation.
+     * Why: a navigation can switch the language; screen readers, browser translation and
+     * `text-transform` read the document's `lang`, which a full load sets on the server.
+     * The server omits `document` when the application declares no language.
+     */
+    // Identifies the translations this page holds (`lang:v`), so the server sends new ones
+    // only when the language or their content changed.
+    #heldTranslations() {
+      const {lang, v} = this.#translations()
+      if (!lang) return ''
+      return typeof v === 'string' ? `${lang}:${v}` : lang
+    }
+
+    #applyDocumentLanguage(served) {
+      if (!served || typeof served.lang !== 'string' || !/^[a-z]{2}$/.test(served.lang)) return
+      const root = document.documentElement
+      root.lang = served.lang
+      root.dir = served.dir === 'rtl' ? 'rtl' : 'ltr'
+    }
+
     #validTranslations(value) {
       return !!value && typeof value === 'object' && typeof value.lang === 'string' && !!value.t && typeof value.t === 'object'
     }
@@ -1034,7 +1055,7 @@ if (typeof window !== 'undefined') {
         'X-Odac': 'ajaxload',
         'X-Odac-Load': loadKeys.join(','),
         'X-Odac-Skeleton': currentSkeleton || '',
-        'X-Odac-Lang': this.lang() || ''
+        'X-Odac-Lang': this.#heldTranslations()
       }
       if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
@@ -1071,6 +1092,7 @@ if (typeof window !== 'undefined') {
 
             if (data.data) this.#data = data.data
             if (this.#validTranslations(data.lang)) this.#lang = data.lang
+            this.#applyDocumentLanguage(data.document)
             if (data.title) document.title = this.#decodeHtmlEntities(data.title)
 
             // Update only parts that have new content from server
@@ -1114,7 +1136,7 @@ if (typeof window !== 'undefined') {
         'X-Odac': 'ajaxload',
         'X-Odac-Load': loadKeys.join(','),
         'X-Odac-Skeleton': currentSkeleton || '',
-        'X-Odac-Lang': this.lang() || ''
+        'X-Odac-Lang': this.#heldTranslations()
       }
       if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
@@ -1139,6 +1161,7 @@ if (typeof window !== 'undefined') {
 
           if (data.data) this.#data = data.data
           if (this.#validTranslations(data.lang)) this.#lang = data.lang
+          this.#applyDocumentLanguage(data.document)
           if (data.title) document.title = this.#decodeHtmlEntities(data.title)
           if (data.parts) this.#loader.parts = data.parts
 

@@ -1,5 +1,5 @@
 const fsPromises = require('node:fs').promises
-const {randomUUID} = require('node:crypto')
+const {createHash, randomUUID} = require('node:crypto')
 const Catalog = require('./Lang/Catalog.js')
 const Files = require('./Lang/Files.js')
 const Ipc = require('./Ipc.js')
@@ -37,7 +37,7 @@ function warn(message, fields) {
  * changes.
  */
 class LanguageStore {
-  // lang -> {data, mtimeMs, checkedAt, loading}
+  // lang -> {data, mtimeMs, checkedAt, loading, failedMtimeMs}
   #entries = new Map()
   // Language codes that have a file in storage/language/, refreshed in the background.
   #available = null
@@ -66,19 +66,10 @@ class LanguageStore {
   #entry(lang) {
     let entry = this.#entries.get(lang)
     if (!entry) {
-      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null}
+      entry = {data: Object.create(null), mtimeMs: null, checkedAt: 0, loading: null, failedMtimeMs: undefined}
       this.#entries.set(lang, entry)
     }
     return entry
-  }
-
-  async #readFile(lang) {
-    try {
-      return Catalog.parse(await fsPromises.readFile(this.#file(lang), 'utf8'))
-    } catch {
-      // Missing file: serve keys untranslated rather than failing the request.
-      return Object.create(null)
-    }
   }
 
   // The value a not yet translated entry has: the key in the default language, '' elsewhere.
@@ -96,7 +87,28 @@ class LanguageStore {
     entry.checkedAt = Date.now()
     if (mtimeMs === entry.mtimeMs) return
 
-    const data = await this.#readFile(lang)
+    // A file that cannot be read or is not a JSON object (a typo, or one read while an editor
+    // or upload was still writing it) keeps the last valid translations instead of wiping
+    // them. entry.mtimeMs stays behind, so it is read again on every check until it is
+    // valid; the warning is logged once per version of the file.
+    let file
+    try {
+      file = await Files.readLanguage(this.#dir(), lang)
+    } catch (e) {
+      file = {valid: false, error: e?.message ?? String(e)}
+    }
+    if (!file.valid) {
+      if (entry.failedMtimeMs !== mtimeMs) {
+        entry.failedMtimeMs = mtimeMs
+        if (file.error) warn('Language file could not be read; serving its last valid version', {lang, error: file.error})
+        else warn('Language file is not valid JSON; serving its last valid version', {lang})
+      }
+      return
+    }
+    entry.failedMtimeMs = undefined
+
+    // A missing file (raw null) serves the keys untranslated.
+    const data = file.data
     // Keys collected but not yet saved must survive a reload.
     for (const {key, context} of this.#pending.values()) Catalog.addEntry(data, key, context, this.#placeholder(lang, key))
     entry.data = data
@@ -323,6 +335,8 @@ class Lang {
   #lang
   // Languages asked for (explicitly or through Accept-Language), in order of preference.
   #candidates = []
+  // The code passed to set(), when it is a valid language code.
+  #explicit = null
   // Set when #lang was chosen before the language directory was listed.
   #provisional = false
 
@@ -395,7 +409,9 @@ class Lang {
    * language (with the default-language fallback), so the browser gets neither the rest of
    * the dictionary nor a way to write to it. In debug mode, frontend entries missing from
    * the language files are collected like server-side ones.
-   * @returns {Promise<{lang: string, t: object}|null>} null when the frontend uses no keys.
+   * `v` identifies the content: the browser reports it on AJAX navigation, so it receives
+   * the translations again after a language file changed, not only after a language switch.
+   * @returns {Promise<{lang: string, v: string, t: object}|null>} null when the frontend uses no keys.
    */
   async client() {
     const config = this.#odac.Config
@@ -420,7 +436,9 @@ class Lang {
       values.set(Catalog.entryId(entry.key, entry.context), value)
     }
     const t = Catalog.build(translated, (key, context) => values.get(Catalog.entryId(key, context)))
-    const payload = Object.freeze({lang, t})
+    // Computed only when the translations are rebuilt, never per request.
+    const v = createHash('sha256').update(JSON.stringify(t)).digest('base64url').slice(0, 16)
+    const payload = Object.freeze({lang, v, t})
     clientCache.set(lang, {entries, data, fallback, payload})
     return payload
   }
@@ -450,6 +468,37 @@ class Lang {
   }
 
   /**
+   * Returns the writing direction of the active language: `'rtl'` or `'ltr'`.
+   * Why: layout that depends on direction (icons, margins, `<html dir>`) must follow the
+   * language the page is served in.
+   * @returns {'ltr'|'rtl'}
+   */
+  dir() {
+    return Catalog.direction(this.#lang)
+  }
+
+  /**
+   * Describes the language the response is served in, for `<html lang dir>` and the
+   * `Content-Language` / `Vary` headers.
+   * Why: screen readers, browser translation, hyphenation and case mapping (`text-transform`
+   * turns `i` into `İ` only under `lang="tr"`) all read the declared language, and a shared
+   * cache must not hand one visitor's language to another.
+   * The language is declared only when the application declares languages: it serves more
+   * than one, or configures `lang.default` / `lang.supported`. A single-language application
+   * that configures nothing keeps whatever its skeleton says, since `en` would only be a guess.
+   * `varies` is true when another Accept-Language could select another language. A language
+   * chosen through set(code) (from the URL or the session) does not depend on that header.
+   * @returns {Promise<{lang: string, dir: 'ltr'|'rtl', varies: boolean}|null>}
+   */
+  async served() {
+    const lang = await this.#resolved()
+    const config = this.#odac.Config
+    const multilingual = store.languages(config).size > 1
+    if (!multilingual && config?.lang?.default == null && !Catalog.configuredLanguages(config)) return null
+    return {lang, dir: Catalog.direction(lang), varies: multilingual && lang !== this.#explicit}
+  }
+
+  /**
    * Selects the request's language: the given code if it is supported, otherwise the most
    * preferred supported language of the Accept-Language header, otherwise `lang.default`,
    * then `en`.
@@ -459,7 +508,11 @@ class Lang {
    */
   set(lang) {
     const candidates = []
-    if (lang && lang.length === 2 && this.#odac.Var(lang).is('alpha')) candidates.push(String(lang).toLowerCase())
+    this.#explicit = null
+    if (lang && lang.length === 2 && this.#odac.Var(lang).is('alpha')) {
+      this.#explicit = String(lang).toLowerCase()
+      candidates.push(this.#explicit)
+    }
     const header = this.#odac.Request?.header?.('ACCEPT-LANGUAGE')
     for (const code of parseAcceptLanguage(header)) candidates.push(code)
     this.#candidates = candidates

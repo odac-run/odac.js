@@ -27,7 +27,7 @@ Placeholders work as on the server: `%s` is replaced in order, `%s1`, `%s2` by p
 ODAC reads the translation keys your `view/js/` code uses straight from its source and sends **only those**, already translated into the page's language (falling back to the default language). The rest of your language files, such as admin screens or internal messages, never reaches the browser.
 
 - Translations are embedded in the page as a JSON block (`<script type="application/json" id="odac-lang">`), escaped like `Odac.share()` data, so no extra request is made.
-- On AJAX navigation the browser reports its language and receives new translations only when the language changed.
+- On AJAX navigation the browser reports which translations it holds (language and a content version) and receives new ones only when the language changed or a language file was edited on the server. `<html lang dir>` follow the served language as well, as on a full page load.
 - If your `view/js/` code uses no translations, nothing is added to the page.
 - The browser never writes to language files. In development (`debug` mode), keys used in `view/js/` are added to the language files by the server, like every other key, and changes to `view/js/` are picked up automatically. In production the sources are scanned once at startup.
 

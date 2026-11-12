@@ -132,6 +132,58 @@ describe('Lang language selection', () => {
     await Lang.store.init()
     expect([...Lang.store.languages(mockOdac.Config)].sort()).toEqual(['en', 'tr'])
   })
+  describe('served()', () => {
+    it('declares the negotiated language and that it varies with Accept-Language', async () => {
+      writeLang('en', {})
+      writeLang('ar', {})
+      await Lang.store.init()
+      header = 'ar,en;q=0.5'
+      const lang = new Lang(mockOdac)
+      expect(lang.dir()).toBe('rtl')
+      expect(await lang.served()).toEqual({lang: 'ar', dir: 'rtl', varies: true})
+    })
+
+    it('still varies when the header selects the default language', async () => {
+      writeLang('tr', {})
+      await Lang.store.init()
+      header = 'de'
+      expect(await new Lang(mockOdac).served()).toEqual({lang: 'en', dir: 'ltr', varies: true})
+    })
+
+    it('does not vary with the header for a language chosen through set()', async () => {
+      writeLang('tr', {})
+      await Lang.store.init()
+      header = 'en'
+      const lang = new Lang(mockOdac)
+      lang.set('tr')
+      expect(await lang.served()).toEqual({lang: 'tr', dir: 'ltr', varies: false})
+    })
+
+    it('varies again when the code passed to set() is not supported', async () => {
+      writeLang('tr', {})
+      await Lang.store.init()
+      header = 'tr'
+      const lang = new Lang(mockOdac)
+      lang.set('de')
+      expect(await lang.served()).toEqual({lang: 'tr', dir: 'ltr', varies: true})
+    })
+
+    it('declares a single configured language without varying', async () => {
+      await Lang.store.init()
+      mockOdac.Config = {lang: {default: 'tr'}}
+      header = 'en'
+      expect(await new Lang(mockOdac).served()).toEqual({lang: 'tr', dir: 'ltr', varies: false})
+      mockOdac.Config = {lang: {supported: []}}
+      expect(await new Lang(mockOdac).served()).toEqual({lang: 'en', dir: 'ltr', varies: false})
+    })
+
+    it('declares nothing for an application that declares no languages', async () => {
+      await Lang.store.init()
+      mockOdac.Config = {}
+      header = 'tr'
+      expect(await new Lang(mockOdac).served()).toBeNull()
+    })
+  })
 })
 
 describe('Lang fallback', () => {

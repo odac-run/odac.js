@@ -146,4 +146,5 @@ module.exports = function (Odac) {
 
 ## Render Errors and Production Caching
 -   **A throwing view answers 500**: the error is logged with view file and line, `Odac.cache()` headers are dropped, and the `Odac.Route.error(500, ...)` page renders. Never rely on an empty region as a fallback.
+-   **`<html lang dir>` are the framework's**: when the app declares languages, the skeleton's `lang`/`dir` are replaced with the served language per request (see `backend/translations.md`). Keep a static `lang` in the skeleton only as the value for single-language apps.
 -   **Production caches view lookups**: compiled views, file existence and skeletons are cached per process when `debug` is off; restart (deploy) to pick up new view files.
