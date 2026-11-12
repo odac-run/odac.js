@@ -145,7 +145,8 @@ class EarlyHints {
       }
     }
 
-    return hints || null
+    // An empty cached set means "scanned, nothing to hint"; callers may still use the manifest.
+    return hints && hints.length > 0 ? hints : null
   }
 
   getHintsForViewFiles(viewPaths) {
@@ -172,13 +173,25 @@ class EarlyHints {
    */
   cacheHints(key, resources) {
     if (!this.#config.enabled || !this.#config.auto) return
-    if (!key || !resources || resources.length === 0) return
+    // An empty list is cached too: it records that the page was scanned and has nothing to hint.
+    if (!key || !Array.isArray(resources)) return
 
     this.#cache.delete(key)
     this.#cache.set(key, resources)
 
     const limit = this.#config.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES
     while (this.#cache.size > limit) this.#cache.delete(this.#cache.keys().next().value)
+  }
+
+  /**
+   * Whether a hint set (possibly empty) is cached for `key`.
+   * Why: lets View skip re-scanning a page whose resources are already known.
+   * @param {string} key
+   * @returns {boolean}
+   */
+  isCached(key) {
+    if (!this.#config.enabled || !this.#config.auto) return true
+    return this.#cache.has(key)
   }
 
   extractFromHtml(html) {

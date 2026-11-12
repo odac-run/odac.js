@@ -72,6 +72,10 @@ Create corresponding view templates in your `view/errors/` directory:
 </html>
 ```
 
+#### Errors While Rendering a View
+
+If a view throws while it renders (for example `{{ user.name }}` when `user` is undefined), the error is logged with the view file and line, and the request is answered with `500` through your `error(500, ...)` page. Proxy caching set with `Odac.cache()` is removed from that response, so a broken page is never cached. If the 500 page fails to render as well, the response is an empty `500`.
+
 #### Default Error Handling
 
 If no custom error page is defined, Odac will fall back to its built-in error responses. It's recommended to at least define custom 404 and 500 error pages for a professional user experience.

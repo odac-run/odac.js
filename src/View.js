@@ -35,11 +35,19 @@ function serializeForScript(value) {
   return JSON.stringify(value).replace(SCRIPT_UNSAFE_CHARS, char => SCRIPT_ESCAPES[char])
 }
 
+// A view threw while rendering (or its compiled code did not load). Already logged.
+class RenderError extends Error {}
+
+// A requested part name is only a part when the controller set it; `__proto__`, `constructor`
+// and other inherited names from a request header are not.
+const partName = (parts, name) => typeof name === 'string' && Object.hasOwn(parts, name) && typeof parts[name] === 'string'
+
 class View {
   #earlyHints = null
   #part = {}
   #refresh = new Set()
   #odac = null
+  #failed = false
 
   constructor(odac) {
     this.#odac = odac
@@ -67,9 +75,35 @@ class View {
   }
 
   // - PRINT VIEW
+  /**
+   * Renders the page (or the requested parts of an AJAX navigation) and ends the response.
+   * Why: a view that throws must not produce a 200 with an empty region, which a proxy cache
+   * (`Odac.cache()`) would then serve to everyone. It answers 500 through abort(), so a custom
+   * 500 handler can render its own page.
+   */
   async print() {
     if (this.#odac.Request.res.finished) return
+    try {
+      await this.#print()
+    } catch (e) {
+      if (!(e instanceof RenderError)) throw e
+      await this.#renderFailed()
+    }
+  }
 
+  async #renderFailed() {
+    const Request = this.#odac.Request
+    Request.header('X-ODAC-Cache', null)
+    Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    // The error page itself failed to render: answer with the bare status.
+    if (this.#failed) return Request.end('')
+    this.#failed = true
+    await Request.abort(500)
+    // A custom 500 handler that configured a view returns nothing and leaves printing to us.
+    if (!Request.res.finished) await this.print()
+  }
+
+  async #print() {
     // Handle AJAX load requests
     if (this.#odac.Request.isAjaxLoad === true && this.#odac.Request.ajaxLoad && this.#odac.Request.ajaxLoad.length > 0) {
       let output = {}
@@ -95,10 +129,15 @@ class View {
       // Render requested elements (skip unchanged parts)
       let title = null
       for (let element of this.#odac.Request.ajaxLoad) {
-        if (this.#part[element]) {
+        if (partName(this.#part, element)) {
           // Skip rendering if the part view path has not changed and refresh is not forced
           // Content is always re-rendered since its output depends on the current URL
-          if (element !== 'content' && !this.#refresh.has(element) && clientParts[element] && clientParts[element] === this.#part[element])
+          if (
+            element !== 'content' &&
+            !this.#refresh.has(element) &&
+            Object.hasOwn(clientParts, element) &&
+            clientParts[element] === this.#part[element]
+          )
             continue
 
           let viewPath = this.#part[element]
@@ -164,22 +203,20 @@ class View {
     // Normal page rendering
     let result = ''
     if (this.#part.skeleton && (await this.#exists(`./skeleton/${this.#part.skeleton}.html`))) {
+      // Placeholders already carry data-odac-navigate (applied once per skeleton read).
       result = await this.#readSkeleton(`./skeleton/${this.#part.skeleton}.html`)
-
-      // Add data-odac-navigate to content wrapper for auto-navigation
-      result = this.#addNavigateAttribute(result)
+      result = this.#annotateHtmlTag(result)
       result = await this.#fillSkeleton(result)
     }
 
     if (result) {
       const hasEarlyHints = this.#odac.Request.hasEarlyHints()
+      const hintKey = this.#hintCacheKey()
 
-      if (!hasEarlyHints) {
+      // In production a page without preloadable resources is scanned once, not per request.
+      if (!hasEarlyHints && (this.#odac.Config?.debug || !this.#earlyHints.isCached(hintKey))) {
         const detectedResources = this.#earlyHints.extractFromHtml(result)
-
-        if (detectedResources && detectedResources.length > 0) {
-          this.#earlyHints.cacheHints(this.#hintCacheKey(), detectedResources)
-        }
+        this.#earlyHints.cacheHints(hintKey, detectedResources ?? [])
       }
 
       // Inject Shared Data
@@ -245,21 +282,42 @@ class View {
     return html
   }
 
+  // Runs a compiled view. A throw inside the template is logged with its view line and
+  // becomes a RenderError.
+  async #run(compiled, file) {
+    try {
+      return await compiled(
+        this.#odac,
+        key => this.#odac.Request.get(key),
+        (...args) => this.#odac.Lang.get(...args)
+      )
+    } catch (e) {
+      throw this.#renderError(e, file)
+    }
+  }
+
+  #renderError(e, file) {
+    const stackLine = e?.stack?.split('\n')[1]?.match(/:(\d+):\d+/)
+    const line = stackLine ? parseInt(stackLine[1]) - 3 : e?.lineNumber ? e.lineNumber - 3 : 'unknown'
+    console.error(String(e).split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
+    return new RenderError(String(e))
+  }
+
   async #render(file) {
     if (!global.Odac.View) global.Odac.View = {}
     if (!global.Odac.View.cache) global.Odac.View.cache = {}
 
-    // Performance: In Production, skip stat check if cached
+    // Performance: In Production, skip stat check if cached. Only a missing compiled file
+    // falls back to compiling; an error inside the view is not retried by running it twice.
     if (!this.#odac.Config?.debug && global.Odac.View.cache[file]) {
+      let compiled = null
       try {
-        return await require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)(
-          this.#odac,
-          key => this.#odac.Request.get(key),
-          (...args) => this.#odac.Lang.get(...args)
-        )
+        compiled = require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)
       } catch {
-        // Fallback if cache file missing
+        compiled = null
       }
+      if (compiled) return this.#run(compiled, file)
+      delete global.Odac.View.cache[file]
     }
 
     let mtime
@@ -288,12 +346,19 @@ class View {
       const result = compile(content, {file})
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
+      const target = `${__dir}/${CACHE_DIR}/${cache}`
+      // Written beside the target and renamed into place: workers compiling the same view at
+      // once never require() a half-written file.
+      const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(6).toString('hex')}.tmp`
       await fsPromises.mkdir(`${__dir}/${CACHE_DIR}`, {recursive: true})
-      await fsPromises.writeFile(
-        `${__dir}/${CACHE_DIR}/${cache}`,
-        `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
-      )
-      delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
+      try {
+        await fsPromises.writeFile(temp, `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`)
+        await fsPromises.rename(temp, target)
+      } catch (e) {
+        await fsPromises.unlink(temp).catch(() => {})
+        throw e
+      }
+      delete require.cache[require.resolve(target)]
       if (!Odac.View) Odac.View = {}
       if (!Odac.View.cache) Odac.View.cache = {}
       Odac.View.cache[file] = {
@@ -301,18 +366,14 @@ class View {
         cache: cache
       }
     }
+    let compiled
     try {
-      return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
-        this.#odac,
-        key => this.#odac.Request.get(key),
-        (...args) => this.#odac.Lang.get(...args)
-      )
+      compiled = require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)
     } catch (e) {
-      let stackLine = e.stack.split('\n')[1].match(/:(\d+):\d+/)
-      let line = stackLine ? parseInt(stackLine[1]) - 3 : e.lineNumber ? e.lineNumber - 3 : 'unknown'
-      console.error(e.toString().split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
+      // The compiled view does not parse (a syntax error in an <odac:js> block).
+      throw this.#renderError(e, file)
     }
-    return ''
+    return this.#run(compiled, file)
   }
 
   // - SET PARTS
@@ -338,7 +399,9 @@ class View {
     return this
   }
 
-  #addNavigateAttribute(skeleton) {
+  // Marks every placeholder's region with data-odac-navigate. Depends on the skeleton only,
+  // so the result is cached with it.
+  #wrapPlaceholders(skeleton) {
     // Single-pass regex to inject data-odac-navigate into parent tags or auto-wrap unwrapped placeholders.
     // Group 1: Opening tag (<tag>)
     // Group 2: Whitespace between tag and placeholder
@@ -365,7 +428,11 @@ class View {
         return match
       }
     )
+    return skeleton
+  }
 
+  // Per-request attributes on <html>: the skeleton, page and parts the client diffs against.
+  #annotateHtmlTag(skeleton) {
     const skeletonName = this.#part.skeleton || 'main'
     const pageName = this.#odac.Request.page || ''
 
@@ -435,12 +502,21 @@ class View {
   }
 
   async #exists(path) {
+    // In production view files do not change while the process runs; each is checked once.
+    const known = !this.#odac.Config?.debug ? global.Odac.View?.exists : null
+    if (known?.has(path)) return known.get(path)
+    let found
     try {
       await fsPromises.access(path)
-      return true
+      found = true
     } catch {
-      return false
+      found = false
     }
+    if (!this.#odac.Config?.debug) {
+      if (!global.Odac.View.exists) global.Odac.View.exists = new Map()
+      global.Odac.View.exists.set(path, found)
+    }
+    return found
   }
 
   async #readSkeleton(path) {
@@ -451,7 +527,7 @@ class View {
       return global.Odac.View.skeletons[path]
     }
 
-    const content = await fsPromises.readFile(path, 'utf8')
+    const content = this.#wrapPlaceholders(await fsPromises.readFile(path, 'utf8'))
     global.Odac.View.skeletons[path] = content
     return content
   }

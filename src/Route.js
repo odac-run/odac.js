@@ -183,10 +183,17 @@ class Route {
       // Parse client's current part values for smart diffing
       const partsHeader = Odac.Request.header('X-Odac-Parts')
       if (partsHeader) {
-        const parts = {}
+        // Client-supplied names: a null-prototype object keeps `__proto__` an ordinary key, and
+        // a malformed escape is ignored for that entry instead of failing the request.
+        const parts = Object.create(null)
         for (const entry of partsHeader.split(',')) {
           const idx = entry.indexOf('=')
-          if (idx > 0) parts[entry.substring(0, idx)] = decodeURIComponent(entry.substring(idx + 1))
+          if (idx <= 0) continue
+          try {
+            parts[entry.substring(0, idx)] = decodeURIComponent(entry.substring(idx + 1))
+          } catch {
+            // Unchanged-part hints are an optimization; a bad entry just re-renders that part.
+          }
         }
         Odac.Request.clientParts = parts
       }

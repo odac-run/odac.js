@@ -740,4 +740,39 @@ describe('Route.check()', () => {
       expect(mockOdac.request).toHaveBeenCalledWith('_odac_form_token')
     })
   })
+
+  describe('AJAX navigation headers', () => {
+    const ajaxOdac = parts => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {},
+      Request: {
+        url: '/x',
+        method: 'get',
+        route: 'www',
+        header: jest.fn(key => ({'X-Odac': 'ajaxload', 'X-Odac-Load': 'content', 'X-Odac-Parts': parts})[key]),
+        cookie: jest.fn(() => null),
+        abort: jest.fn(),
+        setSession: jest.fn(),
+        data: {url: {}}
+      },
+      request: jest.fn().mockResolvedValue(null)
+    })
+
+    it('ignores a malformed escape in X-Odac-Parts instead of failing the request', async () => {
+      route.routes = {www: {page: {'/x': {cache: jest.fn(() => 'ok')}}}}
+      const odac = ajaxOdac('header=%E0%A4%A,content=pages%2Fx')
+      await route.check(odac)
+      expect(odac.Request.clientParts.content).toBe('pages/x')
+      expect(odac.Request.clientParts.header).toBeUndefined()
+    })
+
+    it('keeps __proto__ in X-Odac-Parts an ordinary key', async () => {
+      route.routes = {www: {page: {'/x': {cache: jest.fn(() => 'ok')}}}}
+      const odac = ajaxOdac('__proto__=x,content=y')
+      await route.check(odac)
+      expect(Object.getPrototypeOf(odac.Request.clientParts)).toBeNull()
+      expect(odac.Request.clientParts.__proto__).toBe('x')
+      expect({}.content).toBeUndefined()
+    })
+  })
 })
