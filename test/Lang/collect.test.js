@@ -53,6 +53,7 @@ describe('Lang key collection', () => {
 
   it('creates the files of languages listed in lang.supported', async () => {
     mockOdac.Config.lang.supported = ['tr']
+    await Lang.store.init(mockOdac.Config)
     await new Lang(mockOdac).get('Hello')
     await Lang.store.flush()
     expect(readLang('en')).toEqual({Hello: 'Hello'})

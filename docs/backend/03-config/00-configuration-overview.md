@@ -32,6 +32,8 @@ API_KEY=your_api_key_here
 NODE_ENV=production
 ```
 
+Feature-specific settings are documented with their feature, for example `lang` (languages and translations) in the [translations guide](../07-views/07-translations.md#configuration).
+
 ### Three Ways to Configure
 
 #### 1. Direct Values (Simple)

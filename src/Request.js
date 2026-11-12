@@ -625,8 +625,15 @@ class OdacRequest {
       return undefined
     }
 
-    const found = lookup()
-    if (found !== undefined && found !== null) return found
+    // A keyed hit is final. A keyless call returns a whole bucket, which exists from the start
+    // (empty) and so cannot signal readiness: get/url are filled synchronously, but post must
+    // wait for the body, or the caller gets the empty placeholder that a JSON parse replaces.
+    if (key) {
+      const found = lookup()
+      if (found !== undefined && found !== null) return found
+    } else if (method === 'get' || method === 'url') {
+      return lookup()
+    }
     this.#startBody()
     // Body already parsed: nothing more will arrive, resolve with what we have.
     if (this.#complete) return lookup()

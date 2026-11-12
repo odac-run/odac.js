@@ -533,7 +533,7 @@ class Validator {
 
     if (count >= maxAttempts) {
       this.#message['_odac_form'] = this.#odac.Lang
-        ? await this.#odac.Lang.get('Too many failed attempts. Please try again later.')
+        ? this.#odac.Lang.get('Too many failed attempts. Please try again later.')
         : 'Too many failed attempts. Please try again later.'
     }
 

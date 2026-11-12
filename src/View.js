@@ -12,6 +12,15 @@ const SKELETON_PLACEHOLDER = /\{\{\s*([A-Z_][A-Z0-9_]*)\s*\}\}/
 
 const CACHE_DIR = './storage/.cache'
 
+// One attribute of a start tag, with its value if it has one. Matching whole attributes in
+// order keeps text inside a quoted value (`data-x="a lang=b"`) from being read as an attribute.
+const HTML_ATTRIBUTE = /(\s*)([^\s"'>/=]+)(\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g
+// The attributes a declared language owns. `xml:lang` and `data-lang` are other attributes.
+const LANG_ATTRIBUTE_NAME = /^(?:lang|dir)$/i
+
+// Removes `lang` and `dir` from the attribute text of a start tag.
+const withoutLangAttributes = attrs => attrs.replace(HTML_ATTRIBUTE, (token, space, name) => (LANG_ATTRIBUTE_NAME.test(name) ? '' : token))
+
 // Characters that can terminate or confuse an inline <script> block once JSON is embedded in HTML.
 // `<`/`>` close the element (`</script>`, `<!--`), `&` matters for XHTML parsers and U+2028/U+2029
 // are line terminators in pre-ES2019 engines. The escaped form parses to the identical value.
@@ -113,6 +122,8 @@ class View {
   }
 
   async #print() {
+    const served = await this.#served()
+
     // Handle AJAX load requests
     if (this.#odac.Request.isAjaxLoad === true && this.#odac.Request.ajaxLoad && this.#odac.Request.ajaxLoad.length > 0) {
       let output = {}
@@ -196,7 +207,7 @@ class View {
 
       this.#odac.Request.header('Content-Type', 'application/json')
       this.#odac.Request.header('X-Odac-Page', this.#odac.Request.page || '')
-      this.#odac.Request.header('Vary', 'X-Odac, X-Odac-Lang')
+      this.#languageHeaders(served, ['X-Odac', 'X-Odac-Lang'])
 
       const response = {
         output: output,
@@ -206,9 +217,12 @@ class View {
         title: title,
         skeletonChanged: skeletonChanged
       }
-      // The browser already holds the translations of the language it reports.
+      if (served) response.document = {lang: served.lang, dir: served.dir}
+      // The browser reports the translations it holds as `lang:v`; they are sent again when
+      // the language or their content changed (a language file edited on the server).
       const translations = await this.#translations()
-      if (translations && this.#odac.Request.header('X-Odac-Lang') !== translations.lang) response.lang = translations
+      if (translations && this.#odac.Request.header('X-Odac-Lang') !== `${translations.lang}:${translations.v}`)
+        response.lang = translations
       this.#odac.Request.end(response)
       return
     }
@@ -218,7 +232,7 @@ class View {
     if (this.#part.skeleton && (await this.#exists(`./skeleton/${this.#part.skeleton}.html`))) {
       // Placeholders already carry data-odac-navigate (applied once per skeleton read).
       result = await this.#readSkeleton(`./skeleton/${this.#part.skeleton}.html`)
-      result = this.#annotateHtmlTag(result)
+      result = this.#annotateHtmlTag(result, served)
       result = await this.#fillSkeleton(result)
     }
 
@@ -244,6 +258,7 @@ class View {
       }
     }
 
+    this.#languageHeaders(served, [])
     this.#odac.Request.header('Content-Type', 'text/html; charset=utf-8')
     this.#odac.Request.end(result)
   }
@@ -295,6 +310,24 @@ class View {
       else if (firstIndex.get(segments[i]) === i) html += rendered.get(segments[i]) ?? ''
     }
     return html
+  }
+
+  // The language the response is served in (see Lang#served); never fails a page render.
+  async #served() {
+    try {
+      return (await this.#odac.Lang?.served?.()) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // Content-Language names the served language. Vary: Accept-Language keeps a shared cache
+  // from serving a page in one visitor's language to a visitor who asked for another.
+  #languageHeaders(served, vary) {
+    const Request = this.#odac.Request
+    if (served) Request.header('Content-Language', served.lang)
+    const fields = served?.varies ? [...vary, 'Accept-Language'] : vary
+    if (fields.length > 0) Request.header('Vary', fields.join(', '))
   }
 
   // Translations for Odac.__() in the browser; never fails a page render.
@@ -459,13 +492,17 @@ class View {
     return skeleton
   }
 
-  // Per-request attributes on <html>: the skeleton, page and parts the client diffs against.
-  #annotateHtmlTag(skeleton) {
+  // Per-request attributes on <html>: the served language and direction, and the skeleton,
+  // page and parts the client diffs against. A declared language replaces the skeleton's own
+  // lang/dir, which is a fixed value (`lang="en"` in new projects) that would mislabel every
+  // other language.
+  #annotateHtmlTag(skeleton, served) {
     const skeletonName = this.#part.skeleton || 'main'
     const pageName = this.#odac.Request.page || ''
 
-    skeleton = skeleton.replace(/<html([^>]*)>/, (match, attrs) => {
-      const updates = []
+    skeleton = skeleton.replace(/<html([^>]*)>/, (match, original) => {
+      const attrs = served ? withoutLangAttributes(original) : original
+      const updates = served ? [`lang="${served.lang}"`, `dir="${served.dir}"`] : []
       if (!attrs.includes('data-odac-skeleton')) {
         updates.push(`data-odac-skeleton="${skeletonName}"`)
       }

@@ -206,16 +206,27 @@ describe('odac.js navigation and tokens', () => {
       console.error.mockRestore()
     })
 
-    it('reports its language on navigation and takes the translations of a new one', () => {
-      serve({lang: 'en', t: {Hello: 'Hello'}})
+    it('reports the translations it holds on navigation and takes new ones', () => {
+      serve({lang: 'en', v: 'abc123', t: {Hello: 'Hello'}})
       click('/about')
       const xhr = ajaxLoads()[0]
-      expect(xhr.setRequestHeader).toHaveBeenCalledWith('X-Odac-Lang', 'en')
+      expect(xhr.setRequestHeader).toHaveBeenCalledWith('X-Odac-Lang', 'en:abc123')
       xhr.responseText = JSON.stringify({output: {}, parts: {}, lang: {lang: 'tr', t: {Hello: 'Merhaba'}}})
       xhr.responseURL = 'https://site.com/about'
       xhr.onload()
       expect(window.Odac.lang()).toBe('tr')
       expect(window.Odac.__('Hello')).toBe('Merhaba')
+    })
+
+    it('reports only the language for translations without a version', () => {
+      serve({lang: 'en', t: {Hello: 'Hello'}})
+      click('/about')
+      expect(ajaxLoads()[0].setRequestHeader).toHaveBeenCalledWith('X-Odac-Lang', 'en')
+    })
+
+    it('reports nothing when the page has no translations', () => {
+      click('/about')
+      expect(ajaxLoads()[0].setRequestHeader).toHaveBeenCalledWith('X-Odac-Lang', '')
     })
 
     it('keeps its translations when a navigation response carries none', () => {
@@ -226,6 +237,37 @@ describe('odac.js navigation and tokens', () => {
       xhr.responseURL = 'https://site.com/about'
       xhr.onload()
       expect(window.Odac.__('Hello')).toBe('Hi')
+    })
+  })
+
+  describe('document language', () => {
+    const navigate = payload => {
+      click('/about')
+      const xhr = ajaxLoads()[0]
+      xhr.responseText = JSON.stringify({output: {}, parts: {}, ...payload})
+      xhr.responseURL = 'https://site.com/about'
+      xhr.onload()
+    }
+
+    it('applies the served language and direction to <html>', () => {
+      navigate({document: {lang: 'ar', dir: 'rtl'}})
+      expect(document.documentElement.lang).toBe('ar')
+      expect(document.documentElement.dir).toBe('rtl')
+    })
+
+    it('resets the direction when the next language is written left to right', () => {
+      Object.assign(document.documentElement, {lang: 'ar', dir: 'rtl'})
+      navigate({document: {lang: 'tr', dir: 'ltr'}})
+      expect(document.documentElement.lang).toBe('tr')
+      expect(document.documentElement.dir).toBe('ltr')
+    })
+
+    it('leaves <html> alone when the response declares no language or a malformed one', () => {
+      Object.assign(document.documentElement, {lang: 'tr', dir: 'ltr'})
+      navigate({})
+      navigate({document: {lang: 'tr" onload="x', dir: 'rtl'}})
+      expect(document.documentElement.lang).toBe('tr')
+      expect(document.documentElement.dir).toBe('ltr')
     })
   })
 })

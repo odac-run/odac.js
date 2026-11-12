@@ -104,6 +104,11 @@ describe('Lang Catalog', () => {
       expect(Catalog.configuredLanguages({lang: {supported: 'tr'}})).toBeNull()
     })
 
+    it('knows which languages are written right to left', () => {
+      for (const code of ['ar', 'he', 'fa', 'ur']) expect(Catalog.direction(code)).toBe('rtl')
+      for (const code of ['tr', 'en', 'ku', undefined]) expect(Catalog.direction(code)).toBe('ltr')
+    })
+
     it('normalizes the context', () => {
       expect(Catalog.normalizeContext(undefined)).toBe('')
       expect(Catalog.normalizeContext('  verb ')).toBe('verb')

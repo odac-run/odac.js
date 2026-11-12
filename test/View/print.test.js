@@ -70,16 +70,19 @@ describe('View.print()', () => {
     })
   })
   describe('browser translations', () => {
-    const payload = {lang: 'tr', t: {Hello: 'Merhaba </script><script>alert(1)</script>'}}
+    const payload = {lang: 'tr', v: 'abc123', t: {Hello: 'Merhaba </script><script>alert(1)</script>'}}
 
+    // Compiled views are cached by path for the process; every render gets its own.
+    let seq = 0
     const renderAjax = async header => {
+      const name = `ajaxlang${++seq}`
       await fs.mkdir(path.join(global.__dir, 'view/content'), {recursive: true})
-      await fs.writeFile(path.join(global.__dir, 'view/content/ajax.html'), '<p>x</p>')
+      await fs.writeFile(path.join(global.__dir, `view/content/${name}.html`), '<p>x</p>')
       mockOdac.Lang.client = jest.fn(async () => payload)
       mockOdac.Request.isAjaxLoad = true
       mockOdac.Request.ajaxLoad = ['content']
       mockOdac.Request.header = jest.fn(name => (name === 'X-Odac-Lang' ? header : undefined))
-      view.set({content: 'ajax'})
+      view.set({content: name})
       await view.print()
       return mockOdac.Request.end.mock.calls[0][0]
     }
@@ -110,11 +113,23 @@ describe('View.print()', () => {
       expect(html).not.toContain('odac-lang')
     })
 
-    it('sends them on navigation only when the browser holds another language', async () => {
-      expect((await renderAjax('en')).lang).toEqual(payload)
+    const held = async header => {
       mockOdac.Request.end.mockClear()
       view = new View(mockOdac)
-      expect((await renderAjax('tr')).lang).toBeUndefined()
+      return (await renderAjax(header)).lang
+    }
+
+    it('sends them on navigation only when the browser holds other ones', async () => {
+      expect(await held('tr:abc123')).toBeUndefined()
+      expect(await held('en:abc123')).toEqual(payload)
+    })
+
+    it('sends them again after a language file changed their content', async () => {
+      expect(await held('tr:old')).toEqual(payload)
+    })
+
+    it('sends them to a browser that reports only the language (an older odac.js)', async () => {
+      expect(await held('tr')).toEqual(payload)
     })
   })
 
@@ -270,6 +285,91 @@ describe('View.print()', () => {
       expect([...keys][0]).not.toContain('/user/')
       expect(mockOdac.Request.setEarlyHints).toHaveBeenLastCalledWith([{href: '/app.css', as: 'style'}])
       delete global.Odac
+    })
+  })
+
+  describe('document language', () => {
+    const headers = () => Object.fromEntries(mockOdac.Request.header.mock.calls.filter(call => call.length === 2))
+    // Skeletons and compiled views are cached by path for the process; every test gets its own.
+    let seq = 0
+    const writeSkeleton = async html => {
+      const name = `doclang${++seq}`
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'skeleton', `${name}.html`), html)
+      return name
+    }
+
+    const renderPage = async (skeleton, served) => {
+      const name = await writeSkeleton(skeleton)
+      mockOdac.Lang.served = jest.fn(async () => served)
+      view.set({skeleton: name})
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    const renderAjax = async served => {
+      await fs.mkdir(path.join(global.__dir, 'view/content'), {recursive: true})
+      const name = `doclang${++seq}`
+      await fs.writeFile(path.join(global.__dir, `view/content/${name}.html`), '<p>x</p>')
+      mockOdac.Lang.served = jest.fn(async () => served)
+      mockOdac.Request.isAjaxLoad = true
+      mockOdac.Request.ajaxLoad = ['content']
+      view.set({content: name})
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    it('replaces the skeleton lang and dir with the served language', async () => {
+      const html = await renderPage('<html lang="en" dir=ltr class="x"><body></body></html>', {lang: 'ar', dir: 'rtl', varies: true})
+      expect(html).toMatch(/^<html class="x" lang="ar" dir="rtl" data-odac-skeleton="doclang\d+"/)
+      expect(html.match(/\slang=/g)).toHaveLength(1)
+      expect(headers()['Content-Language']).toBe('ar')
+      expect(headers().Vary).toBe('Accept-Language')
+    })
+
+    it('keeps attributes that only look like lang', async () => {
+      const html = await renderPage('<html xml:lang="en" data-lang="q" data-x="a lang=b"><body></body></html>', {
+        lang: 'tr',
+        dir: 'ltr',
+        varies: false
+      })
+      expect(html).toContain('<html xml:lang="en" data-lang="q" data-x="a lang=b" lang="tr" dir="ltr"')
+    })
+
+    it('does not vary with Accept-Language for a language chosen by the application', async () => {
+      await renderPage('<html><body></body></html>', {lang: 'tr', dir: 'ltr', varies: false})
+      expect(headers()['Content-Language']).toBe('tr')
+      expect(headers().Vary).toBeUndefined()
+    })
+
+    it('leaves the skeleton and headers alone when no language is declared', async () => {
+      const html = await renderPage('<html lang="tr"><body></body></html>', null)
+      expect(html).toMatch(/^<html lang="tr" data-odac-skeleton/)
+      expect(headers()['Content-Language']).toBeUndefined()
+      expect(headers().Vary).toBeUndefined()
+    })
+
+    it('renders the page when the language lookup fails', async () => {
+      const name = await writeSkeleton('<html lang="tr"><body></body></html>')
+      mockOdac.Lang.served = jest.fn(async () => {
+        throw new Error('boom')
+      })
+      view.set({skeleton: name})
+      await view.print()
+      expect(mockOdac.Request.end.mock.calls[0][0]).toMatch(/^<html lang="tr" data-odac-skeleton/)
+    })
+
+    it('sends the language to a navigation and varies the response with it', async () => {
+      const payload = await renderAjax({lang: 'ar', dir: 'rtl', varies: true})
+      expect(payload.document).toEqual({lang: 'ar', dir: 'rtl'})
+      expect(headers()['Content-Language']).toBe('ar')
+      expect(headers().Vary).toBe('X-Odac, X-Odac-Lang, Accept-Language')
+    })
+
+    it('omits the language from a navigation when none is declared', async () => {
+      const payload = await renderAjax(null)
+      expect(payload.document).toBeUndefined()
+      expect(headers().Vary).toBe('X-Odac, X-Odac-Lang')
     })
   })
 })

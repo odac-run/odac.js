@@ -36,6 +36,7 @@ describe('Lang.get()', () => {
 
   it('should return matching string and support placeholders', async () => {
     writeLang('tr', {welcome: 'Merhaba %s!'})
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
     lang.set('tr')
     expect(await lang.get('welcome', 'Emre')).toBe('Merhaba Emre!')
@@ -43,12 +44,14 @@ describe('Lang.get()', () => {
 
   it('should support numbered placeholders', async () => {
     writeLang('en', {order: 'First: %s1, Second: %s2'})
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
     expect(await lang.get('order', 'A', 'B')).toBe('First: A, Second: B')
   })
 
   it('should not expand replacement patterns in placeholder values', async () => {
     writeLang('en', {price: 'Total: %s', pair: '%s1 / %s2'})
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
     expect(await lang.get('price', "$& $'")).toBe("Total: $& $'")
     expect(await lang.get('pair', '$1', '$&')).toBe('$1 / $&')
@@ -61,6 +64,7 @@ describe('Lang.get()', () => {
   })
 
   it('should auto-save new keys in debug mode', async () => {
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
     expect(await lang.get('new_key')).toBe('new_key')
     await waitForSave()
@@ -69,6 +73,7 @@ describe('Lang.get()', () => {
 
   it('should merge collected keys with the file instead of overwriting it', async () => {
     writeLang('en', {existing: 'Existing'})
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
     await lang.get('first_missing')
     // Another worker adds a translation in the meantime.
@@ -100,11 +105,58 @@ describe('Lang.get()', () => {
   it('should read the language file once for many requests', async () => {
     writeLang('en', {hello: 'Hello'})
     const readFile = jest.spyOn(fs.promises, 'readFile')
+    await Lang.store.init()
 
-    const results = await Promise.all(Array.from({length: 20}, () => new Lang(mockOdac).get('hello')))
+    const results = Array.from({length: 20}, () => new Lang(mockOdac).get('hello'))
 
     expect(results.every(value => value === 'Hello')).toBe(true)
     expect(readFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('should return a string, not a promise', async () => {
+    writeLang('en', {hello: 'Hello %s1'})
+    await Lang.store.init()
+    const lang = new Lang(mockOdac)
+    const message = lang.get('hello', 'Emre')
+    expect(message).toBe('Hello Emre')
+    expect(`${lang.getx('hello', 'greeting')}!`).toBe('hello!')
+  })
+
+  it('should load every language file before the first lookup', async () => {
+    writeLang('en', {hello: 'Hello'})
+    writeLang('tr', {hello: 'Merhaba'})
+    writeLang('de', {hello: 'Hallo'})
+    const readFile = jest.spyOn(fs.promises, 'readFile')
+    await Lang.store.init()
+    readFile.mockClear()
+
+    const lang = new Lang(mockOdac)
+    lang.set('de')
+    expect(lang.get('hello')).toBe('Hallo')
+    lang.set('tr')
+    expect(lang.get('hello')).toBe('Merhaba')
+    expect(readFile).not.toHaveBeenCalled()
+  })
+
+  it('should serve keys untranslated, and warn once in debug mode, before the files are loaded', async () => {
+    writeLang('tr', {hello: 'Merhaba'})
+    const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+    mockOdac.Request.header.mockReturnValue('tr')
+    const lang = new Lang(mockOdac)
+
+    expect(lang.get('hello')).toBe('hello')
+    expect(lang.get('hello')).toBe('hello')
+    const warnings = error.mock.calls.filter(([line]) => line.includes('before the language files were loaded'))
+    expect(warnings).toHaveLength(1)
+
+    // The constructor started loading them; the same instance translates once they are in.
+    await Lang.store.init()
+    expect(lang.get('hello')).toBe('Merhaba')
+    expect(lang.current()).toBe('tr')
+    // Keys looked up before the files were loaded are not collected as missing.
+    await Lang.store.flush()
+    expect(fs.readdirSync(langDir)).toEqual(['tr.json'])
+    expect(readLang('tr')).toEqual({hello: 'Merhaba'})
   })
 
   it('should not touch the filesystem when constructed', () => {
@@ -119,19 +171,24 @@ describe('Lang.get()', () => {
 
   it('should pick up an edited language file', async () => {
     writeLang('en', {hello: 'Hello'})
+    await Lang.store.init()
     const lang = new Lang(mockOdac)
-    expect(await lang.get('hello')).toBe('Hello')
+    expect(lang.get('hello')).toBe('Hello')
 
     writeLang('en', {hello: 'Hi'})
     const future = new Date(Date.now() + 5000)
     fs.utimesSync(path.join(langDir, 'en.json'), future, future)
     jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000)
 
-    expect(await lang.get('hello')).toBe('Hi')
+    // The lookup that notices the change is served from memory; the next one is not.
+    expect(lang.get('hello')).toBe('Hello')
+    await Lang.store.settle()
+    expect(lang.get('hello')).toBe('Hi')
   })
 
   it('should use the language from the ACCEPT-LANGUAGE header', async () => {
     writeLang('tr', {hello: 'Merhaba'})
+    await Lang.store.init()
     mockOdac.Request.header.mockImplementation(name => (name === 'ACCEPT-LANGUAGE' ? 'tr-TR,tr;q=0.9' : null))
     expect(await new Lang(mockOdac).get('hello')).toBe('Merhaba')
   })
