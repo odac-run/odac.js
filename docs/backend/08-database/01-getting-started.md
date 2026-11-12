@@ -15,7 +15,11 @@ Supported configuration options:
 - `port` - Database port
 - `type` - Database type (`mysql`, `postgres`, `sqlite`, `clickhouse`)
 - `filename` - Database file path (only for `sqlite`, default: `./dev.sqlite3`)
-- `url` - Full endpoint URL (only for `clickhouse`; alternative to host/port)
+- `url` - Connection URL, alternative to host/user/password/database (`postgres://...`, `mysql://...`, or the ClickHouse HTTP endpoint). `connectionString` is accepted as an alias for MySQL/PostgreSQL
+- `ssl` - TLS for MySQL/PostgreSQL: `true` for TLS with the system CAs, or the driver's TLS object (`{"ca": "...", "rejectUnauthorized": true}`)
+- `charset` - Connection character set (MySQL, e.g. `utf8mb4`)
+- `timezone` - Session time zone (MySQL: `"Z"`, `"+03:00"`, `"local"`; PostgreSQL: a zone name such as `"UTC"` or `"Europe/Istanbul"`)
+- `options` - Any other driver option, passed to `mysql2` / `pg` as given
 - `connectionLimit` - Maximum pool size per process. When omitted, ODAC sizes the pools so the whole cluster stays near 80 connections (2 to 10 per process; see [Automatic Connection](#automatic-connection))
 
 ### Single Connection (MySQL Default)
@@ -43,6 +47,18 @@ Supported configuration options:
     "password": "password",
     "database": "odac_app",
     "port": 5432
+  }
+}
+```
+
+### Managed Databases (TLS, Connection URL)
+
+```json
+{
+  "database": {
+    "type": "postgres",
+    "url": "${DATABASE_URL}",
+    "ssl": {"rejectUnauthorized": true}
   }
 }
 ```

@@ -18,9 +18,20 @@ function resolveClient(type) {
   return 'mysql2'
 }
 
+// Driver options passed through as configured. Covers TLS, character set, time zone and
+// sockets; anything else goes in the node's `options` object, merged in as given.
+const DRIVER_OPTIONS = {
+  mysql2: ['ssl', 'charset', 'timezone', 'socketPath', 'connectTimeout'],
+  pg: ['ssl', 'application_name', 'statement_timeout', 'connectionTimeoutMillis']
+}
+
+// A PostgreSQL time zone name or offset; it ends up in a `-c TimeZone=` startup option.
+const PG_TIMEZONE = /^[A-Za-z0-9_+\-/:]+$/
+
 /**
  * Builds knex connection config from ODAC database node.
- * Why: Normalizes connection options for all call sites and avoids drift.
+ * Why: Normalizes connection options for all call sites and avoids drift. Managed databases
+ * typically require TLS or hand out a connection URL; both must be expressible in odac.json.
  * @param {object} db Single database config node.
  * @param {string} client Knex client name.
  * @returns {object} Knex connection object.
@@ -30,13 +41,37 @@ function buildConnectionConfig(db, client) {
     return {filename: db.filename || db.database || './dev.sqlite3'}
   }
 
-  return {
-    host: db.host || '127.0.0.1',
-    user: db.user,
-    password: db.password,
-    database: db.database,
-    port: db.port
+  const url = db.url || db.connectionString
+  let connection
+  if (url) {
+    // The URL carries host, credentials and database; explicit fields still override for pg.
+    connection = client === 'pg' ? {connectionString: url} : {uri: url}
+    for (const field of ['user', 'password', 'database', 'port']) if (db[field] !== undefined) connection[field] = db[field]
+    if (db.host) connection.host = db.host
+  } else {
+    connection = {
+      host: db.host || '127.0.0.1',
+      user: db.user,
+      password: db.password,
+      database: db.database,
+      port: db.port
+    }
   }
+
+  for (const option of DRIVER_OPTIONS[client] ?? []) {
+    if (db[option] !== undefined) connection[option] = db[option]
+  }
+  // mysql2 enables TLS with an options object; `ssl: true` means "TLS with defaults".
+  if (client === 'mysql2' && connection.ssl === true) connection.ssl = {}
+  if (client === 'pg' && db.timezone !== undefined) {
+    if (typeof db.timezone !== 'string' || !PG_TIMEZONE.test(db.timezone)) {
+      throw new Error(`Invalid database timezone "${db.timezone}"`)
+    }
+    connection.options = `${connection.options ? connection.options + ' ' : ''}-c TimeZone=${db.timezone}`
+  }
+  if (db.options && typeof db.options === 'object') Object.assign(connection, db.options)
+
+  return connection
 }
 
 /** @type {Record<string, string>} Maps ODAC db type to the npm package that must be installed */
@@ -79,7 +114,10 @@ function poolMax(db, processCount) {
  * @returns {Record<string, any>} Knex connections by key.
  */
 function buildConnections(databaseConfig, {processCount = 1} = {}) {
-  const isMultiple = typeof databaseConfig[Object.keys(databaseConfig)[0]] === 'object'
+  // Several connections when every value is a connection node. A single node may hold objects
+  // too (`ssl`, `options`), so its first key alone does not decide.
+  const values = Object.values(databaseConfig)
+  const isMultiple = values.length > 0 && values.every(value => value !== null && typeof value === 'object' && !Array.isArray(value))
   const dbs = isMultiple ? databaseConfig : {default: databaseConfig}
   const connections = {}
 

@@ -53,6 +53,8 @@ Define named objects. The one named `default` (or the first one) is used by defa
 
 Access named connections via: `Odac.DB.analytics.tableName`
 
+**Driver options (MySQL/PostgreSQL):** `url`/`connectionString` (instead of host fields), `ssl` (`true` or a TLS object), `charset` (MySQL), `timezone`, and `options` (any other `mysql2`/`pg` option, merged as given). Managed databases: `{"type": "postgres", "url": "${DATABASE_URL}", "ssl": {"rejectUnauthorized": true}}`.
+
 ### 3. ClickHouse (OLAP / Analytics)
 Supported types: `mysql`, `postgres`, `sqlite`, `clickhouse`. ClickHouse is a columnar OLAP store —
 use it as a **secondary, append-only connection** for events/logs/metrics alongside a

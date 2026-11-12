@@ -24,6 +24,12 @@ describe('ConnectionFactory.buildConnections()', () => {
     expect(mockKnex).toHaveBeenCalledTimes(1)
   })
 
+  it('treats a single config whose first key is an object (ssl) as one connection', () => {
+    const connections = buildConnections({ssl: {rejectUnauthorized: true}, type: 'postgres', database: 'app'})
+    expect(Object.keys(connections)).toEqual(['default'])
+    expect(mockKnex.mock.calls[0][0].connection.ssl).toEqual({rejectUnauthorized: true})
+  })
+
   it('should support multi database config', () => {
     const connections = buildConnections({
       analytics: {type: 'postgres', user: 'u', database: 'a'},
