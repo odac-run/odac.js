@@ -289,6 +289,10 @@
         {
           "file": "07-magic-links.md",
           "title": "Magic Links"
+        },
+        {
+          "file": "08-auth-hooks.md",
+          "title": "Login Hooks"
         }
       ]
     },
@@ -397,6 +401,16 @@
         {
           "file": "02-shared-websocket.md",
           "title": "Shared WebSocket (Cross-Tab)"
+        }
+      ]
+    },
+    {
+      "file": "07-translations",
+      "title": "Translations",
+      "children": [
+        {
+          "file": "01-translations.md",
+          "title": "Translations in the Browser"
         }
       ]
     }

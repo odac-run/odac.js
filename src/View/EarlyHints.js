@@ -1,6 +1,26 @@
 const fs = require('fs').promises
 const path = require('path')
 
+// Upper bound for learned hint sets. Keys are view combinations, which are finite in a normal
+// app; the cap only guards against apps that build view names from request input.
+const DEFAULT_MAX_CACHE_ENTRIES = 1000
+
+// Resource paths by type; a query string or fragment may follow the extension.
+const STYLE_PATH = /\.css(?:[?#]|$)/i
+const SCRIPT_PATH = /\.m?js(?:[?#]|$)/i
+const FONT_PATH = /\.(?:woff2?|ttf|otf|eot)(?:[?#]|$)/i
+
+// Attributes of one start tag as a lower-cased name -> value map (a bare attribute is '').
+function parseAttributes(tag) {
+  const attrs = new Map()
+  const body = tag.replace(/^<[a-z]+/i, '').replace(/\/?>$/, '')
+  for (const match of body.matchAll(/([^\s"'=<>/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'<>`]+)))?/g)) {
+    const name = match[1].toLowerCase()
+    if (!attrs.has(name)) attrs.set(name, match[2] ?? match[3] ?? match[4] ?? '')
+  }
+  return attrs
+}
+
 class EarlyHints {
   #manifest = {}
   #cache = new Map()
@@ -88,6 +108,13 @@ class EarlyHints {
     return files
   }
 
+  /**
+   * Finds the render-blocking resources in a page's <head>.
+   * Why: attributes are parsed instead of searched as text, so a file named
+   * "deferred-loader.js" or a "data-async" attribute no longer hides a blocking script, and
+   * query strings (app.js?v=3), .mjs files and unquoted attributes are recognised. Module
+   * scripts are deferred by the browser and are not hinted as classic scripts.
+   */
   #extractResources(html) {
     const resources = []
 
@@ -95,48 +122,48 @@ class EarlyHints {
     if (!headMatch) return resources
 
     const head = headMatch[1]
+    const links = [...head.matchAll(/<link\b[^>]*>/gi)].map(match => parseAttributes(match[0]))
+    const scripts = [...head.matchAll(/<script\b[^>]*>/gi)].map(match => parseAttributes(match[0]))
 
-    const cssMatches = head.matchAll(/<link[^>]+href=["']([^"']+\.css)["'][^>]*>/gi)
-    for (const match of cssMatches) {
-      const fullTag = match[0].toLowerCase()
-      if (fullTag.includes('defer')) continue
-      if (fullTag.includes('rel="stylesheet"') || fullTag.includes("rel='stylesheet'")) {
-        resources.push({href: match[1], as: 'style'})
-      }
+    for (const attrs of links) {
+      const href = attrs.get('href')
+      if (!href || attrs.has('defer') || !STYLE_PATH.test(href)) continue
+      if (!(attrs.get('rel') ?? '').toLowerCase().split(/\s+/).includes('stylesheet')) continue
+      resources.push({href, as: 'style'})
     }
 
-    const jsMatches = head.matchAll(/<script[^>]+src=["']([^"']+\.js)["'][^>]*>/gi)
-    for (const match of jsMatches) {
-      const fullTag = match[0]
-      if (!fullTag.includes('defer') && !fullTag.includes('async')) {
-        resources.push({href: match[1], as: 'script'})
-      }
+    for (const attrs of scripts) {
+      const src = attrs.get('src')
+      if (!src || attrs.has('defer') || attrs.has('async') || !SCRIPT_PATH.test(src)) continue
+      if ((attrs.get('type') ?? '').toLowerCase() === 'module') continue
+      resources.push({href: src, as: 'script'})
     }
 
-    const fontMatches = head.matchAll(/<link[^>]+href=["']([^"']+\.(woff2?|ttf|otf|eot))["'][^>]*>/gi)
-    for (const match of fontMatches) {
-      const fullTag = match[0]
-      if (fullTag.includes('defer')) continue
-      resources.push({
-        href: match[1],
-        as: 'font',
-        crossorigin: 'anonymous'
-      })
+    for (const attrs of links) {
+      const href = attrs.get('href')
+      if (!href || attrs.has('defer') || !FONT_PATH.test(href)) continue
+      resources.push({href, as: 'font', crossorigin: 'anonymous'})
     }
 
     return resources.slice(0, this.#config.maxResources)
   }
 
-  getHints(viewPath, routePath) {
+  getHints(viewPath, cacheKey) {
     if (!this.#config.enabled || !this.#config.auto) return null
 
     let hints = this.#manifest[viewPath]
 
-    if (!hints && routePath) {
-      hints = this.#cache.get(routePath)
+    if (!hints && cacheKey) {
+      hints = this.#cache.get(cacheKey)
+      if (hints) {
+        // Refresh recency for the LRU.
+        this.#cache.delete(cacheKey)
+        this.#cache.set(cacheKey, hints)
+      }
     }
 
-    return hints || null
+    // An empty cached set means "scanned, nothing to hint"; callers may still use the manifest.
+    return hints && hints.length > 0 ? hints : null
   }
 
   getHintsForViewFiles(viewPaths) {
@@ -152,12 +179,36 @@ class EarlyHints {
     return null
   }
 
-  cacheHints(routePath, resources) {
+  /**
+   * Remembers the preload resources detected in a rendered page.
+   * Why: hints are only useful if they are known before rendering starts. The key must
+   * identify the views that produced the HTML (see View), not the request URL; URL keys
+   * add one permanent entry per distinct path and let any client grow worker memory.
+   * The cache is an LRU bounded by `maxCacheEntries`.
+   * @param {string} key View-combination key.
+   * @param {Array<{href: string, as: string}>} resources
+   */
+  cacheHints(key, resources) {
     if (!this.#config.enabled || !this.#config.auto) return
+    // An empty list is cached too: it records that the page was scanned and has nothing to hint.
+    if (!key || !Array.isArray(resources)) return
 
-    if (resources && resources.length > 0) {
-      this.#cache.set(routePath, resources)
-    }
+    this.#cache.delete(key)
+    this.#cache.set(key, resources)
+
+    const limit = this.#config.maxCacheEntries ?? DEFAULT_MAX_CACHE_ENTRIES
+    while (this.#cache.size > limit) this.#cache.delete(this.#cache.keys().next().value)
+  }
+
+  /**
+   * Whether a hint set (possibly empty) is cached for `key`.
+   * Why: lets View skip re-scanning a page whose resources are already known.
+   * @param {string} key
+   * @returns {boolean}
+   */
+  isCached(key) {
+    if (!this.#config.enabled || !this.#config.auto) return true
+    return this.#cache.has(key)
   }
 
   extractFromHtml(html) {

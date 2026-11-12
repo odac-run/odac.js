@@ -53,6 +53,10 @@ Define named objects. The one named `default` (or the first one) is used by defa
 
 Access named connections via: `Odac.DB.analytics.tableName`
 
+**Driver options (MySQL/PostgreSQL):** `url`/`connectionString` (instead of host fields), `ssl` (`true` or a TLS object), `charset` (MySQL), `timezone`, and `options` (any other `mysql2`/`pg` option, merged as given). Managed databases: `{"type": "postgres", "url": "${DATABASE_URL}", "ssl": {"rejectUnauthorized": true}}`.
+
+**Driver packages:** the app installs the driver for its type (`mysql2`, `pg`, `sqlite3`, `@clickhouse/client`); ODAC does not. `Database driver "x" is not installed` → `npm install x`. `Database driver "sqlite3" is installed but failed to load` → the native binary is missing: npm 12+ skips install scripts not covered by `allowScripts` in `package.json`. Projects from `odac init` ship `"allowScripts": {"sqlite3": true}`; if it is missing, add that entry (or run `npm install-scripts approve sqlite3 --no-allow-scripts-pin`) and then `npm rebuild sqlite3`. Reinstalling does not fix it; do not suggest `--dangerously-allow-all-scripts`, which lifts the block for every dependency.
+
 ### 3. ClickHouse (OLAP / Analytics)
 Supported types: `mysql`, `postgres`, `sqlite`, `clickhouse`. ClickHouse is a columnar OLAP store —
 use it as a **secondary, append-only connection** for events/logs/metrics alongside a
@@ -127,7 +131,7 @@ await Odac.DB.cache.clear('default', 'posts')
 
 ### Automatic Invalidation
 
-`insert()`, `update()`, `delete()`, `del()`, and `truncate()` automatically purge all cached queries for that table. No manual `.cache.clear()` needed after writes.
+`insert()`, `update()`, `delete()`, `del()`, `truncate()`, `increment()` and `decrement()` automatically purge all cached queries for that table. No manual `.cache.clear()` needed after writes. Writes inside `Odac.DB.transaction()` (via `trx('table')`, `.transacting(trx)` or nested transactions) are invalidated after the outermost commit, never on rollback. Raw SQL is not tracked; clear those tables manually.
 
 ```javascript
 // This update automatically clears all cached queries on 'posts'
@@ -238,7 +242,7 @@ await Odac.DB.users.buffer.where(userId).update({last_ip: req.ip})
 ```
 
 ### 3. Batch Insert (Queue)
-Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueueSize` is reached.
+Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueueSize` is reached. Past `maxQueueLength` (default 10 × `maxQueueSize`, `0` = no cap) `buffer.insert()` writes directly to the DB and **rejects** on failure — handle the error like a normal insert.
 ```javascript
 await Odac.DB.activity_log.buffer.insert({user_id: userId, action: 'page_view', meta: url})
 ```
@@ -266,6 +270,7 @@ await Odac.DB.buffer.flush()         // flush everything
     "flushInterval": 5000,
     "checkpointInterval": 30000,
     "maxQueueSize": 10000,
+    "maxQueueLength": 100000,
     "primaryKey": "id"
   }
 }

@@ -43,9 +43,11 @@ module.exports = async Odac => {
 - `error()`: Runs validation and returns `true` if any error exists.
 - `result(message?, data?)`: Returns ODAC-standard response object.
 - `success(dataOrMessage?)`: Convenience wrapper for success payload.
-- `brute(maxAttempts = 5)`: Tracks failed attempts per hour/page/ip.
+- `brute(maxAttempts = 5, windowSeconds = 3600)`: Counts validation failures per page/ip in a window that starts at the first failure; once the limit is reached every submission is rejected until the window ends. `Odac.Auth.login()` throttles wrong passwords on its own.
 
 ## Rule Catalog
+
+Rules other than `required` skip absent/`null`/`''` values but validate `0` and `false`. Format, length and value rules reject arrays and objects (JSON bodies); use `array` for lists. `min`/`max` fail non-numeric values.
 
 ### Type & format rules
 - `required`, `accepted`
@@ -68,7 +70,7 @@ module.exports = async Odac => {
 ### File upload rules (for `file()` fields)
 - `required`: file must be present.
 - `maxsize:2MB` / `minsize:10KB`: size limits (B, KB, MB, GB suffixes).
-- `mimetype:image/png,image/jpeg`: MIME type whitelist; wildcards like `image/*` supported. Validated via claimed MIME, extension map, and (for images) magic-byte sniffing to detect spoofing.
+- `mimetype:image/png,image/jpeg`: MIME type whitelist; wildcards like `image/*` supported. The type is derived from the extension (the client-declared MIME is ignored) and JPEG/PNG/GIF/WebP/PDF/ZIP/Office files must match their magic bytes. Wildcards never match SVG, HTML, XML or JavaScript; list `image/svg+xml` explicitly to allow SVG.
 - `accept:...`: alias for `mimetype:`.
 - `ext:jpg,png`: file extension whitelist (case-insensitive, comma-separated).
 - `maxfiles:N`: max file count for `multiple` file inputs.

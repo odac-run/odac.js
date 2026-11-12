@@ -2,6 +2,9 @@
 
 const {quoteIdent, quoteLiteral} = require('./ClickHouse')
 
+// Comparison operators accepted by where().
+const OPERATORS = new Set(['=', '==', '!=', '<>', '<', '<=', '>', '>=', 'LIKE', 'NOT LIKE', 'ILIKE', 'NOT ILIKE'])
+
 /**
  * Lightweight fluent read query builder for ClickHouse.
  *
@@ -201,6 +204,11 @@ class ClickHouseQuery {
    * @param {*} val
    */
   _pushCondition(col, op, val) {
+    const operator = typeof op === 'string' ? op.trim().toUpperCase().replace(/\s+/g, ' ') : op
+    // The operator is the only part of a condition that is written into the SQL verbatim, so
+    // it must come from a fixed set; where(col, req.op, value) would otherwise inject SQL.
+    if (!OPERATORS.has(operator)) throw new TypeError(`ODAC ClickHouse: unsupported where() operator ${JSON.stringify(op)}`)
+    op = operator
     if (val === null) {
       this._wheres.push(`${quoteIdent(col)} IS ${op === '!=' || op === '<>' ? 'NOT NULL' : 'NULL'}`)
       return
@@ -217,6 +225,12 @@ class ClickHouseQuery {
 function renderValue(value) {
   if (typeof value === 'number') return String(value)
   if (typeof value === 'boolean') return value ? '1' : '0'
+  // String(date) is the locale form ("Thu Nov 12 2026 10:00:00 GMT+0300"), which ClickHouse
+  // cannot parse. An explicit UTC DateTime64 keeps the instant regardless of server timezone.
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new TypeError('ODAC ClickHouse: invalid Date value')
+    return `toDateTime64(${quoteLiteral(value.toISOString().slice(0, 23).replace('T', ' '))}, 3, 'UTC')`
+  }
   return quoteLiteral(value)
 }
 

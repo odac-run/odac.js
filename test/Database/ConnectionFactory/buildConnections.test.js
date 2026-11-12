@@ -24,6 +24,12 @@ describe('ConnectionFactory.buildConnections()', () => {
     expect(mockKnex).toHaveBeenCalledTimes(1)
   })
 
+  it('treats a single config whose first key is an object (ssl) as one connection', () => {
+    const connections = buildConnections({ssl: {rejectUnauthorized: true}, type: 'postgres', database: 'app'})
+    expect(Object.keys(connections)).toEqual(['default'])
+    expect(mockKnex.mock.calls[0][0].connection.ssl).toEqual({rejectUnauthorized: true})
+  })
+
   it('should support multi database config', () => {
     const connections = buildConnections({
       analytics: {type: 'postgres', user: 'u', database: 'a'},
@@ -31,5 +37,32 @@ describe('ConnectionFactory.buildConnections()', () => {
     })
     expect(Object.keys(connections).sort()).toEqual(['analytics', 'default'])
     expect(mockKnex).toHaveBeenCalledTimes(2)
+  })
+
+  // Every process (primary + one worker per core) opens its own pool. A fixed
+  // 10 per process made 330 connections on 32 cores, over PostgreSQL's default
+  // max_connections of 100, so workers failed to connect under load.
+  describe('pool size', () => {
+    const poolMax = () => mockKnex.mock.calls.at(-1)[0].pool.max
+
+    it('keeps 10 for a single process such as the migration CLI', () => {
+      buildConnections({type: 'postgres', database: 'app'})
+      expect(poolMax()).toBe(10)
+    })
+
+    it('splits the default budget across the cluster', () => {
+      buildConnections({type: 'postgres', database: 'app'}, {processCount: 33})
+      expect(poolMax() * 33).toBeLessThanOrEqual(100)
+    })
+
+    it('never goes below 2, so a transaction cannot starve its own process', () => {
+      buildConnections({type: 'postgres', database: 'app'}, {processCount: 200})
+      expect(poolMax()).toBe(2)
+    })
+
+    it('uses an explicit connectionLimit as the per-process size', () => {
+      buildConnections({type: 'postgres', database: 'app', connectionLimit: 25}, {processCount: 33})
+      expect(poolMax()).toBe(25)
+    })
   })
 })

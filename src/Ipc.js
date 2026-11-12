@@ -1,6 +1,20 @@
 const cluster = require('node:cluster')
 const {EventEmitter} = require('node:events')
 
+function copy(value) {
+  return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
+}
+
+// worker.send() to a worker whose channel is closing emits 'error' on the worker when no
+// callback is given; nothing listens for it, so it would crash the primary.
+function sendToWorker(worker, message) {
+  if (!worker || !worker.isConnected?.()) return
+  worker.send(message, error => {
+    if (error)
+      console.error(JSON.stringify({level: 'WARN', message: 'Ipc could not reach a worker', worker: worker.id, error: error.message}))
+  })
+}
+
 class Ipc extends EventEmitter {
   constructor() {
     super()
@@ -9,6 +23,7 @@ class Ipc extends EventEmitter {
     this._requests = new Map() // For memory driver response tracking
     this._subs = new Map() // For memory driver subscriptions
     this._redisBridges = new Map() // channel -> the single node-redis listener bridging to our EventEmitter
+    this._lockOwners = new Map() // key -> owner token of a lock this process acquired without naming one
   }
 
   /**
@@ -40,9 +55,8 @@ class Ipc extends EventEmitter {
 
   async set(key, value, ttl = 0) {
     if (this.config.driver === 'redis') {
-      const args = [key, JSON.stringify(value)]
-      if (ttl > 0) args.push('EX', ttl)
-      return this.redis.set(...args)
+      // node-redis v4+ takes SET options as an object; positional 'EX', ttl is ignored there.
+      return ttl > 0 ? this.redis.set(key, JSON.stringify(value), {EX: ttl}) : this.redis.set(key, JSON.stringify(value))
     } else {
       return this._sendMemory('set', {key, value, ttl})
     }
@@ -72,15 +86,23 @@ class Ipc extends EventEmitter {
    * where concurrent workers must not cause lost updates (get→modify→set race).
    * Redis: INCRBYFLOAT. Memory: single-threaded Primary guarantees atomicity.
    *
+   * A `ttl` makes the counter a fixed window: the expiry is set when the key is created and
+   * not extended by later increments, so short-lived counters (rate limits) clean themselves up
+   * instead of accumulating one key per client forever.
+   *
    * @param {string} key
    * @param {number} delta - Amount to add (can be negative)
+   * @param {number} [ttl=0] - Seconds until a newly created counter expires; 0 keeps it forever
    * @returns {Promise<number>} New value after increment
    */
-  async incrBy(key, delta) {
+  async incrBy(key, delta, ttl = 0) {
     if (this.config.driver === 'redis') {
-      return Number(await this.redis.incrByFloat(key, delta))
+      const value = Number(await this.redis.incrByFloat(key, delta))
+      // The first increment is the one that created the key.
+      if (ttl > 0 && value === delta) await this.redis.expire(key, ttl)
+      return value
     }
-    return this._sendMemory('incrBy', {key, delta})
+    return this._sendMemory('incrBy', {key, delta, ttl})
   }
 
   /**
@@ -168,6 +190,16 @@ class Ipc extends EventEmitter {
   }
 
   /**
+   * Why: WriteBuffer checks whether a full insert queue has drained without copying it.
+   * @param {string} key
+   * @returns {Promise<number>} List length (0 when missing)
+   */
+  async llen(key) {
+    if (this.config.driver === 'redis') return this.redis.lLen(key)
+    return this._sendMemory('llen', {key})
+  }
+
+  /**
    * Why: Atomic read-and-clear for queue flush. Prevents data loss caused by
    * non-atomic lrange() + del() where new rpush() arrivals between the two
    * calls would be silently deleted. Redis: MULTI/EXEC pipeline.
@@ -234,26 +266,75 @@ class Ipc extends EventEmitter {
 
   /**
    * Why: Horizontal scaling requires exactly ONE server to run flush at a time.
-   * Redis: SET NX EX (atomic test-and-set with TTL). Memory: Primary-local boolean.
-   * TTL prevents deadlocks if the lock holder crashes mid-flush.
+   * Redis: SET NX EX (atomic test-and-set with TTL). Memory: Primary-local entry.
+   * TTL prevents deadlocks if the lock holder crashes mid-flush. The stored owner token lets
+   * the holder release or extend only its own lock: without it, a holder that outlived the TTL
+   * would delete the lock a second process had acquired meanwhile.
+   *
+   * Without an owner, a random token is generated and remembered by this process, so the
+   * documented lock(key) ... unlock(key) pattern is ownership-checked too.
    *
    * @param {string} key
    * @param {number} [ttl=10] - Lock time-to-live in seconds
+   * @param {string} [owner] - Token identifying the holder
    * @returns {Promise<boolean>} true if lock acquired
    */
-  async lock(key, ttl = 10) {
+  async lock(key, ttl = 10, owner) {
+    const token = owner === undefined ? require('node:crypto').randomUUID() : String(owner)
+    let acquired
     if (this.config.driver === 'redis') {
-      const result = await this.redis.set(key, '1', {NX: true, EX: ttl})
-      return result === 'OK'
+      acquired = (await this.redis.set(key, token, {NX: true, EX: ttl})) === 'OK'
+    } else {
+      acquired = await this._sendMemory('lock', {key, ttl, owner: token})
     }
-    return this._sendMemory('lock', {key, ttl})
+    if (acquired && owner === undefined) this._lockOwners.set(key, token)
+    return acquired
   }
 
   /**
-   * Why: Release flush lock after completion so the next cycle can proceed.
+   * Why: Release a lock after the critical section so the next holder can proceed.
+   * The lock is released only if it is still held by `owner` (or, without one, by this
+   * process's lock(key) call). A holder that outlived its TTL therefore cannot delete the lock
+   * another process acquired meanwhile. Use forceUnlock() to break a stale lock.
+   * @returns {Promise<boolean>} true if a lock was released
    */
-  async unlock(key) {
-    return this.del(key)
+  async unlock(key, owner) {
+    if (owner === undefined) {
+      owner = this._lockOwners.get(key)
+      if (owner === undefined) return false
+      this._lockOwners.delete(key)
+    }
+    if (this.config.driver === 'redis') {
+      const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+      return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner)]})) === 1
+    }
+    return this._sendMemory('unlock', {key, owner: String(owner)})
+  }
+
+  /**
+   * Removes a lock whoever holds it.
+   * Why: breaking a stale lock is a deliberate act (e.g. the final flush at shutdown), never
+   * the side effect of an unlock() without an owner.
+   * @returns {Promise<boolean>} true if a lock was removed
+   */
+  async forceUnlock(key) {
+    this._lockOwners.delete(key)
+    const removed = await this.del(key) // memory: boolean, redis: count
+    return removed === true || Number(removed) > 0
+  }
+
+  /**
+   * Why: Lets a long-running holder keep its lock alive instead of losing it at the TTL.
+   * @returns {Promise<boolean>} false if the lock is no longer held by `owner`
+   */
+  async extendLock(key, owner, ttl = 10) {
+    if (owner === undefined) owner = this._lockOwners.get(key)
+    if (owner === undefined) return false
+    if (this.config.driver === 'redis') {
+      const script = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end"
+      return Number(await this.redis.eval(script, {keys: [key], arguments: [String(owner), String(ttl)]})) === 1
+    }
+    return this._sendMemory('extendLock', {key, ttl, owner: String(owner)})
   }
 
   async publish(channel, message) {
@@ -291,11 +372,14 @@ class Ipc extends EventEmitter {
       // down the Redis subscription the other consumers still depend on.
       if (!this._redisBridges.has(channel)) {
         const bridge = raw => {
+          let message
           try {
-            this.emit(channel, JSON.parse(raw))
+            message = JSON.parse(raw)
           } catch (err) {
             console.error('[Odac Ipc] Failed to parse message on channel "' + channel + '":', err)
+            return
           }
+          for (const listener of this.listeners(channel)) this._deliver(channel, listener, message)
         }
         this._redisBridges.set(channel, bridge)
         try {
@@ -445,10 +529,30 @@ class Ipc extends EventEmitter {
           // Pub/Sub message received from Primary
           const subs = this._subs.get(msg.channel)
           if (subs) {
-            subs.forEach(cb => cb(msg.message))
+            for (const cb of subs) this._deliver(msg.channel, cb, msg.message)
           }
         }
       })
+    }
+  }
+
+  /**
+   * Invokes one subscriber callback in isolation.
+   *
+   * Why: callbacks are user code running inside the worker's process 'message'
+   * listener (memory) or the Redis bridge. A throw would escape as an uncaught
+   * exception and a rejection as an unhandled rejection; either terminates the
+   * worker and every connection on it. Containing it also keeps one faulty
+   * consumer from starving its co-tenants on the channel.
+   */
+  _deliver(channel, callback, message) {
+    const report = err =>
+      console.error(JSON.stringify({level: 'ERROR', message: `Ipc subscriber on "${channel}" failed`, error: err?.message ?? String(err)}))
+    try {
+      const result = callback(message)
+      if (result && typeof result.then === 'function') result.then(undefined, report)
+    } catch (err) {
+      report(err)
     }
   }
 
@@ -480,8 +584,11 @@ class Ipc extends EventEmitter {
     })
   }
 
+  // Calls made on the primary itself (cron jobs) must see the same semantics as workers, whose
+  // values cross process.send() as JSON: get() used to return the stored object itself, so a
+  // caller mutating it changed the cache for everyone.
   _handleDirectPrimaryCall(action, payload) {
-    return this._executePrimaryAction(action, payload)
+    return copy(this._executePrimaryAction(action, copy(payload)))
   }
 
   /**
@@ -510,7 +617,10 @@ class Ipc extends EventEmitter {
 
       // --- Atomic Counter ---
       case 'incrBy': {
-        const data = this._memoryStore.get(msg.key) || {value: 0, expireAt: Infinity}
+        let data = this._memoryStore.get(msg.key)
+        if (!data || (data.expireAt !== Infinity && Date.now() > data.expireAt)) {
+          data = {value: 0, expireAt: msg.ttl > 0 ? Date.now() + msg.ttl * 1000 : Infinity}
+        }
         data.value = (typeof data.value === 'number' ? data.value : 0) + msg.delta
         this._memoryStore.set(msg.key, data)
         return data.value
@@ -545,6 +655,10 @@ class Ipc extends EventEmitter {
         if (!data || !Array.isArray(data.value)) return []
         return msg.stop === -1 ? data.value.slice(msg.start) : data.value.slice(msg.start, msg.stop + 1)
       }
+      case 'llen': {
+        const data = this._memoryStore.get(msg.key)
+        return data && Array.isArray(data.value) ? data.value.length : 0
+      }
       case 'lrangeAndDel': {
         const data = this._memoryStore.get(msg.key)
         if (!data || !Array.isArray(data.value)) return []
@@ -554,37 +668,26 @@ class Ipc extends EventEmitter {
       }
 
       // --- Set ---
+      // Members live in a Set: membership checks were Array.includes/indexOf, O(n) per member.
       case 'sadd': {
         let data = this._memoryStore.get(msg.key)
-        if (!data) {
-          data = {value: [], expireAt: Infinity}
+        if (!data || !(data.value instanceof Set)) {
+          data = {value: new Set(), expireAt: Infinity}
           this._memoryStore.set(msg.key, data)
         }
-        if (!Array.isArray(data.value)) data.value = []
-        let added = 0
-        for (const m of msg.members) {
-          if (!data.value.includes(m)) {
-            data.value.push(m)
-            added++
-          }
-        }
-        return added
+        const before = data.value.size
+        for (const m of msg.members) data.value.add(m)
+        return data.value.size - before
       }
       case 'smembers': {
         const data = this._memoryStore.get(msg.key)
-        return data && Array.isArray(data.value) ? data.value.slice() : []
+        return data && data.value instanceof Set ? [...data.value] : []
       }
       case 'srem': {
         const data = this._memoryStore.get(msg.key)
-        if (!data || !Array.isArray(data.value)) return 0
+        if (!data || !(data.value instanceof Set)) return 0
         let removed = 0
-        for (const m of msg.members) {
-          const idx = data.value.indexOf(m)
-          if (idx !== -1) {
-            data.value.splice(idx, 1)
-            removed++
-          }
-        }
+        for (const m of msg.members) if (data.value.delete(m)) removed++
         return removed
       }
 
@@ -593,7 +696,19 @@ class Ipc extends EventEmitter {
         const existing = this._memoryStore.get(msg.key)
         if (existing && existing.expireAt > Date.now()) return false
         const expireAt = Date.now() + (msg.ttl || 10) * 1000
-        this._memoryStore.set(msg.key, {value: '1', expireAt})
+        this._memoryStore.set(msg.key, {value: msg.owner ?? '1', expireAt})
+        return true
+      }
+      case 'unlock': {
+        const existing = this._memoryStore.get(msg.key)
+        if (!existing || existing.expireAt <= Date.now() || existing.value !== msg.owner) return false
+        this._memoryStore.delete(msg.key)
+        return true
+      }
+      case 'extendLock': {
+        const existing = this._memoryStore.get(msg.key)
+        if (!existing || existing.expireAt <= Date.now() || existing.value !== msg.owner) return false
+        existing.expireAt = Date.now() + (msg.ttl || 10) * 1000
         return true
       }
 
@@ -601,9 +716,18 @@ class Ipc extends EventEmitter {
       case 'publish': {
         const workers = this._memorySubs.get(msg.channel)
         if (workers) {
-          workers.forEach(wId => {
-            const w = require('node:cluster').workers[wId]
-            if (w) w.send({type: 'ipc:message', channel: msg.channel, message: msg.message})
+          for (const wId of workers) {
+            sendToWorker(cluster.workers[wId], {type: 'ipc:message', channel: msg.channel, message: msg.message})
+          }
+        }
+        // Subscribers on the primary itself (cron jobs) have no worker id to be registered
+        // under; they are served from the primary's own subscription map. Delivery is
+        // deferred and the message copied, matching what a worker receives.
+        const local = this._subs.get(msg.channel)
+        if (local && local.size > 0) {
+          const message = copy(msg.message)
+          setImmediate(() => {
+            for (const cb of local) this._deliver(msg.channel, cb, message)
           })
         }
         return undefined
@@ -702,7 +826,7 @@ class Ipc extends EventEmitter {
     const response = this._executePrimaryAction(action, msg)
 
     if (msg.id) {
-      worker.send({type: 'ipc:response', id: msg.id, data: response})
+      sendToWorker(worker, {type: 'ipc:response', id: msg.id, data: response})
     }
   }
 }

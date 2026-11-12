@@ -10,32 +10,32 @@ metadata:
 Sending transactional emails using the fluent `Odac.Mail` service.
 
 ## Core Rules
-1.  **Transport**: Configured via `odac.json` (SMTP, etc.).
-2.  **Templating**: Combine with `Odac.Var().replace()` for dynamic content.
-3.  **Methods**: Use `Odac.Mail.send({ ... })`.
+1.  **Transport**: Mail is delivered through the ODAC Core socket (`ODAC_API_SOCKET`, default `/odac/api.sock`); there is no SMTP transport in the framework.
+2.  **Templating**: Templates live in `view/mail/<name>.html` and use the view syntax. Identifier keys of the `send()` data are locals (`{{ name }}`); any key is reachable with `get('key')`.
+3.  **Result**: `send()` resolves to the Core response or `false` (invalid addresses, template error, delivery failure). Always check it.
 
 ## Reference Patterns
-### 1. Simple Email
+### 1. Template-based Email
 ```javascript
-await Odac.Mail.send({
-  to: 'user@example.com',
-  subject: 'Welcome!',
-  body: '<h1>Hello!</h1>',
-  type: 'html' // default is text
-});
+const sent = await Odac.Mail('welcome')
+  .from('noreply@example.com', 'My App')
+  .to(user.email, user.name)
+  .subject('Welcome!')
+  .send({name: user.name, site: 'ODAC'})
+if (!sent) throw new Error('Welcome mail failed')
 ```
 
-### 2. Template-based Email
-```javascript
-const template = 'Hello {{ name }}, welcome to {{ site }}!';
-const body = Odac.Var(template).replace({
-  '{{ name }}': user.name,
-  '{{ site }}': 'ODAC'
-});
+`view/mail/welcome.html`:
+```html
+<p>Hello {{ name }}, welcome to {{ site }}!</p>
+```
 
-await Odac.Mail.send({
-  to: user.email,
-  subject: 'Registration Success',
-  body: body
-});
+### 2. Inline HTML or Text
+```javascript
+await Odac.Mail()
+  .from('noreply@example.com')
+  .to('user@example.com')
+  .subject('Ping')
+  .html('<h1>Hello!</h1>')
+  .send()
 ```

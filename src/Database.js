@@ -16,15 +16,21 @@ class DatabaseManager {
   async init() {
     if (!Odac.Config.database) return
 
-    this.connections = buildConnections(Odac.Config.database)
+    const cluster = require('node:cluster')
+    // Primary + one pool per worker share the database's connection limit.
+    const processCount = require('./Server.js').workerCount() + 1
+    this.connections = buildConnections(Odac.Config.database, {processCount})
 
+    // The primary boots once, at deploy: a dead database there is a
+    // misconfiguration and must stop startup. A worker is respawned while the
+    // app runs; knex reconnects per query, so it logs and keeps serving
+    // rather than crash-looping through a transient outage.
     for (const key of Object.keys(this.connections)) {
-      // Test connection
       try {
         await this.connections[key].raw('SELECT 1')
       } catch (e) {
-        console.error(`Odac Database Error: Failed to connect to '${key}' database.`)
-        console.error(e.message)
+        if (cluster.isPrimary) throw new Error(`Failed to connect to '${key}' database: ${e.message}`, {cause: e})
+        console.error(JSON.stringify({level: 'ERROR', message: `Failed to connect to '${key}' database`, error: e.message}))
       }
     }
 
@@ -174,13 +180,90 @@ const manager = new DatabaseManager()
  * Normalizes a count() result into a plain number.
  * Postgres returns counts as strings, and Knex wraps them in [{'count(*)': n}].
  */
-const normalizeCountResult = result => {
+const normalizeCountResult = (result, builder) => {
+  // A grouped count is one row per group; collapsing it only when a single group matched
+  // made the return type depend on the data (a number for one group, an array for two).
+  if (builder?._statements?.some(statement => statement.grouping === 'group')) return result
   const isScalar = Array.isArray(result) && result.length === 1 && Object.keys(result[0]).length === 1
   if (!isScalar) return result
 
   const val = result[0][Object.keys(result[0])[0]]
   if (val != null && String(val).trim() !== '' && !isNaN(val)) return Number(val)
   return result
+}
+
+/**
+ * Purges a table's read cache after a write.
+ * Why: a failed invalidation is logged, never surfaced. The write has already happened, and
+ * rejecting would make callers retry it.
+ */
+const invalidateTable = (connectionKey, table) =>
+  readCache.invalidate(connectionKey, table).catch(error => {
+    console.error(`\x1b[31m[ODAC ReadCache]\x1b[0m Failed to invalidate "${table}" after a write:`, error?.message)
+  })
+
+// Knex builder `_method` values that change rows. increment/decrement compile to 'update'.
+const TRX_WRITE_METHODS = new Set(['insert', 'update', 'del', 'truncate', 'upsert'])
+const trackedTransactions = new WeakSet()
+
+const writtenTables = builder => {
+  if (!builder || !TRX_WRITE_METHODS.has(builder._method)) return []
+  const table = builder._single?.table
+  if (typeof table === 'string') return [table.split(/\s+as\s+/i)[0].trim()]
+  if (table && typeof table === 'object' && !table.isRawInstance) return Object.values(table).filter(t => typeof t === 'string')
+  return []
+}
+
+/**
+ * Invalidates the read cache for every table a transaction wrote to, once it commits.
+ * Why: writes made through `trx('posts')` bypass the ODAC builder wrappers, and wrapped
+ * builders used with `.transacting(trx)` invalidate before the commit, so a concurrent read
+ * could cache the pre-commit rows again. Knex forwards `query-response` from nested
+ * transactions to their parent, so listening on the outermost transaction covers savepoints.
+ * Raw SQL inside a transaction is not tracked; clear the cache explicitly for those.
+ * @param {string} connectionKey
+ * @param {object} trx Knex transactor.
+ * @returns {object} The same transactor.
+ */
+const trackTransaction = (connectionKey, trx) => {
+  if (!trx || trx.parentTransaction || trackedTransactions.has(trx)) return trx
+  trackedTransactions.add(trx)
+
+  const tables = new Set()
+  const onResponse = (_response, _query, builder) => {
+    for (const table of writtenTables(builder)) tables.add(table)
+  }
+  trx.on('query-response', onResponse)
+
+  const settle = committed => {
+    trx.removeListener('query-response', onResponse)
+    if (!committed) return
+    for (const table of tables) invalidateTable(connectionKey, table)
+  }
+  // A rollback rejects executionPromise unless doNotRejectOnRollback is set; in that case the
+  // tables are invalidated anyway, which costs a cache refill but never serves stale data.
+  trx.executionPromise?.then(
+    () => settle(true),
+    () => settle(false)
+  )
+  return trx
+}
+
+/**
+ * Wraps `knex.transaction()` so writes made inside it reach the read cache after commit.
+ * Supports both the callback form and the promise-returning form (`await Odac.DB.transaction()`).
+ */
+const wrapTransaction = (knexInstance, connectionKey) =>
+  function transaction(container, config) {
+    if (typeof container === 'function') {
+      return knexInstance.transaction(trx => container(trackTransaction(connectionKey, trx)), config)
+    }
+    return knexInstance.transaction(container, config).then(trx => trackTransaction(connectionKey, trx))
+  }
+
+const wrapTransactionProvider = (knexInstance, connectionKey) => config => {
+  const provider = knexInstance.transactionProvider(config)
+  return () => provider().then(trx => trackTransaction(connectionKey, trx))
 }
 
 /**
@@ -203,7 +286,8 @@ const buildQueryBuilder = (knexInstance, tableName) => {
       get: column => writeBuffer.get(connectionKey, prop, where, column)
     }),
     insert: row => writeBuffer.insert(connectionKey, prop, row),
-    flush: () => writeBuffer.flush(connectionKey, prop)
+    flush: () => writeBuffer.flush(connectionKey, prop),
+    deadLetters: () => writeBuffer.deadLetters(connectionKey, prop)
   }
 
   // Read-Through Cache: Odac.DB.posts.cache(60).where({active: true}).select('id', 'title')
@@ -233,7 +317,7 @@ const buildQueryBuilder = (knexInstance, tableName) => {
       const executeFn = () => new Promise((res, rej) => originalCacheThen(res, rej))
       return readCache
         .get(connectionKey, prop, this, executeFn, this._odacCacheTtl)
-        .then(result => (this._odacIsCount ? normalizeCountResult(result) : result))
+        .then(result => (this._odacIsCount ? normalizeCountResult(result, this) : result))
         .then(resolve, reject)
     }
 
@@ -244,29 +328,34 @@ const buildQueryBuilder = (knexInstance, tableName) => {
     clear: () => readCache.clear(connectionKey, prop)
   })
 
-  // Automatic cache invalidation on write operations (insert/update/delete/truncate).
+  // Automatic cache invalidation on write operations.
   // Why: Prevents stale reads — any mutation on a table purges all cached SELECT results.
-  // Write methods are terminal (no further chaining after await), so wrapping the return
-  // as a simple thenable is safe and avoids .then() override conflicts with count/other wraps.
-  const wrapWithInvalidation = original =>
+  // The write methods return the Knex builder itself with only its .then() wrapped, so the
+  // full chain keeps working (.update().where(), .returning(), .transacting(), .finally()).
+  // Inside a transaction trackTransaction() invalidates again after the commit.
+  const invalidate = () => invalidateTable(connectionKey, prop)
+
+  const withInvalidation = original =>
     function (...args) {
-      const qbResult = original.apply(this, args)
-      const thenable = {
-        then: (resolve, reject) =>
-          qbResult.then(res => readCache.invalidate(connectionKey, prop).then(() => res), reject).then(resolve, reject),
-        catch: fn => thenable.then(undefined, fn)
+      const builder = original.apply(this, args)
+      if (!builder || builder._odacInvalidates) return builder
+      builder._odacInvalidates = true
+      const previousThen = builder.then
+      builder.then = function (resolve, reject) {
+        return previousThen
+          .call(this)
+          .then(async result => {
+            await invalidate()
+            return result
+          })
+          .then(resolve, reject)
       }
-      return thenable
+      return builder
     }
 
-  const originalUpdate = qb.update
-  const originalDelete = qb.delete
-  const originalDel = qb.del
-  const originalTruncate = qb.truncate
-  qb.update = wrapWithInvalidation(originalUpdate)
-  qb.delete = wrapWithInvalidation(originalDelete)
-  qb.del = wrapWithInvalidation(originalDel)
-  qb.truncate = wrapWithInvalidation(originalTruncate)
+  for (const method of ['update', 'delete', 'del', 'truncate', 'increment', 'decrement']) {
+    qb[method] = withInvalidation(qb[method])
+  }
 
   // Odac DX Improvement: Wrap count() to return a clean number
   const originalCount = qb.count
@@ -296,28 +385,13 @@ const buildQueryBuilder = (knexInstance, tableName) => {
     }
   }
 
-  // Cache invalidation for insert — applied AFTER nanoid wrap so both paths are covered.
-  // IMPORTANT: Unlike update/delete/truncate, insert is NOT terminal — it supports
-  // chaining (e.g. .insert().onConflict().merge()). So we cannot use wrapWithInvalidation
-  // which returns a plain thenable. Instead, override .then() on the query builder to
-  // inject invalidation at execution time, preserving the full Knex chain.
-  const insertBeforeInvalidation = qb.insert
-  qb.insert = function (...args) {
-    const result = insertBeforeInvalidation.apply(this, args)
-    const origThen = result.then
-    result.then = function (resolve, reject) {
-      return origThen
-        .call(this)
-        .then(res => readCache.invalidate(connectionKey, prop).then(() => res))
-        .then(resolve, reject)
-    }
-    return result
-  }
+  // Applied AFTER the nanoid wrap so both paths are covered.
+  qb.insert = withInvalidation(qb.insert)
 
   const originalThen = qb.then
   qb.then = function (resolve, reject) {
     if (this._odacIsCount) {
-      return originalThen.call(this, result => resolve(normalizeCountResult(result)), reject)
+      return originalThen.call(this, result => resolve(normalizeCountResult(result, this)), reject)
     }
     return originalThen.call(this, resolve, reject)
   }
@@ -366,7 +440,8 @@ const buildClickHouseTable = (adapter, tableName) => {
   query.query = sql => adapter.query(sql)
   query.buffer = {
     insert: row => writeBuffer.insert(connectionKey, tableName, row),
-    flush: () => writeBuffer.flush(connectionKey, tableName)
+    flush: () => writeBuffer.flush(connectionKey, tableName),
+    deadLetters: () => writeBuffer.deadLetters(connectionKey, tableName)
   }
 
   return query
@@ -399,6 +474,10 @@ const tableProxyHandler = {
     // 1. Check for legacy/alias methods
     if (prop === 'run') return knexInstance.raw.bind(knexInstance)
     if (prop === 'table') return tableName => buildQueryBuilder(knexInstance, tableName)
+    if (prop === 'transaction') return wrapTransaction(knexInstance, knexInstance._odacConnectionKey || 'default')
+    if (prop === 'transactionProvider') {
+      return wrapTransactionProvider(knexInstance, knexInstance._odacConnectionKey || 'default')
+    }
 
     // 2. Pass through Knex instance methods (raw, schema, fn, destroy, etc.)
     if (typeof knexInstance[prop] === 'function') {

@@ -26,7 +26,8 @@ function createMockSocket() {
     on: jest.fn(),
     write: jest.fn(),
     end: jest.fn(),
-    removeAllListeners: jest.fn(),
+    removeListener: jest.fn(),
+    destroy: jest.fn(),
     writable: true
   }
 }
@@ -117,6 +118,25 @@ describe('WebSocketClient #handleMessage', () => {
       send(buildFrame(0x1, 'ls'))
 
       expect(messages[0]).toBe('ls')
+    })
+
+    // Only JSON.parse may fall back to the raw text. A handler error must not
+    // re-deliver the same frame unparsed.
+    it('should deliver a JSON payload once when a handler throws', () => {
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+      const socket = createMockSocket()
+      const client = createClient(socket, server, 'msg-2')
+      client.resume()
+      const received = []
+      client.on('message', msg => {
+        received.push(msg)
+        throw new Error('handler bug')
+      })
+
+      socket.on.mock.calls.find(c => c[0] === 'data')[1](buildFrame(0x1, '{"a":1}'))
+
+      expect(received).toEqual([{a: 1}])
+      console.error.mockRestore()
     })
   })
 

@@ -40,4 +40,20 @@ describe('Var.decrypt()', () => {
     const cipher = new Var('round trip').encrypt()
     expect(new Var(cipher).decrypt()).toBe('round trip')
   })
+  it('decrypts v2 random-IV CBC ciphertext written by earlier versions', () => {
+    // v2 derived the AES key as sha256(String(key)), including for the Buffer key Config.init() produces.
+    const configKey = nodeCrypto.createHash('sha256').update('existing-secret').digest()
+    setKey(configKey)
+    const iv = nodeCrypto.randomBytes(16)
+    const cbcKey = nodeCrypto.createHash('sha256').update(String(configKey)).digest()
+    const cipher = nodeCrypto.createCipheriv('aes-256-cbc', cbcKey, iv)
+    const v2 = 'v2:' + Buffer.concat([iv, cipher.update('old record'), cipher.final()]).toString('base64')
+
+    expect(new Var(v2).decrypt()).toBe('old record')
+  })
+
+  it('returns null for truncated v3 ciphertext', () => {
+    setKey('a-strong-secret-key')
+    expect(new Var('v3:AAAA').decrypt()).toBeNull()
+  })
 })

@@ -97,7 +97,8 @@ describe('Auth.check()', () => {
       },
       Var: jest.fn(() => ({
         hash: jest.fn(() => 'hashed_value'),
-        hashCheck: jest.fn(() => true)
+        hashCheck: jest.fn(() => true),
+        hashCheckAsync: jest.fn(async () => true)
       }))
     }
   })
@@ -236,6 +237,15 @@ describe('Auth.check()', () => {
     expect(xSet[2].maxAge).toBeUndefined()
   })
 
+  it('rejects token cookies that parsed as JSON objects before querying', async () => {
+    reqMock.cookie.mockImplementation(name => ({odac_x: {token_x: 1}, odac_y: 'old_y'})[name] ?? null)
+    const dbMock = createDbMock([])
+    global.Odac.DB.user_tokens = dbMock
+
+    await expect(authInstance.check()).resolves.toBe(false)
+    expect(dbMock.where).not.toHaveBeenCalled()
+  })
+
   it('should NOT rotate when tokenAge is within rotationAge threshold', async () => {
     const recentDate = Date.now() - 5 * 60 * 1000 // 5 mins ago -> within 15 min rotationAge
 
@@ -329,6 +339,41 @@ describe('Auth.check()', () => {
     // No new cookies set (nothing to deliver over WS)
     const setCalls = wsReqMock.cookie.mock.calls.filter(c => c.length >= 2)
     expect(setCalls.length).toBe(0)
+  })
+
+  it('should skip rotation once the response headers are already sent (open SSE stream)', async () => {
+    const createdAt = Date.now() - 20 * 60 * 1000
+
+    const sseReqMock = {
+      cookie: jest.fn((name, value) => {
+        if (value !== undefined) return
+        return {odac_x: 'old_x', odac_y: 'old_y'}[name] || null
+      }),
+      header: jest.fn(name => (name === 'user-agent' ? 'TestBrowser' : null)),
+      ip: '127.0.0.1',
+      res: {headersSent: true}
+    }
+
+    const dbMock = createDbMock([
+      {
+        active: new Date(),
+        browser: 'TestBrowser',
+        date: new Date(createdAt),
+        id: 'token_sse',
+        ip: '127.0.0.1',
+        token_x: 'old_x',
+        token_y: HASHED_OLD_Y,
+        user: 'user_11'
+      }
+    ])
+    global.Odac.DB.user_tokens = dbMock
+    global.Odac.DB.users = dbMock
+
+    await expect(new Auth(sseReqMock).check()).resolves.toBe(true)
+
+    expect(dbMock.insert).not.toHaveBeenCalled()
+    expect(dbMock.tracker.updateCalls.length).toBe(1)
+    expect(sseReqMock.cookie.mock.calls.filter(c => c.length >= 2)).toHaveLength(0)
   })
 
   it('should skip recovery rotation for WebSocket connections (res === null)', async () => {
@@ -612,7 +657,7 @@ describe('Auth.check()', () => {
   })
 
   it('accepts a legacy scrypt-hashed token for backward compatibility', async () => {
-    // #verifyToken routes $scrypt$ tokens through Odac.Var().hashCheck() (mocked true).
+    // #verifyToken routes $scrypt$ tokens through Odac.Var().hashCheckAsync() (mocked true).
     const dbMock = createDbMock([freshRecord({token_y: '$scrypt$deadbeef$cafe'})])
     global.Odac.DB.user_tokens = dbMock
     global.Odac.DB.users = dbMock
@@ -627,5 +672,149 @@ describe('Auth.check()', () => {
     const upgrade = dbMock.tracker.updateCalls.find(p => p.token_y)
     expect(upgrade).toBeDefined()
     expect(upgrade.token_y).toBe(HASHED_OLD_Y)
+  })
+
+  // check(where) is the credential lookup behind login(). The password column
+  // must only ever match through hash verification: plain equality accepted a
+  // plaintext-stored password (the template's seeded admin) and the stored hash
+  // itself as a valid password.
+  describe('credential lookup', () => {
+    const Var = require('../../src/Var.js')
+
+    const usersTable = rows => {
+      const query = {
+        update: jest.fn(() => Promise.resolve(1)),
+        where: jest.fn(() => query),
+        then: (resolve, reject) => Promise.resolve(rows).then(resolve, reject)
+      }
+      return query
+    }
+
+    beforeEach(() => {
+      global.Odac.Var = value => new Var(value)
+    })
+
+    it('accepts the correct password against a scrypt hash', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      const user = await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(user).toMatchObject({id: 1})
+    })
+
+    it('rejects a wrong password', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: 'nope'})).resolves.toBe(false)
+    })
+
+    it('rejects the stored hash submitted as the password', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: stored})).resolves.toBe(false)
+    })
+
+    it('rejects a password stored in plaintext even when it matches exactly', async () => {
+      global.Odac.DB.users = usersTable([{id: 1, email: 'admin@example.com', password: 'changeme'}])
+
+      await expect(authInstance.check({email: 'admin@example.com', password: 'changeme'})).resolves.toBe(false)
+    })
+
+    it('applies the same rule to a custom passwordField', async () => {
+      global.Odac.Config.auth.passwordField = 'pass'
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', pass: 'plain'}])
+
+      await expect(authInstance.check({email: 'a@example.com', pass: 'plain'})).resolves.toBe(false)
+    })
+
+    it('still matches non-password fields by equality', async () => {
+      global.Odac.DB.users = usersTable([{id: 1, email: 'a@example.com', api_key: 'k-123'}])
+
+      const user = await authInstance.check({email: 'a@example.com', api_key: 'k-123'})
+
+      expect(user).toMatchObject({id: 1})
+    })
+    it('never sends the password to the database', async () => {
+      const stored = new Var('s3cret').hash()
+      const table = usersTable([{id: 1, email: 'a@example.com', password: stored}])
+      global.Odac.DB.users = table
+
+      await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(table.where.mock.calls).toEqual([['email', 'a@example.com']])
+    })
+
+    it('requires every identity field to match (AND, not OR)', async () => {
+      const table = usersTable([])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', tenant: 't1', password: 'x'})).resolves.toBe(false)
+
+      expect(table.where.mock.calls).toEqual([
+        ['email', 'a@example.com'],
+        ['tenant', 't1']
+      ])
+    })
+
+    it('refuses a lookup that only carries the password', async () => {
+      const table = usersTable([{id: 1, password: new Var('s3cret').hash()}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({password: 's3cret'})).resolves.toBe(false)
+      expect(table.where).not.toHaveBeenCalled()
+    })
+
+    it('rejects a row whose identity only matches case-insensitively', async () => {
+      const stored = new Var('s3cret').hash()
+      global.Odac.DB.users = usersTable([{id: 1, email: 'A@example.com', password: stored}])
+
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret'})).resolves.toBe(false)
+    })
+
+    it('runs a scrypt verification even when the account does not exist', async () => {
+      global.Odac.DB.users = usersTable([])
+      const hashCheck = jest.spyOn(Var.prototype, 'hashCheckAsync')
+
+      await expect(authInstance.check({email: 'ghost@example.com', password: 'guess'})).resolves.toBe(false)
+
+      expect(hashCheck).toHaveBeenCalledTimes(1)
+      hashCheck.mockRestore()
+    })
+
+    it('accepts a legacy MD5 password once and upgrades it to scrypt', async () => {
+      const md5 = nodeCrypto.createHash('md5').update('s3cret').digest('hex')
+      const table = usersTable([{id: 7, email: 'a@example.com', password: md5}])
+      global.Odac.DB.users = table
+
+      const user = await authInstance.check({email: 'a@example.com', password: 's3cret'})
+
+      expect(user).toMatchObject({id: 7})
+      expect(table.where).toHaveBeenCalledWith('id', 7)
+      const [[update]] = table.update.mock.calls
+      expect(update.password.startsWith('$scrypt$')).toBe(true)
+      expect(new Var(update.password).hashCheck('s3cret')).toBe(true)
+    })
+
+    it('rejects a wrong password against a legacy MD5 hash without upgrading', async () => {
+      const md5 = nodeCrypto.createHash('md5').update('s3cret').digest('hex')
+      const table = usersTable([{id: 7, email: 'a@example.com', password: md5}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', password: 'nope'})).resolves.toBe(false)
+      expect(table.update).not.toHaveBeenCalled()
+    })
+
+    it('treats every column listed in passwordField as a secret', async () => {
+      global.Odac.Config.auth.passwordField = ['password', 'pin']
+      const table = usersTable([{id: 1, email: 'a@example.com', password: new Var('s3cret').hash(), pin: new Var('1234').hash()}])
+      global.Odac.DB.users = table
+
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret', pin: '1234'})).resolves.toMatchObject({id: 1})
+      await expect(authInstance.check({email: 'a@example.com', password: 's3cret', pin: '0000'})).resolves.toBe(false)
+      expect(table.where.mock.calls.every(([column]) => column === 'email')).toBe(true)
+    })
   })
 })

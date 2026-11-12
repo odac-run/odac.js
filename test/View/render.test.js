@@ -31,6 +31,7 @@ describe('View.#render()', () => {
         page: 'test_page',
         header: jest.fn(),
         end: jest.fn(),
+        abort: jest.fn(),
         get: jest.fn(),
         hasEarlyHints: jest.fn().mockReturnValue(false)
       },
@@ -58,8 +59,9 @@ describe('View.#render()', () => {
     await fs.writeFile(path.join(contentDir, `${name}.html`), html)
     view.set({content: `pages/${name}`})
     await view.print()
-    const payload = mockOdac.Request.end.mock.calls[0][0]
-    return payload.output.content
+    // A view that throws answers through abort(500) and sends no payload.
+    const payload = mockOdac.Request.end.mock.calls[0]?.[0]
+    return payload?.output?.content
   }
 
   describe('loop source validation', () => {

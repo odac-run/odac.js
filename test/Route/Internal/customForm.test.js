@@ -105,4 +105,39 @@ describe('Internal.customForm()', () => {
       expect(out.errors).toEqual({email: 'Already registered', name: 'Too short'})
     })
   })
+
+  describe('table forms', () => {
+    it('does not return database error messages to the client', async () => {
+      const Odac = makeOdac(undefined, {action: undefined, table: 'contacts', fields: []})
+      Odac.DB = {contacts: {insert: jest.fn().mockRejectedValue(new Error('SQLITE_ERROR: table contacts has no column named secret'))}}
+      global.Odac = {Config: {request: {}}}
+      const logged = jest.spyOn(console, 'error').mockImplementation(() => {})
+
+      const out = await Internal.customForm(Odac)
+
+      expect(out.result.success).toBe(false)
+      expect(out.errors._odac_form).not.toMatch(/SQLITE|column|contacts/)
+      expect(logged.mock.calls[0][0]).toContain('no column named secret')
+      logged.mockRestore()
+      delete global.Odac
+    })
+
+    // Stored uploads are permanent records; the OS temp directory is wiped on reboot.
+    it('stores file fields under storage/uploads when no uploadDir is configured', async () => {
+      const Odac = makeOdac(undefined, {action: undefined, table: 'docs', fields: [{name: 'cv', type: 'file'}]})
+      const move = jest.fn(async dest => dest)
+      Odac.file = jest.fn(async () => ({ext: 'pdf', move}))
+      Odac.DB = {docs: {insert: jest.fn().mockResolvedValue([1])}}
+      global.Odac = {Config: {request: {}}}
+      global.__dir = '/srv/app'
+
+      const out = await Internal.customForm(Odac)
+
+      expect(out.result.success).toBe(true)
+      expect(move.mock.calls[0][0]).toMatch(/^\/srv\/app\/storage\/uploads\/docs\/[0-9a-f]{16}\.pdf$/)
+      expect(Odac.formData.cv).toMatch(/^docs\/[0-9a-f]{16}\.pdf$/)
+      delete global.Odac
+      delete global.__dir
+    })
+  })
 })

@@ -39,15 +39,19 @@ Server C ─┘
 
 **Cache Key Generation**
 
-Each query is identified by a SHA-256 hash of its compiled SQL and bindings. Two identical queries — regardless of which worker or server generates them — always resolve to the same cache key.
+Each query is identified by a SHA-256 hash of its compiled SQL, its bindings and the current version of every table it reads. Two identical queries — regardless of which worker or server generates them — always resolve to the same cache key.
 
 ```
-rc:{connection}:{table}:{sha256(sql + bindings)}
+rc:{connection}:{table}:{sha256(sql + bindings + table versions)}
 ```
+
+Results keep their types: `Date` and `Buffer` values come back from a cache hit exactly as the database returned them. Concurrent identical misses in one worker share a single database query.
 
 **Automatic Invalidation**
 
-Any `insert()`, `update()`, `delete()`, or `truncate()` on a table automatically purges all cached queries for that table. You never need to manually invalidate after a write — ODAC handles it.
+Any `insert()`, `update()`, `delete()`, or `truncate()` on a table automatically invalidates all cached queries for that table. You never need to manually invalidate after a write — ODAC handles it.
+
+A write bumps the table's version, so every later read builds a new key; superseded entries are never served and expire with their TTL. A read that was already running when the write happened caches its result under the old version, so it cannot bring stale rows back.
 
 ```javascript
 // This update automatically clears all cached queries on the 'posts' table
@@ -56,10 +60,10 @@ await Odac.DB.posts.where({id: 5}).update({title: 'New Title'})
 
 **Cross-Table Invalidation (JOIN queries)**
 
-When a cached query includes `JOIN` clauses, ODAC automatically registers the cache key in all joined tables' indexes. This means a write to any table involved in the query triggers invalidation.
+When a cached query includes `JOIN` clauses, the versions of all joined tables are part of its key. This means a write to any table involved in the query triggers invalidation.
 
 ```javascript
-// This query is registered in BOTH 'posts' and 'users' cache indexes
+// This query depends on BOTH the 'posts' and 'users' versions
 const data = await Odac.DB.posts
   .cache(60)
   .join('users', 'posts.user_id', '=', 'users.id')
@@ -132,7 +136,12 @@ You do not need to call `.cache.clear()` after writes. ODAC intercepts all write
 | `delete()` | ✅ Yes |
 | `del()` | ✅ Yes |
 | `truncate()` | ✅ Yes |
+| `increment()` / `decrement()` | ✅ Yes |
+| Writes inside `Odac.DB.transaction()` | ✅ Yes, after the transaction commits; nothing on rollback |
+| Raw SQL (`Odac.DB.run()`, `trx.raw()`) | ❌ No — call `.cache.clear()` yourself |
 | `buffer.insert()` | ❌ No — buffer writes are deferred; invalidate manually if needed |
+
+> **Transactions:** Inside `Odac.DB.transaction(async trx => ...)` (or `await Odac.DB.transaction()` followed by `trx.commit()`), every table written through `trx('table')`, `.transacting(trx)` or a nested `trx.transaction()` is invalidated once the outermost transaction commits. Invalidating earlier would let a concurrent read re-cache the rows the transaction is about to replace. A transaction started from the raw Knex instance (`Odac.DB.connections.default.transaction()`) is not tracked.
 
 > **Note on `buffer` + `cache`:** If you use the Write-Behind Cache (`buffer`) alongside the Read-Through Cache, the buffer's deferred writes do not trigger automatic invalidation. Call `Odac.DB.posts.cache.clear()` after a `buffer.flush()` if you need the cache to reflect the latest state immediately.
 
@@ -154,7 +163,7 @@ Add a `cache` section to your `odac.json`:
 | Option | Default | Description |
 |---|---|---|
 | `ttl` | `300` | Default cache duration in seconds when `.cache()` is called without an argument |
-| `maxKeys` | `10000` | Maximum number of cached query keys per table. New entries are skipped once the limit is reached — protects against unbounded memory growth |
+| `maxKeys` | `10000` | Maximum number of new cache entries per table within one `ttl` window. Further entries are skipped until the window ends — protects against unbounded memory growth from many distinct queries |
 
 ---
 
@@ -200,7 +209,7 @@ With the Redis driver active, all servers share the same cache. A cache invalida
 | Cache MISS | DB query executes, result is stored in Ipc with TTL |
 | Cache HIT | Result returned from Ipc — no DB query |
 | TTL expired | Next request triggers a fresh DB query and re-caches |
-| `insert/update/delete` | All cached queries for that table are purged automatically |
+| `insert/update/delete` | All cached queries that read that table are invalidated automatically |
 | Worker crash | No data loss — cache state is in Primary process (memory) or Redis |
-| `maxKeys` reached | New cache entries are skipped; existing entries still served |
+| `maxKeys` reached | New cache entries for that table are skipped until the current window (`ttl` seconds) ends; existing entries still served |
 | Ipc not initialized | Invalidation is a no-op — safe for environments without Ipc setup |

@@ -12,3 +12,24 @@ describe('Config._deepMerge()', () => {
     })
   })
 })
+
+describe('Config._deepMerge() hardening', () => {
+  it('never writes to Object.prototype through __proto__', () => {
+    Config._deepMerge({}, JSON.parse('{"__proto__": {"polluted": true}, "a": {"__proto__": {"polluted": true}}}'))
+    expect({}.polluted).toBeUndefined()
+  })
+
+  it('drops constructor and prototype keys', () => {
+    const target = {}
+    Config._deepMerge(target, JSON.parse('{"constructor": {"prototype": {"x": 1}}, "prototype": 1}'))
+    expect(Object.prototype.hasOwnProperty.call(target, 'prototype')).toBe(false)
+    expect({}.x).toBeUndefined()
+  })
+
+  it('does not replace methods with config values', () => {
+    const target = {init: () => 'kept', value: 1}
+    Config._deepMerge(target, {init: 'oops', value: 2})
+    expect(target.init()).toBe('kept')
+    expect(target.value).toBe(2)
+  })
+})

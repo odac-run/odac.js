@@ -15,7 +15,12 @@ Supported configuration options:
 - `port` - Database port
 - `type` - Database type (`mysql`, `postgres`, `sqlite`, `clickhouse`)
 - `filename` - Database file path (only for `sqlite`, default: `./dev.sqlite3`)
-- `url` - Full endpoint URL (only for `clickhouse`; alternative to host/port)
+- `url` - Connection URL, alternative to host/user/password/database (`postgres://...`, `mysql://...`, or the ClickHouse HTTP endpoint). `connectionString` is accepted as an alias for MySQL/PostgreSQL
+- `ssl` - TLS for MySQL/PostgreSQL: `true` for TLS with the system CAs, or the driver's TLS object (`{"ca": "...", "rejectUnauthorized": true}`)
+- `charset` - Connection character set (MySQL, e.g. `utf8mb4`)
+- `timezone` - Session time zone (MySQL: `"Z"`, `"+03:00"`, `"local"`; PostgreSQL: a zone name such as `"UTC"` or `"Europe/Istanbul"`)
+- `options` - Any other driver option, passed to `mysql2` / `pg` as given
+- `connectionLimit` - Maximum pool size per process. When omitted, ODAC sizes the pools so the whole cluster stays near 80 connections (2 to 10 per process; see [Automatic Connection](#automatic-connection))
 
 ### Single Connection (MySQL Default)
 
@@ -45,6 +50,48 @@ Supported configuration options:
   }
 }
 ```
+
+### Managed Databases (TLS, Connection URL)
+
+```json
+{
+  "database": {
+    "type": "postgres",
+    "url": "${DATABASE_URL}",
+    "ssl": {"rejectUnauthorized": true}
+  }
+}
+```
+
+### SQLite
+
+```json
+{
+  "database": {
+    "type": "sqlite",
+    "filename": "./storage/app.sqlite3"
+  }
+}
+```
+
+Requires the `sqlite3` driver: `npm install sqlite3`. Each type needs its own driver package (`mysql2`, `pg`, `sqlite3`, `@clickhouse/client`); ODAC does not install them.
+
+`sqlite3` is a native addon whose binary is fetched by an install script. npm 12 and later skip dependency install scripts unless the project's `package.json` allows them. Projects created with `odac init` already allow it:
+
+```json
+"allowScripts": {
+  "sqlite3": true
+}
+```
+
+Without that entry the package lands in `node_modules` without its binary, and ODAC fails at startup with `Database driver "sqlite3" is installed but failed to load`. In an existing project, allow the script once and rebuild:
+
+```bash
+npm install-scripts approve sqlite3
+npm rebuild sqlite3
+```
+
+`approve` writes a version-pinned entry such as `"sqlite3@6.0.1": true`, which has to be approved again after every `sqlite3` upgrade. A name-only entry (`"sqlite3": true`, as in `odac init` projects, or `npm install-scripts approve sqlite3 --no-allow-scripts-pin`) allows any version.
 
 ### ClickHouse (Analytics)
 
@@ -145,5 +192,9 @@ DB_PASSWORD=mypassword
 ## Automatic Connection
 
 The connection is established automatically when your application starts. You don't need to write any connection code.
+
+ODAC tests each connection at startup. If a database is unreachable when the app boots, startup fails with an error instead of serving requests against a dead connection. A worker that is restarted later only logs the failure, since queries reconnect on their own once the database is back.
+
+Each process (the primary plus one worker per CPU core) opens its own connection pool. Without `connectionLimit`, ODAC divides a budget of about 80 connections among them, between 2 and 10 per process, which fits PostgreSQL's default `max_connections` of 100. If you set `connectionLimit`, every process uses that value, so the cluster opens up to `connectionLimit × (cores + 1)` connections.
 
 **Next Step:** Check out [Query Basics](./02-basics.md) to start using your database.

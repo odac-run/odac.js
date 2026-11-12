@@ -74,16 +74,16 @@ describe('Odac.get()', () => {
     delete global.Odac
   })
 
-  test('should automatically parse JSON if Content-Type is application/json', () => {
+  test('should automatically parse JSON if Content-Type is application/json', async () => {
     const mockCallback = jest.fn()
     const mockData = {success: true}
-    jest.spyOn(window.Odac, 'token').mockReturnValue('mock-token')
+    window.Odac.tokenAsync = jest.fn(async () => 'mock-token')
     mockXhr.responseText = JSON.stringify(mockData)
     mockXhr.status = 200
     mockXhr.statusText = 'OK'
     mockXhr.getResponseHeader.mockImplementation(h => (h === 'Content-Type' ? 'application/json' : null))
 
-    window.Odac.get('/api/test', mockCallback)
+    await window.Odac.get('/api/test', mockCallback)
     if (mockXhr.onload) mockXhr.onload()
     expect(mockCallback).toHaveBeenCalledWith(mockData, 'OK', expect.anything())
   })

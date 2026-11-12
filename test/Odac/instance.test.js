@@ -27,6 +27,18 @@ describe('Odac.instance()', () => {
     delete global.__dir
   })
 
+  it('routes __ and __x to Lang.get and Lang.getx', async () => {
+    const mockReq = {method: 'GET', url: '/', headers: {host: 'www.example.com'}, connection: {remoteAddress: '127.0.0.1'}, on: jest.fn()}
+    ctx = Odac.instance('id', mockReq, {on: jest.fn(), writeHead: jest.fn(), end: jest.fn()})
+    ctx.Lang.get = jest.fn(async () => 'plain')
+    ctx.Lang.getx = jest.fn(async () => 'contextual')
+
+    expect(await ctx.__('Gül', 1)).toBe('plain')
+    expect(await ctx.__x('Gül', 'verb', 1)).toBe('contextual')
+    expect(ctx.Lang.get).toHaveBeenCalledWith('Gül', 1)
+    expect(ctx.Lang.getx).toHaveBeenCalledWith('Gül', 'verb', 1)
+  })
+
   it('should create a context object with req/res', () => {
     const mockReq = {
       method: 'GET',

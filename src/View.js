@@ -4,107 +4,59 @@ const fsPromises = fs.promises
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 const Image = require('./View/Image')
+const {compile} = require('./View/Compiler')
 
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
+// A skeleton placeholder: `{{ CONTENT }}`. The capture group keeps names in split() output.
+const SKELETON_PLACEHOLDER = /\{\{\s*([A-Z_][A-Z0-9_]*)\s*\}\}/
 
 const CACHE_DIR = './storage/.cache'
 
+// Characters that can terminate or confuse an inline <script> block once JSON is embedded in HTML.
+// `<`/`>` close the element (`</script>`, `<!--`), `&` matters for XHTML parsers and U+2028/U+2029
+// are line terminators in pre-ES2019 engines. The escaped form parses to the identical value.
+const SCRIPT_UNSAFE_CHARS = /[<>&\u2028\u2029]/g
+const SCRIPT_ESCAPES = {
+  '<': '\\u003c',
+  '>': '\\u003e',
+  '&': '\\u0026',
+  '\u2028': '\\u2028',
+  '\u2029': '\\u2029'
+}
+
+/**
+ * Serializes a value as JSON that is safe to embed inside an HTML `<script>` element.
+ * Why: `Odac.share()` data routinely contains user input; plain `JSON.stringify` leaves
+ * `</script>` intact, letting that input break out of the data block and execute script.
+ * @param {*} value
+ * @returns {string}
+ */
+function serializeForScript(value) {
+  return JSON.stringify(value).replace(SCRIPT_UNSAFE_CHARS, char => SCRIPT_ESCAPES[char])
+}
+
+// The browser translations are the same object until a language file or view/js changes,
+// so their serialized form is computed once per version.
+const translationScripts = new WeakMap()
+function translationScript(translations) {
+  let script = translationScripts.get(translations)
+  if (script === undefined) translationScripts.set(translations, (script = serializeForScript(translations)))
+  return script
+}
+
+// A view threw while rendering (or its compiled code did not load). Already logged.
+class RenderError extends Error {}
+
+// A requested part name is only a part when the controller set it; `__proto__`, `constructor`
+// and other inherited names from a request header are not.
+const partName = (parts, name) => typeof name === 'string' && Object.hasOwn(parts, name) && typeof parts[name] === 'string'
+
 class View {
   #earlyHints = null
-  #functions = {
-    '{!!': {
-      function: '${await ',
-      close: '!!}',
-      end: '}'
-    },
-    '{{--': {
-      function: '`; /*',
-      close: '--}}',
-      end: '*/ html += `'
-    },
-    '{{': {
-      function: '${Odac.Var(await ',
-      close: '}}',
-      end: ').html().replace(/\\n/g, "<br>")}'
-    },
-    break: {
-      function: 'break;',
-      arguments: {}
-    },
-    component: {
-      // TODO: Implement component
-      //   <odac:component name="navbar" title="Dashboard"/>
-    },
-    continue: {
-      function: 'continue;',
-      arguments: {}
-    },
-    mysql: {
-      // TODO: Implement mysql
-    },
-    elseif: {
-      function: '} else if(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    },
-    else: {
-      function: '} else {'
-    },
-    fetch: {
-      // TODO: Implement fetch
-      //  <odac:fetch fetch="/get/products" as="data" method="GET" headers="{}" body="null" refresh="false">
-    },
-    for: {
-      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
-      end: '}}',
-      arguments: {
-        in: null,
-        var: null,
-        get: null,
-        key: 'key',
-        value: 'value'
-      }
-    },
-    if: {
-      function: 'if(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    },
-    '<odac:js>': {
-      end: ' html += `',
-      function: '`; ',
-      close: '</odac:js>'
-    },
-    lazy: {
-      // TODO: Implement lazy
-      //  <odac:lazy>
-      //    <odac:component name="profile-card" data="user"/>
-      //  </odac:lazy>
-    },
-    list: {
-      arguments: {
-        in: null,
-        var: null,
-        get: null,
-        key: 'key',
-        value: 'value'
-      },
-      end: '}}',
-      function: '{ let _arr = $constructor; for(let $key in _arr){ let $value = _arr[$key];',
-      replace: 'ul'
-    },
-    while: {
-      function: 'while(await ($condition)){',
-      arguments: {
-        condition: true
-      }
-    }
-  }
   #part = {}
   #refresh = new Set()
   #odac = null
+  #failed = false
 
   constructor(odac) {
     this.#odac = odac
@@ -132,11 +84,35 @@ class View {
   }
 
   // - PRINT VIEW
+  /**
+   * Renders the page (or the requested parts of an AJAX navigation) and ends the response.
+   * Why: a view that throws must not produce a 200 with an empty region, which a proxy cache
+   * (`Odac.cache()`) would then serve to everyone. It answers 500 through abort(), so a custom
+   * 500 handler can render its own page.
+   */
   async print() {
     if (this.#odac.Request.res.finished) return
+    try {
+      await this.#print()
+    } catch (e) {
+      if (!(e instanceof RenderError)) throw e
+      await this.#renderFailed()
+    }
+  }
 
-    const routePath = this.#odac.Request.req.url.split('?')[0]
+  async #renderFailed() {
+    const Request = this.#odac.Request
+    Request.header('X-ODAC-Cache', null)
+    Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+    // The error page itself failed to render: answer with the bare status.
+    if (this.#failed) return Request.end('')
+    this.#failed = true
+    await Request.abort(500)
+    // A custom 500 handler that configured a view returns nothing and leaves printing to us.
+    if (!Request.res.finished) await this.print()
+  }
 
+  async #print() {
     // Handle AJAX load requests
     if (this.#odac.Request.isAjaxLoad === true && this.#odac.Request.ajaxLoad && this.#odac.Request.ajaxLoad.length > 0) {
       let output = {}
@@ -162,10 +138,15 @@ class View {
       // Render requested elements (skip unchanged parts)
       let title = null
       for (let element of this.#odac.Request.ajaxLoad) {
-        if (this.#part[element]) {
+        if (partName(this.#part, element)) {
           // Skip rendering if the part view path has not changed and refresh is not forced
           // Content is always re-rendered since its output depends on the current URL
-          if (element !== 'content' && !this.#refresh.has(element) && clientParts[element] && clientParts[element] === this.#part[element])
+          if (
+            element !== 'content' &&
+            !this.#refresh.has(element) &&
+            Object.hasOwn(clientParts, element) &&
+            clientParts[element] === this.#part[element]
+          )
             continue
 
           let viewPath = this.#part[element]
@@ -215,199 +196,153 @@ class View {
 
       this.#odac.Request.header('Content-Type', 'application/json')
       this.#odac.Request.header('X-Odac-Page', this.#odac.Request.page || '')
-      this.#odac.Request.header('Vary', 'X-Odac')
+      this.#odac.Request.header('Vary', 'X-Odac, X-Odac-Lang')
 
-      this.#odac.Request.end({
+      const response = {
         output: output,
         parts: currentParts,
         variables: variables,
         data: this.#odac.Request.sharedData,
         title: title,
         skeletonChanged: skeletonChanged
-      })
+      }
+      // The browser already holds the translations of the language it reports.
+      const translations = await this.#translations()
+      if (translations && this.#odac.Request.header('X-Odac-Lang') !== translations.lang) response.lang = translations
+      this.#odac.Request.end(response)
       return
     }
 
     // Normal page rendering
     let result = ''
     if (this.#part.skeleton && (await this.#exists(`./skeleton/${this.#part.skeleton}.html`))) {
+      // Placeholders already carry data-odac-navigate (applied once per skeleton read).
       result = await this.#readSkeleton(`./skeleton/${this.#part.skeleton}.html`)
-
-      // Add data-odac-navigate to content wrapper for auto-navigation
-      result = this.#addNavigateAttribute(result)
-
-      for (let key in this.#part) {
-        if (['all', 'skeleton'].includes(key)) continue
-        if (!this.#part[key]) continue
-        if (this.#part[key].includes('.')) this.#part[key] = this.#part[key].replace(/\./g, '/')
-        if (await this.#exists(`./view/${key}/${this.#part[key]}.html`)) {
-          result = result.replace(`{{ ${key.toUpperCase()} }}`, await this.#render(`./view/${key}/${this.#part[key]}.html`))
-        }
-      }
-      if (this.#part.all) {
-        let parts = (result.match(/{{.*?}}/g) || []).map(part => part.replace(/{{|}}/g, '').trim())
-        if (parts.length > 0)
-          for (let part of parts) {
-            part = part.trim()
-            let file = this.#part.all.split('.')
-            file.splice(-1, 0, part.toLowerCase())
-            file = file.join('/')
-            if (await this.#exists(`./view/${file}.html`)) {
-              result = result.replace(`{{ ${part.toUpperCase()} }}`, await this.#render(`./view/${file}.html`))
-            }
-          }
-      }
-
-      // Clean up unresolved skeleton placeholders
-      result = result.replace(/\{\{\s*[A-Z_]+\s*\}\}/g, '')
+      result = this.#annotateHtmlTag(result)
+      result = await this.#fillSkeleton(result)
     }
 
     if (result) {
       const hasEarlyHints = this.#odac.Request.hasEarlyHints()
+      const hintKey = this.#hintCacheKey()
 
-      if (!hasEarlyHints) {
+      // In production a page without preloadable resources is scanned once, not per request.
+      if (!hasEarlyHints && (this.#odac.Config?.debug || !this.#earlyHints.isCached(hintKey))) {
         const detectedResources = this.#earlyHints.extractFromHtml(result)
-
-        if (detectedResources && detectedResources.length > 0) {
-          this.#earlyHints.cacheHints(routePath, detectedResources)
-        }
+        this.#earlyHints.cacheHints(hintKey, detectedResources ?? [])
       }
 
-      // Inject Shared Data
-      const sharedScript = `<script type="application/json" id="odac-data">${JSON.stringify(this.#odac.Request.sharedData || {})}</script>`
+      // Inject Shared Data (and the translations used by view/js, if any)
+      let sharedScript = `<script type="application/json" id="odac-data">${serializeForScript(this.#odac.Request.sharedData || {})}</script>`
+      const translations = await this.#translations()
+      if (translations) sharedScript += `<script type="application/json" id="odac-lang">${translationScript(translations)}</script>`
       if (result.includes('</body>')) {
-        result = result.replace('</body>', `${sharedScript}</body>`)
+        // Function replacer: the payload may contain `$&`/`$'` sequences that a string replacement would expand.
+        result = result.replace('</body>', () => `${sharedScript}</body>`)
       } else {
         result += sharedScript
       }
     }
 
-    this.#odac.Request.header('Content-Type', 'text/html')
+    this.#odac.Request.header('Content-Type', 'text/html; charset=utf-8')
     this.#odac.Request.end(result)
   }
 
-  #parseOdacTag(content) {
-    // Parse backend comments
-    // Multi-line: <!--odac ... odac-->
-    // Single-line: <!--odac ... -->
-    content = content.replace(/<!--odac([\s\S]*?)(?:odac-->|-->)/g, () => {
-      return ''
-    })
+  /**
+   * Fills a skeleton's `{{ PART }}` placeholders with rendered parts.
+   *
+   * Why: replacing placeholders one by one with String.replace() expanded `$&`, `` $` `` and
+   * `$'` inside rendered HTML (even an escaped `'` becomes `&#39;` after a `$`), re-scanned
+   * already inserted content (a part containing the text `{{ FOOTER }}` was filled before the
+   * real placeholder) and the final cleanup erased placeholder-like text from user content.
+   * The skeleton is tokenized once and only its own placeholders are ever filled.
+   *
+   * Explicit parts render first in the order they were set, then `all` fills the remaining
+   * placeholders in skeleton order, keeping the render order views may depend on. Only the
+   * first occurrence of a placeholder is filled; unresolved placeholders render empty.
+   *
+   * @param {string} skeleton Skeleton HTML.
+   * @returns {Promise<string>}
+   */
+  async #fillSkeleton(skeleton) {
+    const segments = skeleton.split(SKELETON_PLACEHOLDER)
+    const firstIndex = new Map()
+    for (let i = 1; i < segments.length; i += 2) if (!firstIndex.has(segments[i])) firstIndex.set(segments[i], i)
 
-    // Parse <script:odac> tags (IDE-friendly JavaScript with backend execution)
-    content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (fullMatch, attributes, jsContent) => {
-      return `<odac:js>${jsContent}</odac:js>`
-    })
-
-    content = content.replace(/<odac:else\s*\/>/g, '<odac:else>')
-    content = content.replace(/<odac:elseif\s+([^>]*?)\/>/g, '<odac:elseif $1>')
-
-    content = content.replace(/<odac([^>]*?)\/>/g, (fullMatch, attributes) => {
-      attributes = attributes.trim()
-
-      const attrs = {}
-      const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-      let match
-      while ((match = attrRegex.exec(attributes))) {
-        const key = match[1]
-        const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-        attrs[key] = value
-      }
-
-      if (attrs.get) {
-        const escaped = attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-        return attrs.raw ? `{!! get('${escaped}') || '' !!}` : `{{ get('${escaped}') || '' }}`
-      } else if (attrs.var) {
-        if (attrs.raw) {
-          return `{!! ${attrs.var} !!}`
-        } else {
-          return `{{ ${attrs.var} }}`
-        }
-      }
-      return fullMatch
-    })
-
-    let depth = 0
-    let maxDepth = 10
-    while (depth < maxDepth && content.includes('<odac')) {
-      const before = content
-      content = content.replace(/<odac([^>]*)>((?:(?!<odac)[\s\S])*?)<\/odac>/g, (fullMatch, attributes, innerContent) => {
-        attributes = attributes.trim()
-        innerContent = innerContent.trim()
-
-        const attrs = {}
-        const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-        let match
-        while ((match = attrRegex.exec(attributes))) {
-          const key = match[1]
-          const value = match[3] !== undefined ? match[3] : match[4] !== undefined ? match[4] : true
-          attrs[key] = value
-        }
-
-        if (attrs.get) {
-          const escaped = attrs.get.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-          return attrs.raw ? `{!! get('${escaped}') || '' !!}` : `{{ get('${escaped}') || '' }}`
-        } else if (attrs.var) {
-          if (attrs.raw) {
-            return `{!! ${attrs.var} !!}`
-          } else {
-            return `{{ ${attrs.var} }}`
-          }
-        } else if (attrs.t || attrs.translate) {
-          const placeholders = []
-          let processedContent = innerContent
-          let placeholderIndex = 1
-
-          processedContent = processedContent.replace(/\{\{([^}]+)\}\}/g, (match, variable) => {
-            variable = variable.trim()
-            if (variable.startsWith("'") && variable.endsWith("'")) {
-              placeholders.push(variable)
-            } else {
-              placeholders.push(`Odac.Var(await ${variable}).html().replace(/\\n/g, "<br>")`)
-            }
-            return `%s${placeholderIndex++}`
-          })
-
-          processedContent = processedContent.replace(/\{!!([^}]+)!!}/g, (match, variable) => {
-            placeholders.push(`await ${variable.trim()}`)
-            return `%s${placeholderIndex++}`
-          })
-
-          const escapedContent = processedContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-          const translationCall =
-            placeholders.length > 0 ? `__('${escapedContent}', ${placeholders.join(', ')})` : `__('${escapedContent}')`
-
-          if (attrs.raw) {
-            return `{!! ${translationCall} !!}`
-          } else {
-            return `{{ ${translationCall} }}`
-          }
-        } else {
-          return `{{ '${innerContent.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}' }}`
-        }
-      })
-      if (before === content) break
-      depth++
+    const rendered = new Map()
+    for (const key in this.#part) {
+      if (key === 'all' || key === 'skeleton' || !this.#part[key]) continue
+      if (this.#part[key].includes('.')) this.#part[key] = this.#part[key].replace(/\./g, '/')
+      const name = key.toUpperCase()
+      if (!firstIndex.has(name) || rendered.has(name)) continue
+      const file = `./view/${key}/${this.#part[key]}.html`
+      if (await this.#exists(file)) rendered.set(name, await this.#render(file))
     }
 
-    return content
+    if (this.#part.all) {
+      for (const name of firstIndex.keys()) {
+        if (rendered.has(name)) continue
+        const file = this.#part.all.split('.')
+        file.splice(-1, 0, name.toLowerCase())
+        const filePath = `./view/${file.join('/')}.html`
+        if (await this.#exists(filePath)) rendered.set(name, await this.#render(filePath))
+      }
+    }
+
+    let html = ''
+    for (let i = 0; i < segments.length; i++) {
+      if (i % 2 === 0) html += segments[i]
+      else if (firstIndex.get(segments[i]) === i) html += rendered.get(segments[i]) ?? ''
+    }
+    return html
+  }
+
+  // Translations for Odac.__() in the browser; never fails a page render.
+  async #translations() {
+    try {
+      return (await this.#odac.Lang?.client?.()) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // Runs a compiled view. A throw inside the template is logged with its view line and
+  // becomes a RenderError.
+  async #run(compiled, file) {
+    try {
+      return await compiled(
+        this.#odac,
+        key => this.#odac.Request.get(key),
+        (...args) => this.#odac.Lang.get(...args),
+        (key, context, ...args) => this.#odac.Lang.getx(key, context, ...args)
+      )
+    } catch (e) {
+      throw this.#renderError(e, file)
+    }
+  }
+
+  #renderError(e, file) {
+    const stackLine = e?.stack?.split('\n')[1]?.match(/:(\d+):\d+/)
+    const line = stackLine ? parseInt(stackLine[1]) - 3 : e?.lineNumber ? e.lineNumber - 3 : 'unknown'
+    console.error(String(e).split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
+    return new RenderError(String(e))
   }
 
   async #render(file) {
     if (!global.Odac.View) global.Odac.View = {}
     if (!global.Odac.View.cache) global.Odac.View.cache = {}
 
-    // Performance: In Production, skip stat check if cached
+    // Performance: In Production, skip stat check if cached. Only a missing compiled file
+    // falls back to compiling; an error inside the view is not retried by running it twice.
     if (!this.#odac.Config?.debug && global.Odac.View.cache[file]) {
+      let compiled = null
       try {
-        return await require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)(
-          this.#odac,
-          key => this.#odac.Request.get(key),
-          (...args) => this.#odac.Lang.get(...args)
-        )
+        compiled = require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)
       } catch {
-        // Fallback if cache file missing
+        compiled = null
       }
+      if (compiled) return this.#run(compiled, file)
+      delete global.Odac.View.cache[file]
     }
 
     let mtime
@@ -433,122 +368,25 @@ class View {
       content = Form.parse(content, this.#odac)
       content = Image.parse(content)
 
-      // Lift backend JS bodies out of the template before any escaping runs, so
-      // user JS keeps its literal backslashes, backticks and ${...} sequences.
-      // Both spellings are covered: <script:odac> (IDE-friendly) and the raw
-      // <odac:js> tag it is rewritten to by #parseOdacTag.
-      const jsBlocks = []
-      content = content.replace(/<script:odac([^>]*)>([\s\S]*?)<\/script:odac>/g, (match, attrs, jsContent) => {
-        const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
-        jsBlocks.push(jsContent)
-        return `<script:odac${attrs}>${placeholder}</script:odac>`
-      })
-      content = content.replace(/<odac:js>([\s\S]*?)<\/odac:js>/g, (match, jsContent) => {
-        const placeholder = `___ODAC_JS_BLOCK_${jsBlocks.length}___`
-        jsBlocks.push(jsContent)
-        return `<odac:js>${placeholder}</odac:js>`
-      })
-
-      content = this.#parseOdacTag(content)
-      // Escape template literal meta-characters so raw HTML can be safely
-      // embedded in a JS backtick string. Backslashes must be escaped FIRST
-      // (CWE-116), but ONLY in plain HTML segments — the {{ }}/{!! !!}
-      // expression blocks produced by #parseOdacTag already handle their own
-      // backslash escaping internally (see lines 318/348/376/386).
-      const exprBlocks = []
-      content = content.replace(/\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g, block => {
-        const placeholder = `___ODAC_EXPR_${exprBlocks.length}___`
-        exprBlocks.push(block)
-        return placeholder
-      })
-      content = content.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\${/g, '\\${')
-      exprBlocks.forEach((block, index) => {
-        content = content.replace(`___ODAC_EXPR_${index}___`, () => block)
-      })
-
-      let result = 'html += `\n' + content + '\n`'
-      for (let key in this.#functions) {
-        let att = ''
-        let func = this.#functions[key]
-        let matches = func.close
-          ? result.match(new RegExp(`${key}[\\s\\S]*?${func.close}`, 'g'))
-          : result.match(new RegExp(`<odac:${key}(?:\\s+[^>]*?(?:"[^"]*"|'[^']*'|[^"'>])*)?>`, 'g'))
-        if (!matches) continue
-        for (let match of matches) {
-          let matchForParsing = match
-          if (!func.close) matchForParsing = matchForParsing.replace(/^<odac:/, '').replace(/>$/, '')
-          const attrRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/g
-          let attrMatch
-          const args = []
-          while ((attrMatch = attrRegex.exec(matchForParsing))) {
-            args.push(attrMatch[0])
-          }
-          let vars = {}
-          if (func.arguments)
-            for (let arg of args) {
-              const argRegex = /(\w+)(?:=(["'])((?:(?!\2).)*)\2|=([^\s>]+))?/
-              const argMatch = argRegex.exec(arg)
-              if (!argMatch) continue
-              const argKey = argMatch[1]
-              const value = argMatch[3] !== undefined ? argMatch[3] : argMatch[4] !== undefined ? argMatch[4] : true
-              if (func.arguments[argKey] === undefined) {
-                att += `${argKey}="${value}"`
-                continue
-              }
-              vars[argKey] = value
-            }
-          if (!func.function) continue
-          let fun = func.function
-
-          if (key === 'for' || key === 'list') {
-            if (!vars.var && !vars.get && !vars.in) {
-              console.error(`"var", "get" or "in" is required for "${match}"\n  in "${file}"`)
-              continue
-            }
-            let constructor
-            if (vars.in) {
-              constructor = `await ${vars.in}`
-            } else if (vars.var) {
-              constructor = `await ${vars.var}`
-            } else if (vars.get) {
-              constructor = `get('${vars.get}')`
-            }
-            fun = fun.replace(/\$constructor/g, constructor)
-          }
-
-          for (let argKey in func.arguments) {
-            // Loop sources are validated and consumed above as $constructor, not as $-placeholders.
-            if (argKey === 'in' || argKey === 'var' || argKey === 'get') continue
-            if (vars[argKey] === undefined) vars[argKey] = func.arguments[argKey]
-            fun = fun.replace(new RegExp(`\\$${argKey}`, 'g'), vars[argKey])
-          }
-          if (func.close) {
-            result = result.replace(match, fun + match.substring(key.length, match.length - func.close.length) + func.end)
-          } else {
-            result = result.replace(match, (func.replace ? `<${[func.replace, att].join(' ')}>` : '') + '`; ' + fun + ' html += `')
-            result = result.replace(`</odac:${key}>`, '`; ' + (func.end ?? '}') + ' html += `' + (func.replace ? `</${func.replace}>` : ''))
-          }
-        }
-      }
-
-      // Restore backend JS bodies after function processing so the regex
-      // pipeline above never sees user JS as template syntax. Use a function
-      // replacer to keep $-sequences in the JS literal (e.g. $$, $&) intact.
-      // The block is followed by generated code, so terminate its last statement.
-      // ';' keeps compiled lines aligned with the view for error reporting; only a
-      // possible trailing // comment needs a real newline to end it.
-      jsBlocks.forEach((jsContent, index) => {
-        const terminator = jsContent.slice(jsContent.lastIndexOf('\n') + 1).includes('//') ? '\n' : ';'
-        result = result.replace(`___ODAC_JS_BLOCK_${index}___`, () => jsContent + terminator)
-      })
+      const result = compile(content, {file})
 
       let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
+      const target = `${__dir}/${CACHE_DIR}/${cache}`
+      // Written beside the target and renamed into place: workers compiling the same view at
+      // once never require() a half-written file.
+      const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(6).toString('hex')}.tmp`
       await fsPromises.mkdir(`${__dir}/${CACHE_DIR}`, {recursive: true})
-      await fsPromises.writeFile(
-        `${__dir}/${CACHE_DIR}/${cache}`,
-        `module.exports = async (Odac, get, __) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
-      )
-      delete require.cache[require.resolve(`${__dir}/${CACHE_DIR}/${cache}`)]
+      try {
+        await fsPromises.writeFile(
+          temp,
+          `module.exports = async (Odac, get, __, __x) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
+        )
+        await fsPromises.rename(temp, target)
+      } catch (e) {
+        await fsPromises.unlink(temp).catch(() => {})
+        throw e
+      }
+      delete require.cache[require.resolve(target)]
       if (!Odac.View) Odac.View = {}
       if (!Odac.View.cache) Odac.View.cache = {}
       Odac.View.cache[file] = {
@@ -556,18 +394,14 @@ class View {
         cache: cache
       }
     }
+    let compiled
     try {
-      return await require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)(
-        this.#odac,
-        key => this.#odac.Request.get(key),
-        (...args) => this.#odac.Lang.get(...args)
-      )
+      compiled = require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)
     } catch (e) {
-      let stackLine = e.stack.split('\n')[1].match(/:(\d+):\d+/)
-      let line = stackLine ? parseInt(stackLine[1]) - 3 : e.lineNumber ? e.lineNumber - 3 : 'unknown'
-      console.error(e.toString().split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
+      // The compiled view does not parse (a syntax error in an <odac:js> block).
+      throw this.#renderError(e, file)
     }
-    return ''
+    return this.#run(compiled, file)
   }
 
   // - SET PARTS
@@ -593,7 +427,9 @@ class View {
     return this
   }
 
-  #addNavigateAttribute(skeleton) {
+  // Marks every placeholder's region with data-odac-navigate. Depends on the skeleton only,
+  // so the result is cached with it.
+  #wrapPlaceholders(skeleton) {
     // Single-pass regex to inject data-odac-navigate into parent tags or auto-wrap unwrapped placeholders.
     // Group 1: Opening tag (<tag>)
     // Group 2: Whitespace between tag and placeholder
@@ -620,7 +456,11 @@ class View {
         return match
       }
     )
+    return skeleton
+  }
 
+  // Per-request attributes on <html>: the skeleton, page and parts the client diffs against.
+  #annotateHtmlTag(skeleton) {
     const skeletonName = this.#part.skeleton || 'main'
     const pageName = this.#odac.Request.page || ''
 
@@ -650,10 +490,20 @@ class View {
     return skeleton
   }
 
+  // The <head> resources of a page are determined by the views it is assembled from, so that
+  // combination identifies a hint set. Dots and slashes are equivalent in view names.
+  #hintCacheKey() {
+    const entries = []
+    for (const key of Object.keys(this.#part).sort()) {
+      const value = this.#part[key]
+      if (typeof value === 'string' && value) entries.push(`${key}=${value.replace(/\./g, '/')}`)
+    }
+    return entries.join('|')
+  }
+
   #sendEarlyHintsIfAvailable() {
     if (this.#odac.Request.res.headersSent) return
 
-    const routePath = this.#odac.Request.req.url.split('?')[0]
     const viewPaths = []
 
     if (this.#part.skeleton) {
@@ -668,7 +518,7 @@ class View {
       }
     }
 
-    let hints = this.#earlyHints.getHints(null, routePath)
+    let hints = this.#earlyHints.getHints(null, this.#hintCacheKey())
 
     if (!hints && viewPaths.length > 0) {
       hints = this.#earlyHints.getHintsForViewFiles(viewPaths)
@@ -680,12 +530,21 @@ class View {
   }
 
   async #exists(path) {
+    // In production view files do not change while the process runs; each is checked once.
+    const known = !this.#odac.Config?.debug ? global.Odac.View?.exists : null
+    if (known?.has(path)) return known.get(path)
+    let found
     try {
       await fsPromises.access(path)
-      return true
+      found = true
     } catch {
-      return false
+      found = false
     }
+    if (!this.#odac.Config?.debug) {
+      if (!global.Odac.View.exists) global.Odac.View.exists = new Map()
+      global.Odac.View.exists.set(path, found)
+    }
+    return found
   }
 
   async #readSkeleton(path) {
@@ -696,7 +555,7 @@ class View {
       return global.Odac.View.skeletons[path]
     }
 
-    const content = await fsPromises.readFile(path, 'utf8')
+    const content = this.#wrapPlaceholders(await fsPromises.readFile(path, 'utf8'))
     global.Odac.View.skeletons[path] = content
     return content
   }

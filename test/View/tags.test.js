@@ -79,7 +79,8 @@ describe('View odac tags (var, get, translate) raw attribute', () => {
         setEarlyHints: () => {}
       },
       Lang: {
-        get: (...args) => args[0]
+        get: (...args) => args[0],
+        getx: (key, context) => `${key}[${context}]`
       },
       View: {}
     }
@@ -118,6 +119,16 @@ describe('View odac tags (var, get, translate) raw attribute', () => {
     const result = await renderTemplate('<odac translate raw><b>bold</b></odac>')
     expect(result).toContain('<b>bold</b>')
     expect(result).not.toContain('&lt;b&gt;')
+  })
+
+  it('passes the context attribute of <odac translate> to the context-aware lookup', async () => {
+    const result = await renderTemplate('<odac translate context="verb">Gül</odac>|<odac translate>Gül</odac>')
+    expect(result).toContain('Gül[verb]|Gül')
+  })
+
+  it('escapes a context attribute so it cannot break out of the compiled string', async () => {
+    const result = await renderTemplate(`<odac translate context="it's \${1+1}">Gül</odac>`)
+    expect(result).toContain('Gül[it&#39;s ${1+1}]')
   })
 
   it('should escape <odac var> by default', async () => {

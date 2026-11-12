@@ -86,6 +86,7 @@ if (!acquired) return  // another process is holding the lock
 try {
   // ... critical section ...
 } finally {
+  // Releases only while this process still holds it; forceUnlock(key) breaks a stale lock.
   await Odac.Ipc.unlock('flush:lock')
 }
 ```

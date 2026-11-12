@@ -98,9 +98,11 @@ Odac.form('#my-form', function(data) {
 If you need the token manually:
 
 ```javascript
-const token = Odac.token()
+const token = await Odac.tokenAsync()
 console.log('Current token:', token)
 ```
+
+`Odac.token()` still works synchronously, but blocks the page while it fetches a token if none is cached.
 
 ## Common Patterns
 

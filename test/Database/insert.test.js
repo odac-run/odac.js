@@ -95,4 +95,89 @@ describe('Database.js - wrapWithInvalidation thenable', () => {
     expect(rows).toHaveLength(1)
     expect(rows[0].user).toBe('u_await')
   })
+  describe('Knex chaining after a write', () => {
+    let DB
+
+    beforeEach(async () => {
+      DB = require('../../src/Database')
+      DB.connections = {default: db}
+      db._odacConnectionKey = 'default'
+      DB._nanoidColumns = {}
+      await db('tokens').insert([
+        {id: 'a', user: 'u1', token_x: '1'},
+        {id: 'b', user: 'u2', token_x: '2'}
+      ])
+    })
+
+    afterEach(() => {
+      delete global.Odac
+    })
+
+    it('supports .update().where()', async () => {
+      await DB.tokens.update({user: 'changed'}).where('id', 'a')
+      expect((await db('tokens').where('id', 'a').first()).user).toBe('changed')
+      expect((await db('tokens').where('id', 'b').first()).user).toBe('u2')
+    })
+
+    it('supports .delete().where() and .del().where()', async () => {
+      await DB.tokens.delete().where('id', 'a')
+      await DB.tokens.del().where('id', 'b')
+      expect(await db('tokens')).toHaveLength(0)
+    })
+
+    it('supports .returning() and .finally()', async () => {
+      const finallyFn = jest.fn()
+      const rows = await DB.tokens.where('id', 'a').update({user: 'r'}).returning('id').finally(finallyFn)
+      expect(rows).toEqual([{id: 'a'}])
+      expect(finallyFn).toHaveBeenCalled()
+    })
+
+    it('supports .transacting()', async () => {
+      await db.transaction(async trx => {
+        await DB.tokens.where('id', 'a').update({user: 'trx'}).transacting(trx)
+      })
+      expect((await db('tokens').where('id', 'a').first()).user).toBe('trx')
+    })
+
+    it('still renders SQL via toString()', () => {
+      expect(DB.tokens.update({user: 'x'}).where('id', 'a').toString()).toMatch(/^update `tokens` set `user` = 'x' where `id` = 'a'$/)
+    })
+
+    it('invalidates the read cache after update, delete, increment and decrement', async () => {
+      await db.schema.alterTable('tokens', t => t.integer('hits').defaultTo(0))
+      const invalidate = jest.spyOn(require('../../src/Database/ReadCache'), 'invalidate').mockResolvedValue()
+
+      await DB.tokens.update({user: 'x'}).where('id', 'a')
+      await DB.tokens.where('id', 'a').increment('hits', 2)
+      await DB.tokens.where('id', 'a').decrement('hits', 1)
+      await DB.tokens.where('id', 'b').delete()
+
+      expect(invalidate).toHaveBeenCalledTimes(4)
+      expect(invalidate).toHaveBeenCalledWith('default', 'tokens')
+      expect((await db('tokens').where('id', 'a').first()).hits).toBe(1)
+      invalidate.mockRestore()
+    })
+
+    it('resolves a successful write even when invalidation fails', async () => {
+      const error = jest.spyOn(console, 'error').mockImplementation(() => {})
+      global.Odac = {
+        Ipc: {
+          smembers: async () => {
+            throw new Error('IPC shutting down')
+          },
+          del: async () => {}
+        }
+      }
+
+      await expect(DB.tokens.where('id', 'a').update({user: 'kept'})).resolves.toBe(1)
+      await expect(DB.tokens.insert({id: 'c', user: 'u3', token_x: '3'})).resolves.toBeDefined()
+      expect((await db('tokens').where('id', 'a').first()).user).toBe('kept')
+      expect(error).toHaveBeenCalled()
+      error.mockRestore()
+    })
+
+    it('still rejects when the write itself fails', async () => {
+      await expect(DB.tokens.insert({id: 'a', user: 'dup', token_x: 'x'})).rejects.toThrow()
+    })
+  })
 })

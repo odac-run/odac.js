@@ -120,6 +120,8 @@ await Odac.DB.activity_log.buffer.insert({
 
 The queue auto-flushes immediately if it exceeds `maxQueueSize` (default: 10,000 rows).
 
+If the queue keeps growing because flushes fail (database outage) or cannot keep up, it is capped at `maxQueueLength` (default: 10 × `maxQueueSize`). Past the cap, `buffer.insert()` writes the row straight to the database instead of queuing it, and **rejects** if that write fails. No row is dropped and memory stays bounded; buffering resumes once the queue drains below the cap. Rows inserted directly may land before older queued rows. Set `maxQueueLength` to `0` to disable the cap.
+
 ---
 
 ## Manual Flush
@@ -146,8 +148,11 @@ Add a `buffer` section to your `odac.json`:
 {
   "buffer": {
     "flushInterval": 5000,
-    "checkpointInterval": 30000,
+    "checkpointInterval": 2500,
     "maxQueueSize": 10000,
+    "maxQueueLength": 100000,
+    "maxInsertAttempts": 3,
+    "baseTtl": 300,
     "primaryKey": "id"
   }
 }
@@ -156,9 +161,16 @@ Add a `buffer` section to your `odac.json`:
 | Option | Default | Description |
 |---|---|---|
 | `flushInterval` | `5000` | How often (ms) to flush pending data to the database |
-| `checkpointInterval` | `30000` | How often (ms) to write a crash-recovery checkpoint to LMDB *(memory driver only)* |
+| `checkpointInterval` | half of `flushInterval` | How often (ms) to write a crash-recovery checkpoint to LMDB *(memory driver only)*. Checkpoint entries are removed once their data is in the database. |
 | `maxQueueSize` | `10000` | Auto-flush the insert queue when it reaches this many rows |
+| `maxQueueLength` | `10 × maxQueueSize` | Hard cap on queued rows per table. Past it, `buffer.insert()` writes directly to the database and rejects if that fails. `0` disables the cap |
+| `maxInsertAttempts` | `3` | Flush cycles a queued row may be rejected by the database (while other rows or a probe query succeed) before it is moved to the dead-letter list |
+| `baseTtl` | `300` | Seconds a counter's base value read from the database is cached |
 | `primaryKey` | `"id"` | Default primary key column name for scalar `where()` values |
+
+### Rejected rows
+
+If a batch insert fails, ODAC retries its rows one by one so a single bad row (constraint violation, wrong type) does not hold back the rest. A row that keeps failing is moved to a dead-letter list instead of blocking the queue; read it with `await Odac.DB.posts.buffer.deadLetters()`. While the database is unreachable, rows are kept and their attempts are not counted.
 
 ---
 

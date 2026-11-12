@@ -5,8 +5,8 @@ class MiddlewareChain {
     this._isAuth = isAuth
     this.auth = {
       page: (path, authFile, file) => this.authPage(path, authFile, file),
-      post: (path, authFile, file) => this.authPost(path, authFile, file),
-      get: (path, authFile, file) => this.authGet(path, authFile, file),
+      post: (path, authFile, file, options) => this.authPost(path, authFile, file, options),
+      get: (path, authFile, file, options) => this.authGet(path, authFile, file, options),
       ws: (path, handler, options) => this.authWs(path, handler, options)
     }
   }
@@ -55,16 +55,16 @@ class MiddlewareChain {
     return this
   }
 
-  authPost(path, authFile, file) {
+  authPost(path, authFile, file, options) {
     this._route._pendingMiddlewares = [...this._middlewares]
-    this._route.authPost(path, authFile, file)
+    this._route.authPost(path, authFile, file, options)
     this._route._pendingMiddlewares = []
     return this
   }
 
-  authGet(path, authFile, file) {
+  authGet(path, authFile, file, options) {
     this._route._pendingMiddlewares = [...this._middlewares]
-    this._route.authGet(path, authFile, file)
+    this._route.authGet(path, authFile, file, options)
     this._route._pendingMiddlewares = []
     return this
   }

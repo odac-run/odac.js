@@ -118,6 +118,36 @@ describe('Auth.logout()', () => {
     expect(sessionsDb.tracker.deleteCalls.length).toBeGreaterThan(0)
   })
 
+  it('deletes only the current token and rotated rows, not other devices with the same browser', async () => {
+    const wheres = []
+    const db = createDbMock([validRecord()])
+    const chain = conditions => {
+      const query = db.chainable()
+      query.where = jest.fn((...args) => chain([...conditions, args]))
+      query.delete = jest.fn(() => {
+        wheres.push(conditions)
+        return Promise.resolve(1)
+      })
+      return query
+    }
+    db.where = jest.fn((...args) => chain([args]))
+    global.Odac.DB.odac_auth = db
+    global.Odac.DB.users = createDbMock([validRecord()])
+
+    const auth = new Auth(reqMock)
+    expect(await auth.check()).toBe(true)
+    await auth.logout()
+
+    expect(wheres).toEqual([
+      [['id', 'tok_1']],
+      [
+        ['user', 'user_10'],
+        ['browser', 'TestBrowser'],
+        ['date', '<', new Date(31536000000)]
+      ]
+    ])
+  })
+
   it('returns false without touching the DB when no user is logged in', async () => {
     const odacAuthDb = createDbMock([])
     global.Odac.DB.odac_auth = odacAuthDb

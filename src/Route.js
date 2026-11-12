@@ -1,15 +1,47 @@
+const nodeCrypto = require('crypto')
 const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
+const {pipeline} = require('stream')
 
+const Hook = require('./Hook.js')
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
 const Image = require('./View/Image.js')
 const MiddlewareChain = require('./Route/Middleware.js')
+const RateLimit = require('./Route/RateLimit.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
 let routes2 = {}
-const mime = require('./Route/MimeTypes.js')
+const StaticFile = require('./Route/StaticFile.js')
+
+/**
+ * Percent-decodes one URL segment for a route parameter (`/user/John%20Doe` → `John Doe`).
+ * Why: matching runs on the raw path so an encoded `/` (`%2F`) never splits a segment; the
+ * value handed to the controller is decoded once. Malformed escapes are kept as sent.
+ */
+function decodeParam(segment) {
+  if (!segment.includes('%')) return segment
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
+// HTTP status set by abort()/redirect() on a WebSocket request → close frame.
+const WS_REJECT = {401: [4001, 'Unauthorized'], 403: [4003, 'Forbidden']}
+
+/**
+ * Closes a WebSocket whose request was ended by middleware or the handler.
+ * Why: abort(401)/abort(403) keep the same close codes the built-in auth and
+ * `false` middleware paths use; any other ending (redirect, custom status)
+ * is a generic rejection.
+ */
+function closeRejected(ws, status) {
+  const [code, reason] = WS_REJECT[status] ?? [4000, 'Request rejected']
+  ws.close(code, reason)
+}
 
 class Route {
   loading = false
@@ -21,11 +53,10 @@ class Route {
   #configCache = {}
   #paramIndex = {}
   #paramIndexDirty = false
-  #publicCache = {}
   auth = {
     page: (path, authFile, file) => this.authPage(path, authFile, file),
-    post: (path, authFile, file) => this.authPost(path, authFile, file),
-    get: (path, authFile, file) => this.authGet(path, authFile, file),
+    post: (path, authFile, file, options) => this.authPost(path, authFile, file, options),
+    get: (path, authFile, file, options) => this.authGet(path, authFile, file, options),
     ws: (path, handler, options) => this.authWs(path, handler, options),
     use: (...middlewares) => new MiddlewareChain(this, [...middlewares.flat()], true)
   }
@@ -129,7 +160,12 @@ class Route {
       Odac.Request.route = '_odac_internal'
     }
 
-    if (['post', 'put', 'patch', 'delete'].includes(Odac.Request.method)) {
+    // The body is read only when a route will handle the request: an upload to an unknown URL
+    // is answered without being parsed or written to disk.
+    if (
+      ['post', 'put', 'patch', 'delete'].includes(Odac.Request.method) &&
+      this.#hasHandler(Odac.Request.route, Odac.Request.method, url)
+    ) {
       const formToken = await Odac.request('_odac_form_token')
       if (formToken) {
         // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
@@ -164,47 +200,49 @@ class Route {
       // Parse client's current part values for smart diffing
       const partsHeader = Odac.Request.header('X-Odac-Parts')
       if (partsHeader) {
-        const parts = {}
+        // Client-supplied names: a null-prototype object keeps `__proto__` an ordinary key, and
+        // a malformed escape is ignored for that entry instead of failing the request.
+        const parts = Object.create(null)
         for (const entry of partsHeader.split(',')) {
           const idx = entry.indexOf('=')
-          if (idx > 0) parts[entry.substring(0, idx)] = decodeURIComponent(entry.substring(idx + 1))
+          if (idx <= 0) continue
+          try {
+            parts[entry.substring(0, idx)] = decodeURIComponent(entry.substring(idx + 1))
+          } catch {
+            // Unchanged-part hints are an optimization; a bad entry just re-renders that part.
+          }
         }
         Odac.Request.clientParts = parts
       }
     }
     if (Odac.Config?.route?.[url]) {
       // PROD CACHE HIT
-      if (!Odac.Config.debug && this.#configCache[url]) {
-        const cached = this.#configCache[url]
-        return this.#asset(Odac, cached.type, cached.size, () => cached.content)
-      }
+      const cached = !Odac.Config.debug && this.#configCache[url]
+      if (cached) return this.#asset(Odac, cached, range => this.#slice(cached.content, range))
 
       const filePath = Odac.Config.route[url]
       try {
-        let type = 'text/html'
-        if (filePath.includes('.')) {
-          let arr = filePath.split('.')
-          type = mime[arr[arr.length - 1]]
-        }
-
-        // HEAD needs only the size. The prod cache holds file content, so it is
-        // left for the next GET to fill.
-        if (Odac.Request.method === 'head') {
-          const stat = await fsPromises.stat(filePath)
-          if (stat.isFile()) return this.#asset(Odac, type, stat.size)
-        } else {
-          const content = await fsPromises.readFile(filePath)
-
-          // PROD CACHE SET
-          if (!Odac.Config.debug) {
-            this.#configCache[url] = {
-              content,
-              type,
-              size: content.length
-            }
+        // One descriptor for stat and read, so the validators describe the bytes served.
+        const handle = await fsPromises.open(filePath, 'r')
+        let meta
+        let content
+        try {
+          const stat = await handle.stat()
+          if (stat.isFile()) {
+            meta = {type: StaticFile.contentType(filePath), size: stat.size, etag: StaticFile.etag(stat), mtimeMs: stat.mtimeMs}
+            // HEAD needs only the size. The prod cache holds file content, so it is
+            // left for the next GET to fill.
+            if (Odac.Request.method !== 'head') content = await handle.readFile()
           }
-
-          return this.#asset(Odac, type, content.length, () => content)
+        } finally {
+          await handle.close()
+        }
+        if (meta && !content) return this.#asset(Odac, meta)
+        if (meta) {
+          meta.size = content.length
+          // PROD CACHE SET
+          if (!Odac.Config.debug) this.#configCache[url] = {...meta, content}
+          return this.#asset(Odac, meta, range => this.#slice(content, range))
         }
       } catch {
         // File not found or error, continue routing
@@ -222,6 +260,9 @@ class Route {
           // Odac.Auth.user() synchronously (memoized: no-op for # routes
           // whose auth gate above already succeeded).
           if (Odac.Auth) await Odac.Auth.check()
+          // After the auth gate (so a custom key can use Odac.Auth.user()), before the session
+          // and CSRF work a flood would otherwise still pay for.
+          if (controller.rateLimit && !(await RateLimit.consume(Odac, controller.rateLimit))) return
           Odac.Request.header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
           Odac.Request.setSession()
           const page = controller.cache?.file || controller.file
@@ -266,31 +307,29 @@ class Route {
       const publicPath = path.normalize(path.join(publicDir, safeUrl))
       const relativePath = path.relative(publicDir, publicPath)
 
-      if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
-        // PROD CACHE HIT (Metadata)
-        if (!Odac.Config.debug && this.#publicCache[publicPath]) {
-          const cached = this.#publicCache[publicPath]
-          return this.#asset(Odac, cached.type, cached.size, () => fs.createReadStream(publicPath))
-        }
-
+      if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath) && !StaticFile.isHidden(relativePath)) {
+        // The response is built from the opened descriptor: its fstat gives the size and
+        // validators of exactly the bytes streamed, even if the file is replaced meanwhile.
+        let handle = null
         try {
-          const stat = await fsPromises.stat(publicPath)
+          handle = await fsPromises.open(publicPath, 'r')
+          const stat = await handle.stat()
           if (stat.isFile()) {
-            const extension = path.extname(publicPath).slice(1)
-            const type = mime[extension] || 'text/html'
-
-            // PROD CACHE SET (Metadata Only)
-            if (!Odac.Config.debug) {
-              this.#publicCache[publicPath] = {
-                type,
-                size: stat.size
-              }
-            }
-
-            return this.#asset(Odac, type, stat.size, () => fs.createReadStream(publicPath))
+            const file = handle
+            handle = null
+            const meta = {type: StaticFile.contentType(publicPath), size: stat.size, etag: StaticFile.etag(stat), mtimeMs: stat.mtimeMs}
+            // autoClose (the default) releases the descriptor when the stream ends or is destroyed.
+            return this.#asset(
+              Odac,
+              meta,
+              range => file.createReadStream(range ?? {}),
+              () => file.close().catch(() => {})
+            )
           }
         } catch {
           // File not found in public
+        } finally {
+          handle?.close().catch(() => {})
         }
       }
     }
@@ -302,15 +341,58 @@ class Route {
     return Odac.Request.abort(404)
   }
 
-  // Shared response for config-route and public files. HEAD gets the headers
-  // only: the body is never produced, so no file is read or stream opened just
-  // for Node to discard it.
-  #asset(Odac, type, size, body) {
-    Odac.Request.header('Content-Type', type)
-    Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-    Odac.Request.header('Content-Length', size)
-    if (Odac.Request.method === 'head') return Odac.Request.end()
-    return body()
+  /**
+   * Shared response for config-route and public files.
+   *
+   * Why: one place applies the validators (ETag/Last-Modified → 304), byte ranges (206/416)
+   * and the cache policy. HEAD, 304 and 416 never produce the body, so no stream is opened
+   * just for Node to discard it; `release` frees whatever `body` would have consumed.
+   *
+   * @param {object} Odac Request-scoped instance.
+   * @param {{type: string, size: number, etag: string, mtimeMs: number}} meta
+   * @param {(range: {start: number, end: number}|null) => *} [body] Produces the response body.
+   * @param {() => void} [release] Called when the body is not produced.
+   */
+  #asset(Odac, meta, body, release = () => {}) {
+    const request = Odac.Request
+    const lastModified = new Date(meta.mtimeMs).toUTCString()
+    const readHeader = name => request.header(name)
+    request.header('Cache-Control', StaticFile.cacheControl(request.url))
+    request.header('ETag', meta.etag)
+    request.header('Last-Modified', lastModified)
+    request.header('Accept-Ranges', 'bytes')
+
+    if (StaticFile.isFresh(readHeader, meta.etag, meta.mtimeMs)) {
+      release()
+      request.status(304)
+      return request.end()
+    }
+
+    // If-Range carries a date here: weak ETags never satisfy it (RFC 9110 §13.1.5).
+    const ifRange = readHeader('if-range')
+    const range = !ifRange || ifRange === lastModified ? StaticFile.parseRange(readHeader('range'), meta.size) : null
+    if (range === false) {
+      release()
+      request.header('Content-Range', `bytes */${meta.size}`)
+      request.status(416)
+      return request.end()
+    }
+
+    request.header('Content-Type', meta.type)
+    if (range) {
+      request.status(206)
+      request.header('Content-Range', `bytes ${range.start}-${range.end}/${meta.size}`)
+    }
+    request.header('Content-Length', range ? range.end - range.start + 1 : meta.size)
+    if (request.method === 'head' || !body) {
+      release()
+      return request.end()
+    }
+    return body(range)
+  }
+
+  #slice(content, range) {
+    return range ? content.subarray(range.start, range.end + 1) : content
   }
 
   /**
@@ -318,6 +400,11 @@ class Route {
    * Phase 1 — O(1) exact hash-map match for static routes.
    * Phase 2 — Pre-indexed parametric match grouped by segment count to avoid full iteration.
    */
+  #hasHandler(route, method, url) {
+    for (const type of ['#' + method, method, '#page', 'page']) if (this.#controller(route, type, url)) return true
+    return false
+  }
+
   #controller(route, method, url) {
     const methodRoutes = this.routes[route]?.[method]
     if (!methodRoutes) return false
@@ -344,7 +431,7 @@ class Route {
 
       const params = {}
       for (const {index, name} of paramMap) {
-        params[name] = urlSegments[index]
+        params[name] = decodeParam(urlSegments[index])
       }
 
       return {
@@ -422,18 +509,40 @@ class Route {
       if (this.middlewares[name] && this.middlewares[name].mtime >= mtime - 1000) continue
 
       delete require.cache[require.resolve(path)]
-      this.middlewares[name] = {
-        path,
-        mtime,
-        handler: require(path)
+      try {
+        this.middlewares[name] = {path, mtime, handler: require(path)}
+      } catch (err) {
+        // A file saved mid-edit must not stop hot reload; the previous handler stays until
+        // the file loads again (mtime is recorded so the same broken save is not retried).
+        if (this.middlewares[name]) this.middlewares[name].mtime = mtime
+        console.error(`\x1b[31m[Odac]\x1b[0m Failed to load middleware: \x1b[33m${path}\x1b[0m`)
+        console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
       }
     }
   }
 
+  /**
+   * Loads middleware, hook, class and route files, reloading those that changed.
+   * Why: runs at startup and every 5 s in debug mode; any failure is logged and `loading` is
+   * always released, so one broken save can never stop hot reload for the rest of the run.
+   */
   async #init() {
     if (this.loading) return
     this.loading = true
+    try {
+      await this.#loadAll()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      delete Odac.Route.buff
+      this._pendingRouteLoads = []
+      this.loading = false
+    }
+  }
+
+  async #loadAll() {
     await this.#loadMiddlewares()
+    await Hook.load()
     const classDir = `${__dir}/class/`
     try {
       await fsPromises.access(classDir)
@@ -470,76 +579,103 @@ class Route {
       // Class dir might not exist
     }
 
+    let dir
     try {
-      const dir = await fsPromises.readdir(`${__dir}/route/`)
-      for (const file of dir) {
-        if (!file.endsWith('.js')) continue
-        const filePath = `${__dir}/route/${file}`
-        const stat = await fsPromises.stat(filePath)
-        let mtime = stat.mtimeMs
-        Odac.Route.buff = file.replace('.js', '')
-
-        if (!routes2[Odac.Route.buff] || routes2[Odac.Route.buff] < mtime - 1000) {
-          delete require.cache[require.resolve(filePath)]
-          Cron.clear(Odac.Route.buff)
-          routes2[Odac.Route.buff] = mtime
-          const routeModule = require(filePath)
-          if (typeof routeModule === 'function') {
-            // routeModule calls .set(), which pushes promises to _pendingRouteLoads
-            routeModule(Odac)
-          }
-        }
-
-        // Wait for all route sets to complete for this file
-        await Promise.all(this._pendingRouteLoads)
-        this._pendingRouteLoads = []
-
-        // Clean up deleted routes logic
-        for (const type of ['page', '#page', 'post', '#post', 'get', '#get', 'error']) {
-          if (!this.routes[Odac.Route.buff]) continue
-          if (!this.routes[Odac.Route.buff][type]) continue
-          for (const route in this.routes[Odac.Route.buff][type]) {
-            const routeObj = this.routes[Odac.Route.buff][type][route]
-            if (!routeObj) continue
-
-            if (routes2[Odac.Route.buff] > routeObj.loaded) {
-              if (routeObj.path) {
-                try {
-                  delete require.cache[require.resolve(routeObj.path)]
-                } catch {
-                  // Silently fail
-                }
-              }
-              delete this.routes[Odac.Route.buff][type][route]
-            } else if (routeObj) {
-              if (typeof routeObj.type === 'function') continue
-              // Check if controller file modified
-              try {
-                const cStat = await fsPromises.stat(routeObj.path)
-                if (routeObj.mtime < cStat.mtimeMs) {
-                  delete require.cache[require.resolve(routeObj.path)]
-                  routeObj.cache = require(routeObj.path)
-                  routeObj.mtime = cStat.mtimeMs
-                }
-              } catch {
-                // Controller file might have been deleted?
-              }
-            }
-          }
-        }
-        delete Odac.Route.buff
-      }
+      dir = await fsPromises.readdir(`${__dir}/route/`)
     } catch (e) {
-      if (e.code === 'ENOENT') {
-        console.error(`[ODAC] Route directory not found: \x1b[33m${__dir}/route/\x1b[0m`)
-      } else {
-        console.error(e)
-      }
+      if (e.code === 'ENOENT') console.error(`[ODAC] Route directory not found: \x1b[33m${__dir}/route/\x1b[0m`)
+      else console.error(e)
+      dir = []
+    }
+
+    for (const file of dir) {
+      if (!file.endsWith('.js')) continue
+      await this.#loadRouteFile(file)
+      await this.#reloadChangedControllers(file.replace('.js', ''))
     }
 
     Cron.init()
     this.#buildParamIndex()
-    this.loading = false
+  }
+
+  /**
+   * Loads one route file when it is new or changed, then drops the routes it no longer
+   * defines. If the file throws, its previous routes are kept so a half-saved edit does not
+   * take the site down; the next save reloads it.
+   */
+  async #loadRouteFile(file) {
+    const filePath = `${__dir}/route/${file}`
+    const name = file.replace('.js', '')
+    const stat = await fsPromises.stat(filePath)
+    const mtime = stat.mtimeMs
+    if (routes2[name] && routes2[name] >= mtime - 1000) return
+
+    Odac.Route.buff = name
+    delete require.cache[require.resolve(filePath)]
+    Cron.clear(name)
+    routes2[name] = mtime
+    const previousWs = this.#wsServer.unrouteSite(name)
+
+    try {
+      const routeModule = require(filePath)
+      // routeModule calls .set(), which pushes promises to _pendingRouteLoads
+      if (typeof routeModule === 'function') routeModule(Odac)
+    } catch (err) {
+      this.#wsServer.restoreRoutes(previousWs)
+      console.error(`\x1b[31m[Odac]\x1b[0m Failed to load route file: \x1b[33m${filePath}\x1b[0m`)
+      console.error(err)
+      await Promise.allSettled(this._pendingRouteLoads)
+      this._pendingRouteLoads = []
+      delete Odac.Route.buff
+      return
+    }
+
+    // Wait for all route sets to complete for this file
+    await Promise.all(this._pendingRouteLoads)
+    this._pendingRouteLoads = []
+    delete Odac.Route.buff
+
+    // Drop routes of every type (page, post, put, error, ...) the file no longer defines.
+    const site = this.routes[name]
+    if (!site) return
+    for (const type of Object.keys(site)) {
+      for (const url of Object.keys(site[type])) {
+        const routeObj = site[type][url]
+        if (!routeObj) continue
+
+        if (routes2[name] > routeObj.loaded) {
+          if (routeObj.type === 'controller' && routeObj.path) {
+            try {
+              delete require.cache[require.resolve(routeObj.path)]
+            } catch {
+              // Controller file already gone
+            }
+          }
+          delete site[type][url]
+        }
+      }
+    }
+  }
+
+  // Controllers edited without touching the route file are reloaded in place.
+  async #reloadChangedControllers(name) {
+    const site = this.routes[name]
+    if (!site) return
+    for (const type of Object.keys(site)) {
+      for (const routeObj of Object.values(site[type])) {
+        if (routeObj?.type !== 'controller' || !routeObj.path) continue
+        try {
+          const cStat = await fsPromises.stat(routeObj.path)
+          if (routeObj.mtime >= cStat.mtimeMs) continue
+          delete require.cache[require.resolve(routeObj.path)]
+          routeObj.cache = require(routeObj.path)
+          routeObj.mtime = cStat.mtimeMs
+        } catch (err) {
+          if (err.code !== 'ENOENT')
+            console.error(`\x1b[31m[Odac]\x1b[0m Failed to reload controller: \x1b[33m${routeObj.path}\x1b[0m`, err.message)
+        }
+      }
+    }
   }
 
   async init() {
@@ -655,7 +791,8 @@ class Route {
   }
 
   async request(req, res) {
-    let id = `${Date.now()}${Math.random().toString(36).substr(2, 9)}`
+    // Same generator as the WebSocket upgrade path; Odac.Request.id may be used to correlate logs.
+    const id = nodeCrypto.randomUUID()
     let param
     try {
       // Instance construction parses the request (query/cookies/body wiring) and
@@ -680,7 +817,20 @@ class Route {
           return param.cleanup()
         }
         param.Request.print()
-        result.pipe(param.Request.res)
+        // pipeline() destroys the source when the client disconnects and
+        // routes read errors here; pipe() did neither, leaking the file
+        // descriptor on aborted downloads and crashing on a failed read.
+        pipeline(result, param.Request.res, err => {
+          param.Request.clearTimeout()
+          if (err && err.code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+            console.error(JSON.stringify({level: 'ERROR', message: 'Response stream failed', error: err.message}))
+          }
+          param.cleanup()
+        })
+        // The request timeout is an idle deadline: each chunk proves progress.
+        // Backpressure stops the chunks when the client stops reading, so a
+        // stalled download still times out after one idle period.
+        result.on('data', () => param.Request.refreshTimeout())
         return
       }
       if (param.Request.res.finished || param.Request.res.writableEnded) {
@@ -695,9 +845,14 @@ class Route {
       console.error(e)
       // param may be undefined if instance construction itself threw.
       if (param) {
-        param.Request.abort(500)
-        param.cleanup()
-        return param.Request.end()
+        try {
+          await param.Request.abort(500)
+          if (!param.Request.res.writableEnded) param.Request.end()
+        } catch (err) {
+          console.error(err)
+          param.Request.res.destroy?.()
+        }
+        return param.cleanup()
       }
       try {
         res.statusCode = 500
@@ -710,6 +865,18 @@ class Route {
 
   use(...middlewares) {
     return new MiddlewareChain(this, [...middlewares.flat()])
+  }
+
+  /**
+   * Creates a rate-limit middleware whose single budget is shared by every route it wraps.
+   *
+   * Why: the per-route `{rateLimit}` option limits one route; this covers a group
+   * (`Odac.Route.use(Odac.Route.rateLimit({max: 100})).post(...).post(...)`).
+   * @param {{max: number, window?: number, key?: function, name?: string}} options
+   * @returns {function} Middleware.
+   */
+  rateLimit(options) {
+    return RateLimit.middleware(options)
   }
 
   set(type, url, file, options = {}) {
@@ -727,6 +894,9 @@ class Route {
     }
 
     const capturedMiddlewares = this._pendingMiddlewares.length > 0 ? [...this._pendingMiddlewares] : undefined
+    // Captured now: the load task below awaits fs.stat, and buff names whichever route file
+    // is loading by the time it resumes.
+    const routeName = Odac.Route.buff
 
     if (Array.isArray(type)) {
       type = type.map(t => t.toLowerCase())
@@ -741,9 +911,11 @@ class Route {
     if (url.length && url.endsWith('/')) url = url.slice(0, -1)
 
     type = type.toLowerCase()
+    // Validated now so a bad declaration fails the route file load, not the first request.
+    const rateLimit = options.rateLimit ? RateLimit.normalize(options.rateLimit, `${routeName}:${type}:${url}`) : undefined
 
     const isFunction = typeof file === 'function'
-    let path = `${__dir}/route/${Odac.Route.buff}.js`
+    let path = `${__dir}/route/${routeName}.js`
 
     let action = null
 
@@ -762,19 +934,30 @@ class Route {
       }
     }
 
-    if (!this.routes[Odac.Route.buff]) this.routes[Odac.Route.buff] = {}
-    if (!this.routes[Odac.Route.buff][type]) this.routes[Odac.Route.buff][type] = {}
+    if (!this.routes[routeName]) this.routes[routeName] = {}
+    if (!this.routes[routeName][type]) this.routes[routeName][type] = {}
+
+    // Declaration-derived fields, refreshed on every (re)registration.
+    const applyOptions = entry => {
+      entry.file = file
+      entry.middlewares = capturedMiddlewares
+      entry.token = options.token ?? true
+      entry.action = action
+      entry.rateLimit = rateLimit
+    }
 
     const task = async () => {
-      if (this.routes[Odac.Route.buff][type][url]) {
-        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
+      if (this.routes[routeName][type][url]) {
+        this.routes[routeName][type][url].loaded = routes2[routeName]
         if (!isFunction) {
           try {
             const stat = await fsPromises.stat(path)
-            if (this.routes[Odac.Route.buff][type][url].mtime < stat.mtimeMs) {
-              delete this.routes[Odac.Route.buff][type][url]
+            if (this.routes[routeName][type][url].mtime < stat.mtimeMs) {
+              delete this.routes[routeName][type][url]
               delete require.cache[require.resolve(path)]
             } else {
+              // The controller is unchanged, but the route file may have changed what wraps it.
+              applyOptions(this.routes[routeName][type][url])
               return
             }
           } catch {
@@ -782,42 +965,31 @@ class Route {
           }
         } else {
           // Update inline function reference on hot reload
-          this.routes[Odac.Route.buff][type][url].cache = file
-          this.routes[Odac.Route.buff][type][url].file = file
-          this.routes[Odac.Route.buff][type][url].mtime = Date.now()
-          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
-          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-          this.routes[Odac.Route.buff][type][url].action = action
+          this.routes[routeName][type][url].cache = file
+          this.routes[routeName][type][url].mtime = Date.now()
+          applyOptions(this.routes[routeName][type][url])
           return
         }
       }
 
       if (isFunction) {
-        if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
-        this.routes[Odac.Route.buff][type][url].cache = file
-        this.routes[Odac.Route.buff][type][url].type = 'function'
-        this.routes[Odac.Route.buff][type][url].file = file
-        this.routes[Odac.Route.buff][type][url].mtime = Date.now()
-        this.routes[Odac.Route.buff][type][url].path = path
-        this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-        this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-        this.routes[Odac.Route.buff][type][url].action = action
-
-        this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+        if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
+        this.routes[routeName][type][url].cache = file
+        this.routes[routeName][type][url].type = 'function'
+        this.routes[routeName][type][url].mtime = Date.now()
+        this.routes[routeName][type][url].path = path
+        this.routes[routeName][type][url].loaded = routes2[routeName]
+        applyOptions(this.routes[routeName][type][url])
       } else {
         try {
           const stat = await fsPromises.stat(path)
-          if (!this.routes[Odac.Route.buff][type][url]) this.routes[Odac.Route.buff][type][url] = {}
-          this.routes[Odac.Route.buff][type][url].cache = require(path)
-          this.routes[Odac.Route.buff][type][url].type = 'controller'
-          this.routes[Odac.Route.buff][type][url].file = file
-          this.routes[Odac.Route.buff][type][url].mtime = stat.mtimeMs
-          this.routes[Odac.Route.buff][type][url].path = path
-          this.routes[Odac.Route.buff][type][url].loaded = routes2[Odac.Route.buff]
-          this.routes[Odac.Route.buff][type][url].token = options.token ?? true
-          this.routes[Odac.Route.buff][type][url].action = action
-
-          this.routes[Odac.Route.buff][type][url].middlewares = capturedMiddlewares
+          if (!this.routes[routeName][type][url]) this.routes[routeName][type][url] = {}
+          this.routes[routeName][type][url].cache = require(path)
+          this.routes[routeName][type][url].type = 'controller'
+          this.routes[routeName][type][url].mtime = stat.mtimeMs
+          this.routes[routeName][type][url].path = path
+          this.routes[routeName][type][url].loaded = routes2[routeName]
+          applyOptions(this.routes[routeName][type][url])
         } catch (err) {
           if (file && typeof file === 'string') {
             if (err.code === 'ENOENT') {
@@ -1009,7 +1181,7 @@ class Route {
 
       if (token) {
         const wsToken = Odac.Request._wsHeaders ? Odac.Request._wsHeaders['sec-websocket-protocol'] : null
-        const tokens = wsToken ? wsToken.split(', ') : []
+        const tokens = wsToken ? wsToken.split(',').map(t => t.trim()) : []
         const odacToken = tokens.find(t => t.startsWith('odac-token-'))
 
         if (!odacToken) {
@@ -1036,6 +1208,11 @@ class Route {
 
           const result = await middleware(Odac)
 
+          if (Odac.Request.ended) {
+            closeRejected(ws, Odac.Request.statusCode)
+            return
+          }
+
           if (result === false) {
             ws.close(4003, 'Forbidden')
             return
@@ -1049,11 +1226,19 @@ class Route {
       }
       const res = handler(Odac)
       if (res instanceof Promise) await res
+      if (Odac.Request.ended) {
+        closeRejected(ws, Odac.Request.statusCode)
+        return
+      }
       ws.resume()
       return res
     }
 
-    this.#wsServer.route(path, wrappedHandler, options)
+    // Scoped to the route file being loaded (its subdomain), like HTTP routes, so a socket
+    // defined for one site is not reachable through another host name.
+    const site = global.Odac?.Route?.buff ?? null
+    if (site !== null && !this.routes[site]) this.routes[site] = {}
+    this.#wsServer.route(path, wrappedHandler, options, site)
   }
 
   handleWebSocketUpgrade(req, socket, head, Odac) {

@@ -14,8 +14,8 @@ function createMockStorage() {
   storageData = new Map()
   return {
     isReady: () => true,
-    put: (key, value) => storageData.set(key, value),
-    remove: key => storageData.delete(key),
+    putSync: (key, value) => storageData.set(key, value),
+    removeSync: key => storageData.delete(key),
     get: key => storageData.get(key) ?? null,
     getRange: ({start, end}) => {
       const results = []

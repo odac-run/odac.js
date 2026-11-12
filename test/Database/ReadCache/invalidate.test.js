@@ -1,5 +1,7 @@
 'use strict'
 
+const servedFromCache = require('./servedFromCache')
+
 const cluster = require('node:cluster')
 
 /**
@@ -64,20 +66,13 @@ describe('ReadCache.invalidate()', () => {
     await readCache.get('default', 'posts', qb1, () => qb1.then(r => r), 60)
     await readCache.get('default', 'posts', qb2, () => qb2.then(r => r), 60)
 
-    const cachedKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(cachedKeys).toHaveLength(2)
+    expect(await servedFromCache('posts', () => db('posts').where({id: 1}).first())).toBe(true)
 
     // Invalidate
     await readCache.invalidate('default', 'posts')
 
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
-
-    // Verify cache entries are actually deleted
-    for (const key of cachedKeys) {
-      const val = await Odac.Ipc.get(key)
-      expect(val).toBeNull()
-    }
+    expect(await servedFromCache('posts', () => db('posts').where({id: 1}).first())).toBe(false)
+    expect(await servedFromCache('posts', () => db('posts').where({id: 2}).first())).toBe(false)
   })
 
   it('should not affect cache of other tables', async () => {
@@ -89,11 +84,8 @@ describe('ReadCache.invalidate()', () => {
     // Invalidate only posts
     await readCache.invalidate('default', 'posts')
 
-    const postKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    const userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
-
-    expect(postKeys).toHaveLength(0)
-    expect(userKeys).toHaveLength(1)
+    expect(await servedFromCache('posts', () => db('posts').where({id: 1}).first())).toBe(false)
+    expect(await servedFromCache('users', () => db('users').where({id: 1}).first())).toBe(true)
   })
 
   it('should be a no-op when no cache exists for the table', async () => {

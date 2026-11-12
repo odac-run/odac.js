@@ -215,9 +215,19 @@ Odac.Route.ws('/path', handler, {
     max: 50,                    // Max messages allowed per window (default: 50)
     window: 1000                // Time window in ms (default: 1000ms)
   },
-  parseJson: true               // Auto-parse text messages as JSON (default: true)
+  parseJson: true,              // Auto-parse text messages as JSON (default: true)
+  maxBuffered: 16 * 1024 * 1024,// Unsent bytes allowed per client before it is dropped (default: max(16MB, 2 × maxPayload))
+  protocols: ['chat.v2'],       // Subprotocols this route speaks; the handshake answers with one of them
+  origins: ['https://app.example.com'] // Extra browser origins allowed besides the site itself, or '*'
 })
 ```
+
+- **Routes are per site:** a socket defined in `route/api.js` answers only on the `api` host, like HTTP routes.
+- **Origin check:** browser handshakes from another origin are refused with `403` unless listed in `origins`; clients that send no `Origin` (servers, mobile apps) are unaffected.
+- **Subprotocol:** the handshake answers with exactly one protocol: one listed in `protocols`, otherwise the ODAC token, otherwise the client's first offer.
+- **Heartbeat:** the server pings every 30 seconds and drops a client that sends nothing for two intervals. Set `"websocket": {"heartbeat": 60000}` in `odac.json` to change it, `0` to disable.
+- **Slow clients:** a client that stops reading is dropped once `maxBuffered` bytes are queued, so broadcasts cannot grow worker memory without bound.
+- **Protocol errors:** reserved bits, unknown opcodes and invalid control frames close the connection with `1002`, invalid UTF-8 text with `1007`.
 
 #### `parseJson`
 

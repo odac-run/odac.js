@@ -137,6 +137,10 @@ Odac.Var('Hello {{name}}, welcome to {{site}}').replace({
 })
 // Returns: 'Hello John, welcome to Odac'
 
+// Every occurrence is replaced; values are inserted literally ($& is not a pattern)
+Odac.Var('{{name}} and {{name}}').replace({'{{name}}': 'Jo'})
+// Returns: 'Jo and Jo'
+
 // Works with arrays/objects recursively
 const data = {
   title: 'Welcome {{name}}',
@@ -169,6 +173,10 @@ Odac.Var('Product Name 2024').slug()
 // Custom separator
 Odac.Var('Hello World').slug('_')
 // Returns: 'hello_world'
+
+// Accented and Turkish letters are transliterated, not dropped
+Odac.Var('Çağrı Şükür').slug()
+// Returns: 'cagri-sukur'
 ```
 
 #### format() - Format string with pattern
@@ -221,7 +229,7 @@ Odac.Var('hello').md5()
 const encrypted = Odac.Var('secret data').encrypt()
 
 // Custom encryption key
-const encrypted = Odac.Var('secret data').encrypt('my-32-character-encryption-key')
+const encrypted = Odac.Var('secret data').encrypt('a-long-random-secret')
 ```
 
 #### decrypt() - AES-256 decryption
@@ -231,7 +239,7 @@ const encrypted = Odac.Var('secret data').encrypt('my-32-character-encryption-ke
 const decrypted = Odac.Var(encryptedData).decrypt()
 
 // Custom decryption key
-const decrypted = Odac.Var(encryptedData).decrypt('my-32-character-encryption-key')
+const decrypted = Odac.Var(encryptedData).decrypt('a-long-random-secret')
 ```
 
 ### Date Formatting
@@ -493,6 +501,7 @@ module.exports = async function(Odac) {
 
 ### Notes
 
-- Encryption uses AES-256-CBC with a fixed IV (defined in framework core).
+- Encryption uses AES-256-GCM with a random IV per call; tampered or wrong-key ciphertext makes `decrypt()` return `null`. Values encrypted by older versions (AES-256-CBC) still decrypt.
+- In production (`NODE_ENV=production`) `encrypt()`/`decrypt()` throw while `encrypt.key` in `odac.json` is left at the default.
 - scrypt hashing is one-way and computationally expensive to prevent brute-force.
 - Date formatting works with any valid JavaScript date string

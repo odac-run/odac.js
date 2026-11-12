@@ -12,7 +12,7 @@ metadata:
 ## Core Principles
 - **Direct Output**: Manipulation methods return raw values (string/object). Chaining is NOT supported.
 - **Type Safety**: Methods handle various input types (strings, arrays, objects) gracefully.
-- **Enterprise Security**: Uses scrypt for hashing and AES-256-CBC for encryption.
+- **Enterprise Security**: Uses scrypt for hashing and authenticated AES-256-GCM for encryption.
 
 ---
 
@@ -45,13 +45,13 @@ Odac.Var('2024-04-10').date('d/m/Y'); // '10/04/2024'
 ```
 
 ### 5. `.encrypt(key?)`
-Encrypts the value using AES-256-CBC. Uses `Odac.Config.encrypt.key` by default. Returns Base64.
+Encrypts the value using AES-256-GCM (random IV). Uses `Odac.Config.encrypt.key` by default; throws in production if that key is the default. Returns a `v3:`-prefixed Base64 string.
 ```javascript
 const secret = Odac.Var('data').encrypt();
 ```
 
 ### 6. `.decrypt(key?)`
-Decrypts an AES-256-CBC Base64 string.
+Decrypts a value from `.encrypt()` (current GCM and older CBC formats). Returns `null` if the value is tampered, malformed or uses a different key.
 ```javascript
 const data = Odac.Var(secret).decrypt();
 ```

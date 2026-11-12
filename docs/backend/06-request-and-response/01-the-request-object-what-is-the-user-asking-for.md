@@ -56,6 +56,20 @@ module.exports = function (Odac) {
 *   `Odac.Request.ip` - User's IP address
 *   `Odac.Request.ssl` - Whether connection is SSL/HTTPS
 
+#### Client IP behind a proxy
+
+The ODAC Proxy passes the visitor's address and TLS state in `X-Odac-Connection-RemoteAddress` and `X-Odac-Connection-Ssl`. These headers are only honoured when the connection comes from a trusted proxy; otherwise `ip` and `ssl` describe the direct connection. By default loopback and private networks (`127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local, `fc00::/7`) are trusted, which covers the ODAC Proxy on the same host or on a container network.
+
+```json
+{
+  "request": {
+    "trustedProxies": ["loopback", "10.20.0.0/16"]
+  }
+}
+```
+
+Entries can be IP addresses, CIDR ranges or the names `loopback` and `private`; `[]` trusts no proxy. If you run behind a different reverse proxy on a trusted address (e.g. nginx on localhost), it must overwrite both headers, for example `proxy_set_header X-Odac-Connection-RemoteAddress $remote_addr;`, or a client can still set them.
+
 ### Request Headers
 
 ```javascript

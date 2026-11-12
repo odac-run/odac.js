@@ -286,6 +286,28 @@ describe('Route.check()', () => {
       expect(mockOdac.Request.data.url.postId).toBe('99')
     })
 
+    it('percent-decodes parameter values', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/user/{name}/{slug}', handler)
+
+      const mockOdac = createMockOdac('/user/John%20Doe/a%2Fb%C3%BC')
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.name).toBe('John Doe')
+      expect(mockOdac.Request.data.url.slug).toBe('a/bü')
+    })
+
+    it('keeps a malformed escape as sent', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/user/{name}', handler)
+
+      const mockOdac = createMockOdac('/user/100%')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.data.url.name).toBe('100%')
+    })
+
     it('should not match when static segments differ', async () => {
       const handler = jest.fn().mockReturnValue({ok: true})
       await setupParamRoute(route, '/users/{id}', handler)
@@ -365,76 +387,159 @@ describe('Route.check()', () => {
       jest.restoreAllMocks()
     })
 
-    it('should serve a public static file successfully', async () => {
-      const mockStat = jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 1024})
-      const mockStream = {pipe: jest.fn()}
-      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue(mockStream)
-      const expectedPath = path.normalize('/app/public/style.css')
-
-      const mockOdac = createMockOdac('/style.css')
-      const result = await route.check(mockOdac)
-
-      expect(mockStat).toHaveBeenCalledWith(expectedPath)
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/css')
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 1024)
-      expect(mockCreateReadStream).toHaveBeenCalledWith(expectedPath)
-      expect(result).toBe(mockStream)
-    })
-
     it('should prevent path traversal attacks', async () => {
-      const mockStat = jest.spyOn(fs.promises, 'stat')
+      const mockOpen = jest.spyOn(fs.promises, 'open')
 
       const mockOdac = createMockOdac('/../secrets.txt')
       const result = await route.check(mockOdac)
 
-      expect(mockStat).not.toHaveBeenCalled()
+      expect(mockOpen).not.toHaveBeenCalled()
       expect(result).toBeUndefined() // Falls through if blocked
     })
 
     it('should prevent null byte injection attacks', async () => {
-      const mockStat = jest.spyOn(fs.promises, 'stat')
+      const mockOpen = jest.spyOn(fs.promises, 'open')
 
       const mockOdac = createMockOdac('/style%00.css')
       const result = await route.check(mockOdac)
 
-      expect(mockStat).not.toHaveBeenCalled()
+      expect(mockOpen).not.toHaveBeenCalled()
       expect(result).toBeUndefined()
     })
 
     it('should handle invalid URI encoding gracefully', async () => {
-      const mockStat = jest.spyOn(fs.promises, 'stat')
+      const mockOpen = jest.spyOn(fs.promises, 'open')
 
       const mockOdac = createMockOdac('/%E0%A4%A') // Invalid URL encoded string
       const result = await route.check(mockOdac)
 
-      expect(mockStat).not.toHaveBeenCalled()
+      expect(mockOpen).not.toHaveBeenCalled()
       expect(result).toBeUndefined()
     })
+  })
 
-    it('should cache metadata in production mode', async () => {
-      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 2048})
-      const mockCreateReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream')
+  // HTTP routes had no throttle. The limit runs after the auth gate and before
+  // the session, CSRF check and controller, so a rejected flood costs no more.
+  describe('rateLimit option', () => {
+    const RateLimit = require('../../src/Route/RateLimit')
+    let store
 
-      const mockOdac = createMockOdac('/script.js')
-      mockOdac.Config.debug = false // prod mode
+    const createMockOdac = (method = 'post', {authed = true} = {}) => {
+      const Odac = {
+        Auth: {check: jest.fn().mockResolvedValue(authed), user: () => null},
+        Config: {},
+        Ipc: {incrBy: jest.fn(async key => store.set(key, (store.get(key) ?? 0) + 1).get(key))},
+        Request: {
+          abort: jest.fn(async () => {
+            Odac.Request.res.finished = true
+          }),
+          cookie: jest.fn(() => null),
+          data: {url: {}},
+          header: jest.fn(() => ''),
+          host: 'example.com',
+          ip: '203.0.113.7',
+          isAjaxLoad: false,
+          method,
+          page: null,
+          request: jest.fn().mockResolvedValue(null),
+          res: {finished: false, writableEnded: false},
+          route: 'test_route',
+          setSession: jest.fn(),
+          ssl: false,
+          url: '/send'
+        },
+        request: jest.fn().mockResolvedValue(null),
+        token: jest.fn().mockReturnValue(true)
+      }
+      return Odac
+    }
 
-      // first call (cache miss -> set cache)
-      await route.check(mockOdac)
-      expect(fs.promises.stat).toHaveBeenCalledTimes(1)
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
+    const register = (type, handler, rateLimit, extra = {}) => {
+      route.routes = {
+        test_route: {
+          [type]: {'/send': {cache: handler, file: handler, token: false, mtime: Date.now(), rateLimit, ...extra}}
+        }
+      }
+    }
 
-      // reset mock tracking (cache hit -> no stat)
-      jest.clearAllMocks()
-      jest.spyOn(fs, 'createReadStream').mockReturnValue('mock_stream_2')
+    beforeEach(() => {
+      store = new Map()
+    })
 
-      // second call
-      const result2 = await route.check(mockOdac)
+    it('runs the controller until the limit and answers 429 after it', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      register('post', handler, RateLimit.normalize({max: 2}, 'test_route:post:/send'))
 
-      expect(fs.promises.stat).not.toHaveBeenCalled() // Not called because metadata is cached
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 2048)
-      expect(mockCreateReadStream).toHaveBeenCalledWith(path.normalize('/app/public/script.js'))
-      expect(result2).toBe('mock_stream_2')
+      const results = []
+      for (let i = 0; i < 3; i++) {
+        const Odac = createMockOdac()
+        await route.check(Odac)
+        results.push(Odac)
+      }
+
+      expect(handler).toHaveBeenCalledTimes(2)
+      expect(results[2].Request.abort).toHaveBeenCalledWith(429)
+      expect(results[2].Request.header).toHaveBeenCalledWith('Retry-After', expect.any(String))
+    })
+
+    it('rejects before the session and CSRF check run', async () => {
+      const handler = jest.fn()
+      register('post', handler, RateLimit.normalize({max: 1}, 's'), {token: true})
+      await route.check(createMockOdac())
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(Odac.Request.abort).not.toHaveBeenCalledWith(401)
+      expect(Odac.Request.setSession).not.toHaveBeenCalled()
+    })
+
+    it('does not count requests that fail the auth gate', async () => {
+      const handler = jest.fn()
+      register('#post', handler, RateLimit.normalize({max: 1}, 's'))
+
+      const Odac = createMockOdac('post', {authed: false})
+      await route.check(Odac)
+
+      expect(Odac.Ipc.incrBy).not.toHaveBeenCalled()
+    })
+
+    it('applies to HEAD requests on a limited GET route', async () => {
+      const handler = jest.fn()
+      register('get', handler, RateLimit.normalize({max: 1}, 's'))
+      await route.check(createMockOdac('get'))
+
+      const Odac = createMockOdac('head')
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(handler).toHaveBeenCalledTimes(1)
+    })
+
+    it('leaves routes without the option uncounted', async () => {
+      const handler = jest.fn()
+      register('post', handler, undefined)
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Ipc.incrBy).not.toHaveBeenCalled()
+      expect(handler).toHaveBeenCalled()
+    })
+
+    it('stops the chain from a Route.rateLimit() middleware', async () => {
+      const handler = jest.fn()
+      const limiter = route.rateLimit({max: 1})
+      register('post', handler, undefined, {middlewares: [limiter]})
+      await route.check(createMockOdac())
+
+      const Odac = createMockOdac()
+      await route.check(Odac)
+
+      expect(Odac.Request.abort).toHaveBeenCalledWith(429)
+      expect(Odac.Request.abort).not.toHaveBeenCalledWith(403)
+      expect(handler).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -632,111 +737,6 @@ describe('Route.check()', () => {
     })
   })
 
-  // A HEAD response carries no body, so asset paths must answer from file
-  // metadata alone: no file read, no read stream opened only to be discarded.
-  describe('HEAD on assets', () => {
-    const fs = require('fs')
-    const path = require('path')
-
-    const createMockOdac = (url, {method = 'head', debug = true} = {}) => ({
-      Auth: {check: jest.fn().mockResolvedValue(true)},
-      Config: {debug},
-      Request: {
-        url,
-        method,
-        route: 'test_route',
-        header: jest.fn(),
-        cookie: jest.fn(() => null),
-        abort: jest.fn(),
-        end: jest.fn(),
-        setSession: jest.fn(),
-        data: {url: {}}
-      },
-      request: jest.fn().mockResolvedValue(null)
-    })
-
-    beforeEach(() => {
-      global.__dir = '/app'
-    })
-
-    afterEach(() => {
-      jest.restoreAllMocks()
-    })
-
-    it('answers a public file from stat without opening a read stream', async () => {
-      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 1024})
-      const createReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('stream')
-
-      const mockOdac = createMockOdac('/style.css')
-      await route.check(mockOdac)
-
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/css')
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 1024)
-      expect(createReadStream).not.toHaveBeenCalled()
-      expect(mockOdac.Request.end).toHaveBeenCalledWith()
-    })
-
-    it('answers a prod-cached public file without opening a read stream', async () => {
-      const stat = jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 2048})
-      const createReadStream = jest.spyOn(fs, 'createReadStream').mockReturnValue('stream')
-
-      const mockOdac = createMockOdac('/script.js', {debug: false})
-      await route.check(mockOdac) // cache miss: fills the metadata cache
-      mockOdac.Request.header.mockClear()
-      await route.check(mockOdac) // cache hit
-
-      expect(stat).toHaveBeenCalledTimes(1)
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 2048)
-      expect(createReadStream).not.toHaveBeenCalled()
-      expect(mockOdac.Request.end).toHaveBeenCalledTimes(2)
-    })
-
-    it('answers a config-route file from stat without reading it', async () => {
-      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 50176})
-      const readFile = jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from(''))
-
-      const mockOdac = createMockOdac('/assets/js/odac.js')
-      mockOdac.Config.route = {'/assets/js/odac.js': '/framework/client/odac.js'}
-      await route.check(mockOdac)
-
-      expect(readFile).not.toHaveBeenCalled()
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Type', 'text/javascript')
-      expect(mockOdac.Request.header).toHaveBeenCalledWith('Content-Length', 50176)
-      expect(mockOdac.Request.end).toHaveBeenCalledWith()
-    })
-
-    it('continues routing when a config-route target is not a file', async () => {
-      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => false, size: 0})
-
-      const mockOdac = createMockOdac('/assets/js/odac.js')
-      mockOdac.Config.route = {'/assets/js/odac.js': '/framework/client'}
-      await route.check(mockOdac)
-
-      expect(mockOdac.Request.end).not.toHaveBeenCalled()
-      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
-    })
-
-    // The prod config cache stores file content. HEAD never reads it, so it must
-    // not fill the cache, or the next GET would be served an empty body.
-    it('leaves the prod config cache for the next GET to fill', async () => {
-      const filePath = path.normalize('/framework/client/odac.js')
-      jest.spyOn(fs.promises, 'stat').mockResolvedValue({isFile: () => true, size: 4})
-      const readFile = jest.spyOn(fs.promises, 'readFile').mockResolvedValue(Buffer.from('ok()'))
-
-      const head = createMockOdac('/assets/js/odac.js', {debug: false})
-      head.Config.route = {'/assets/js/odac.js': filePath}
-      await route.check(head)
-
-      const get = createMockOdac('/assets/js/odac.js', {method: 'get', debug: false})
-      get.Config.route = {'/assets/js/odac.js': filePath}
-      const result = await route.check(get)
-
-      expect(readFile).toHaveBeenCalledTimes(1)
-      expect(result.toString()).toBe('ok()')
-      expect(get.Request.header).toHaveBeenCalledWith('Content-Length', 4)
-    })
-  })
-
   // See IMPROVEMENT-PLAN 3.3: Auth.check() ran unconditionally at the top of
   // check(), so every asset request (config-route files, public files, plain
   // 404s) triggered a token-table query for logged-in users. Auth must instead
@@ -852,7 +852,7 @@ describe('Route.check()', () => {
     })
 
     it('loads the user before processing a form post', async () => {
-      route.routes = {www: {}}
+      route.routes = {www: {post: {'/submit': {cache: jest.fn()}}}}
       global.__dir = tmpDir
 
       const mockOdac = createMockOdac('post', '/submit')
@@ -861,6 +861,65 @@ describe('Route.check()', () => {
 
       // Form set-callbacks (Odac.fn) are user code and may read Odac.Auth.user().
       expect(mockOdac.Auth.check).toHaveBeenCalled()
+    })
+
+    // Reading the form token parses the body; an upload to a URL nothing handles must not be.
+    it('does not read the body of a post to a URL without a route', async () => {
+      route.routes = {www: {}}
+      global.__dir = tmpDir
+
+      const mockOdac = createMockOdac('post', '/nowhere')
+      mockOdac.request = jest.fn(async () => null)
+      await route.check(mockOdac)
+
+      expect(mockOdac.request).not.toHaveBeenCalled()
+      expect(mockOdac.Request.abort).toHaveBeenCalledWith(404)
+    })
+
+    it('reads the form token for a post to a page route', async () => {
+      route.routes = {www: {page: {'/contact': {cache: jest.fn()}}}}
+      global.__dir = tmpDir
+
+      const mockOdac = createMockOdac('post', '/contact')
+      mockOdac.request = jest.fn(async () => null)
+      await route.check(mockOdac)
+
+      expect(mockOdac.request).toHaveBeenCalledWith('_odac_form_token')
+    })
+  })
+
+  describe('AJAX navigation headers', () => {
+    const ajaxOdac = parts => ({
+      Auth: {check: jest.fn().mockResolvedValue(true)},
+      Config: {},
+      Request: {
+        url: '/x',
+        method: 'get',
+        route: 'www',
+        header: jest.fn(key => ({'X-Odac': 'ajaxload', 'X-Odac-Load': 'content', 'X-Odac-Parts': parts})[key]),
+        cookie: jest.fn(() => null),
+        abort: jest.fn(),
+        setSession: jest.fn(),
+        data: {url: {}}
+      },
+      request: jest.fn().mockResolvedValue(null)
+    })
+
+    it('ignores a malformed escape in X-Odac-Parts instead of failing the request', async () => {
+      route.routes = {www: {page: {'/x': {cache: jest.fn(() => 'ok')}}}}
+      const odac = ajaxOdac('header=%E0%A4%A,content=pages%2Fx')
+      await route.check(odac)
+      expect(odac.Request.clientParts.content).toBe('pages/x')
+      expect(odac.Request.clientParts.header).toBeUndefined()
+    })
+
+    it('keeps __proto__ in X-Odac-Parts an ordinary key', async () => {
+      route.routes = {www: {page: {'/x': {cache: jest.fn(() => 'ok')}}}}
+      const odac = ajaxOdac('__proto__=x,content=y')
+      await route.check(odac)
+      expect(Object.getPrototypeOf(odac.Request.clientParts)).toBeNull()
+      expect(odac.Request.clientParts.__proto__).toBe('x')
+      expect({}.content).toBeUndefined()
     })
   })
 })

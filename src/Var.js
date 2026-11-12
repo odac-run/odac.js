@@ -1,17 +1,109 @@
 const fs = require('fs')
+const net = require('net')
 const nodeCrypto = require('crypto')
 
+// Hostname labels of 1-63 characters without a leading/trailing hyphen, at most 253 in total,
+// ending in an alphabetic TLD of any length or an IDN (punycode) TLD.
+const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/i
+// Pictographic characters, flag halves and keycaps (1️⃣). A literal range such as
+// [\u1F000-\u1F6FF] is parsed as '\u1F00', '0'-'\u1F6F', 'F' and matched almost every letter.
+const EMOJI_PATTERN = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[0-9#*]\uFE0F?\u20E3/u
+const URL_SCHEMES = new Set(['http:', 'https:', 'ftp:', 'ftps:', 'ws:', 'wss:'])
+
+// Absolute URL with an authority. The scheme allowlist keeps javascript:/data: out, and the
+// explicit '//' check stops the WHATWG parser from accepting 'http:example.com'.
+function isUrl(value) {
+  const text = String(value)
+  if (/\s/.test(text) || !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return false
+  try {
+    const url = new URL(text)
+    return URL_SCHEMES.has(url.protocol) && url.hostname !== ''
+  } catch {
+    return false
+  }
+}
+
+// Letters that Unicode decomposition does not reduce to ASCII; the rest (é, ü, ş, ç, ğ, ö, İ)
+// lose their marks through NFKD.
+const TRANSLITERATION = {
+  ı: 'i',
+  ß: 'ss',
+  æ: 'ae',
+  Æ: 'AE',
+  ø: 'o',
+  Ø: 'O',
+  đ: 'd',
+  Đ: 'D',
+  ł: 'l',
+  Ł: 'L',
+  œ: 'oe',
+  Œ: 'OE',
+  þ: 'th',
+  Þ: 'TH'
+}
+
+// Strings get every occurrence replaced; arrays and plain objects are walked; anything else
+// is returned unchanged.
+function replaceDeep(value, pairs) {
+  if (typeof value === 'string') {
+    for (const [search, replacement] of pairs) {
+      if (search === '') continue
+      value = value.replaceAll(search, () => String(replacement))
+    }
+    return value
+  }
+  if (Array.isArray(value)) return value.map(item => replaceDeep(item, pairs))
+  if (value && typeof value === 'object') {
+    const result = {}
+    for (const key of Object.keys(value)) result[key] = replaceDeep(value[key], pairs)
+    return result
+  }
+  return value
+}
+
 const DEFAULT_ENCRYPT_KEY = 'odac'
+// Config.init() replaces the configured key with its SHA-256 digest, so the default key
+// must also be recognised in that form or the production guard below never fires.
+const DEFAULT_ENCRYPT_KEY_DIGEST = nodeCrypto.createHash('sha256').update(DEFAULT_ENCRYPT_KEY).digest()
 const LEGACY_IV = '2dea8a25e5e8f004'
-// Marks the random-IV format so decrypt can tell it apart from legacy fixed-IV
-// ciphertext (which is bare base64) and stay backward compatible.
-const CIPHER_PREFIX = 'v2:'
+// Ciphertext prefixes. Bare base64 is the legacy fixed-IV CBC format, `v2:` is random-IV CBC,
+// `v3:` is AES-256-GCM. Only v3 is produced; the older formats are kept for decryption so
+// existing data stays readable.
+const CBC_PREFIX = 'v2:'
+const GCM_PREFIX = 'v3:'
+const GCM_IV_LENGTH = 12
+const GCM_TAG_LENGTH = 16
+const GCM_KEY_INFO = 'odac:var:encrypt:v3'
+
+const SCRYPT_KEY_LENGTH = 64
+
+function scryptAsync(value, salt) {
+  return new Promise((resolve, reject) => {
+    nodeCrypto.scrypt(value, salt, SCRYPT_KEY_LENGTH, (error, key) => (error ? reject(error) : resolve(key)))
+  })
+}
+
+// A stored hash whose digest has the wrong length (truncated or edited) made timingSafeEqual
+// throw instead of failing the check.
+function parseScryptHash(value) {
+  if (typeof value !== 'string' || !value.startsWith('$scrypt$')) return null
+  const parts = value.split('$')
+  if (parts.length < 4 || !/^[0-9a-f]+$/i.test(parts[3])) return null
+  const hash = Buffer.from(parts[3], 'hex')
+  if (hash.length !== SCRYPT_KEY_LENGTH) return null
+  return {salt: parts[2], hash}
+}
+
+function isDefaultKey(key) {
+  if (Buffer.isBuffer(key)) return key.equals(DEFAULT_ENCRYPT_KEY_DIGEST)
+  return key === DEFAULT_ENCRYPT_KEY
+}
 
 // Resolves the encryption secret, refusing the well-known default key in
 // production so deterministic/guessable ciphertext never ships live.
 function resolveEncryptKey(key) {
   key = key || Odac.Config.encrypt.key
-  if (key === DEFAULT_ENCRYPT_KEY) {
+  if (isDefaultKey(key)) {
     if (!Odac.Config.debug) {
       throw new Error('Var.encrypt: refusing to use the default encryption key in production. Set config.encrypt.key to a strong secret.')
     }
@@ -20,10 +112,27 @@ function resolveEncryptKey(key) {
   return key
 }
 
-// Derives a fixed 32-byte AES-256 key from an arbitrary-length secret so any
-// configured key works and the key length is always valid.
-function deriveKey(key) {
+// v2 key derivation. String() turns a Buffer key into lossy UTF-8, so it is only kept
+// to decrypt data written in the v2 format.
+function deriveCbcKey(key) {
   return nodeCrypto.createHash('sha256').update(String(key)).digest()
+}
+
+// v3 key derivation: HKDF over the raw key bytes (Buffer keys are used as-is, strings as UTF-8),
+// with a purpose label so the derived key is never reused by another primitive.
+function deriveGcmKey(key) {
+  const material = Buffer.isBuffer(key) ? key : Buffer.from(String(key))
+  return Buffer.from(nodeCrypto.hkdfSync('sha256', material, Buffer.alloc(0), GCM_KEY_INFO, 32))
+}
+
+function decryptGcm(payload, secret) {
+  const raw = Buffer.from(payload, 'base64')
+  if (raw.length < GCM_IV_LENGTH + GCM_TAG_LENGTH) return null
+  const iv = raw.subarray(0, GCM_IV_LENGTH)
+  const tag = raw.subarray(GCM_IV_LENGTH, GCM_IV_LENGTH + GCM_TAG_LENGTH)
+  const decipher = nodeCrypto.createDecipheriv('aes-256-gcm', deriveGcmKey(secret), iv, {authTagLength: GCM_TAG_LENGTH})
+  decipher.setAuthTag(tag)
+  return Buffer.concat([decipher.update(raw.subarray(GCM_IV_LENGTH + GCM_TAG_LENGTH)), decipher.final()]).toString()
 }
 
 class Var {
@@ -81,53 +190,93 @@ class Var {
     })
   }
 
+  /**
+   * Decrypts a value produced by encrypt().
+   * Why: application data encrypted by any ODAC version must remain readable, so the legacy
+   * CBC formats are still accepted here even though encrypt() only writes authenticated v3.
+   * @param {string|Buffer} [key] Overrides Odac.Config.encrypt.key.
+   * @returns {string|null} Plaintext, or null when the ciphertext is malformed, tampered or uses another key.
+   */
   decrypt(key) {
     const secret = resolveEncryptKey(key)
     const value = this.#value
     try {
-      if (typeof value === 'string' && value.startsWith(CIPHER_PREFIX)) {
-        // Random-IV format: first 16 bytes are the IV, rest is ciphertext.
-        const raw = Buffer.from(value.slice(CIPHER_PREFIX.length), 'base64')
-        const iv = raw.subarray(0, 16)
-        const encryptedText = raw.subarray(16)
-        const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', deriveKey(secret), iv)
-        return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString()
+      if (typeof value !== 'string') return null
+      if (value.startsWith(GCM_PREFIX)) return decryptGcm(value.slice(GCM_PREFIX.length), secret)
+      if (value.startsWith(CBC_PREFIX)) {
+        // v2: first 16 bytes are the IV, rest is ciphertext.
+        const raw = Buffer.from(value.slice(CBC_PREFIX.length), 'base64')
+        const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', deriveCbcKey(secret), raw.subarray(0, 16))
+        return Buffer.concat([decipher.update(raw.subarray(16)), decipher.final()]).toString()
       }
-      // Legacy fixed-IV format (raw 32-byte key): kept so data encrypted before
-      // the random-IV migration still decrypts.
-      const encryptedText = Buffer.from(value, 'base64')
+      // Legacy fixed-IV format (raw 32-byte key).
       const decipher = nodeCrypto.createDecipheriv('aes-256-cbc', secret, LEGACY_IV)
-      return Buffer.concat([decipher.update(encryptedText), decipher.final()]).toString()
+      return Buffer.concat([decipher.update(Buffer.from(value, 'base64')), decipher.final()]).toString()
     } catch {
       return null
     }
   }
 
+  /**
+   * Encrypts the value with AES-256-GCM under a fresh random IV.
+   * Why: GCM authenticates the ciphertext, so a modified value fails to decrypt instead of
+   * yielding attacker-influenced plaintext or leaking a padding oracle.
+   * @param {string|Buffer} [key] Overrides Odac.Config.encrypt.key.
+   * @returns {string} `v3:` + base64(iv | tag | ciphertext)
+   */
   encrypt(key) {
     const secret = resolveEncryptKey(key)
-    // Fresh random IV per call → identical plaintext yields different ciphertext.
-    const iv = nodeCrypto.randomBytes(16)
-    const cipher = nodeCrypto.createCipheriv('aes-256-cbc', deriveKey(secret), iv)
+    const iv = nodeCrypto.randomBytes(GCM_IV_LENGTH)
+    const cipher = nodeCrypto.createCipheriv('aes-256-gcm', deriveGcmKey(secret), iv, {authTagLength: GCM_TAG_LENGTH})
     const encrypted = Buffer.concat([cipher.update(this.#value), cipher.final()])
-    return CIPHER_PREFIX + Buffer.concat([iv, encrypted]).toString('base64')
+    return GCM_PREFIX + Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64')
   }
 
+  /**
+   * Hashes the value with scrypt (synchronous).
+   * Why: kept for scripts and existing callers; request handlers should use hashAsync(), since
+   * scrypt is deliberately slow and the synchronous form blocks the event loop meanwhile.
+   * @returns {string} `$scrypt$<salt>$<hex>`
+   */
   hash() {
     const salt = nodeCrypto.randomBytes(16).toString('hex')
-    const derivedKey = nodeCrypto.scryptSync(this.#value, salt, 64)
+    const derivedKey = nodeCrypto.scryptSync(this.#value, salt, SCRYPT_KEY_LENGTH)
     return `$scrypt$${salt}$${derivedKey.toString('hex')}`
   }
 
+  /**
+   * Hashes the value with scrypt on the libuv thread pool.
+   * Why: password hashing on the request path (login, registration) must not stall every
+   * other request on the worker. Produces the same format as hash().
+   * @returns {Promise<string>}
+   */
+  async hashAsync() {
+    const salt = nodeCrypto.randomBytes(16).toString('hex')
+    const derivedKey = await scryptAsync(this.#value, salt)
+    return `$scrypt$${salt}$${derivedKey.toString('hex')}`
+  }
+
+  /**
+   * Checks a candidate against a hash produced by hash()/hashAsync() (synchronous).
+   * @param {string} check Candidate value.
+   * @returns {boolean} false for a mismatch or a malformed hash; never throws.
+   */
   hashCheck(check) {
-    if (!this.#value.startsWith('$scrypt$')) return false
-    const parts = this.#value.split('$')
-    if (parts.length < 4) return false
+    const parsed = parseScryptHash(this.#value)
+    if (!parsed) return false
+    return nodeCrypto.timingSafeEqual(parsed.hash, nodeCrypto.scryptSync(String(check), parsed.salt, SCRYPT_KEY_LENGTH))
+  }
 
-    const salt = parts[2]
-    const originalHash = Buffer.from(parts[3], 'hex')
-
-    const derivedKey = nodeCrypto.scryptSync(check, salt, 64)
-    return nodeCrypto.timingSafeEqual(originalHash, derivedKey)
+  /**
+   * Asynchronous hashCheck().
+   * Why: see hashAsync(); used for every password and legacy token verification.
+   * @param {string} check Candidate value.
+   * @returns {Promise<boolean>}
+   */
+  async hashCheckAsync(check) {
+    const parsed = parseScryptHash(this.#value)
+    if (!parsed) return false
+    return nodeCrypto.timingSafeEqual(parsed.hash, await scryptAsync(String(check), parsed.salt))
   }
 
   html() {
@@ -154,12 +303,12 @@ class Var {
     if (args.includes('alphanumericspace')) result = (result || any) && ((any && result) || /^[A-Za-z0-9\s]+$/.test(this.#value))
     if (args.includes('hash')) result = (result || any) && ((any && result) || /^\$scrypt\$[a-f0-9]+\$[a-f0-9]+$/.test(this.#value))
     if (args.includes('date')) result = (result || any) && ((any && result) || !isNaN(Date.parse(this.#value)))
-    if (args.includes('domain')) result = (result || any) && ((any && result) || /^([a-z0-9-]+\.){1,2}[a-z]{2,6}$/i.test(this.#value))
+    if (args.includes('domain')) result = (result || any) && ((any && result) || DOMAIN_PATTERN.test(this.#value))
     if (args.includes('email'))
       result = (result || any) && ((any && result) || /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(this.#value))
     if (args.includes('float')) result = (result || any) && ((any && result) || !isNaN(parseFloat(this.#value)))
-    if (args.includes('host')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
-    if (args.includes('ip')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
+    if (args.includes('host')) result = (result || any) && ((any && result) || net.isIPv4(String(this.#value)))
+    if (args.includes('ip')) result = (result || any) && ((any && result) || net.isIP(String(this.#value)) !== 0)
     if (args.includes('json')) {
       // Never let a malformed value throw out of a validity check; also fixes the
       // old `.length >= 0` test that wrongly rejected valid JSON objects.
@@ -175,14 +324,8 @@ class Var {
     if (args.includes('mac')) result = (result || any) && ((any && result) || /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(this.#value))
     if (args.includes('md5')) result = (result || any) && ((any && result) || /^[a-f0-9A-F]{32}$/.test(this.#value))
     if (args.includes('numeric')) result = (result || any) && ((any && result) || !isNaN(this.#value))
-    if (args.includes('url')) result = (result || any) && ((any && result) || /^[a-z0-9]+:\/\/[a-z0-9]+\.[a-z]{2,6}/i.test(this.#value))
-    if (args.includes('emoji'))
-      result =
-        (result || any) &&
-        ((any && result) ||
-          /([0-9#][\u20E3])|[\u00ae\u00a9\u203C\u2047\u2048\u2049\u3030\u303D\u2139\u2122\u3297\u3299][\uFE00-\uFEFF]?|[\u2190-\u21FF][\uFE00-\uFEFF]?|[\u2300-\u23FF][\uFE00-\uFEFF]?|[\u2460-\u24FF][\uFE00-\uFEFF]?|[\u25A0-\u25FF][\uFE00-\uFEFF]?|[\u2600-\u27BF][\uFE00-\uFEFF]?|[\u2900-\u297F][\uFE00-\uFEFF]?|[\u2B00-\u2BF0][\uFE00-\uFEFF]?|[\u1F000-\u1F6FF][\uFE00-\uFEFF]?/u.test(
-            this.#value
-          ))
+    if (args.includes('url')) result = (result || any) && ((any && result) || isUrl(this.#value))
+    if (args.includes('emoji')) result = (result || any) && ((any && result) || EMOJI_PATTERN.test(this.#value))
     if (args.includes('username')) result = (result || any) && ((any && result) || /^[a-zA-Z0-9]+$/.test(this.#value))
     if (args.includes('xss')) result = (result || any) && ((any && result) || this.#value == this.#value.replace(/<[^>]*>/g, ''))
     return result
@@ -216,16 +359,16 @@ class Var {
     return value
   }
 
+  /**
+   * Replaces every occurrence of each search string: replace('a', 'b') or replace({a: 'b'}).
+   * Why: templates repeat placeholders ({{name}} twice), so only replacing the first match
+   * left the rest in place, and the two-argument form was read as an object with keys
+   * '0' and '1'. Replacement values are inserted literally ($& and $1 are not patterns).
+   * Arrays and objects are processed value by value and keep their shape.
+   */
   replace(...args) {
-    args = this.#parse(args)
-    if (args.length == 1) args = args[0]
-    if (['array', 'object'].includes(typeof this.#value)) {
-      let new_value = {}
-      for (const key of Object.keys(this.#value)) new_value[key] = Odac.Var(this.#value[key]).replace(args)
-      return new_value
-    }
-    for (const arg of Object.keys(args)) this.#value = this.#value.replace(arg, args[arg])
-    return this.#value
+    const pairs = args.length >= 2 ? {[args[0]]: args[1]} : args[0] && typeof args[0] === 'object' ? args[0] : {}
+    return replaceDeep(this.#value, Object.entries(pairs))
   }
 
   save(path) {
@@ -237,13 +380,24 @@ class Var {
     return fs.writeFileSync(path, this.#value)
   }
 
+  /**
+   * Builds a URL slug: lower-case ASCII letters and digits joined by `separator`.
+   * Why: accented and Turkish letters are transliterated (Çağrı Şükür → cagri-sukur) instead
+   * of being dropped, runs of other characters become one separator, and none is left at
+   * either end ('Hello World!' → 'hello-world').
+   * @param {string} [separator='-']
+   * @returns {string}
+   */
   slug(separator = '-') {
-    let str = this.#value
-    str = str.replace(/[^a-zA-Z0-9\s]/g, separator)
-    str = str.replace(/[\s]/g, separator)
-    str = str.replace(/[-]+/g, separator)
-    str = str.toLowerCase()
-    return str
+    const ascii = String(this.#value ?? '')
+      .replace(/[^\p{ASCII}]/gu, c => TRANSLITERATION[c] ?? c)
+      .normalize('NFKD')
+      .replace(/\p{M}/gu, '')
+      .toLowerCase()
+    return ascii
+      .split(/[^a-z0-9]+/)
+      .filter(Boolean)
+      .join(separator)
   }
 
   format(format) {

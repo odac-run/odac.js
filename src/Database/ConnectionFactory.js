@@ -18,9 +18,20 @@ function resolveClient(type) {
   return 'mysql2'
 }
 
+// Driver options passed through as configured. Covers TLS, character set, time zone and
+// sockets; anything else goes in the node's `options` object, merged in as given.
+const DRIVER_OPTIONS = {
+  mysql2: ['ssl', 'charset', 'timezone', 'socketPath', 'connectTimeout'],
+  pg: ['ssl', 'application_name', 'statement_timeout', 'connectionTimeoutMillis']
+}
+
+// A PostgreSQL time zone name or offset; it ends up in a `-c TimeZone=` startup option.
+const PG_TIMEZONE = /^[A-Za-z0-9_+\-/:]+$/
+
 /**
  * Builds knex connection config from ODAC database node.
- * Why: Normalizes connection options for all call sites and avoids drift.
+ * Why: Normalizes connection options for all call sites and avoids drift. Managed databases
+ * typically require TLS or hand out a connection URL; both must be expressible in odac.json.
  * @param {object} db Single database config node.
  * @param {string} client Knex client name.
  * @returns {object} Knex connection object.
@@ -30,13 +41,37 @@ function buildConnectionConfig(db, client) {
     return {filename: db.filename || db.database || './dev.sqlite3'}
   }
 
-  return {
-    host: db.host || '127.0.0.1',
-    user: db.user,
-    password: db.password,
-    database: db.database,
-    port: db.port
+  const url = db.url || db.connectionString
+  let connection
+  if (url) {
+    // The URL carries host, credentials and database; explicit fields still override for pg.
+    connection = client === 'pg' ? {connectionString: url} : {uri: url}
+    for (const field of ['user', 'password', 'database', 'port']) if (db[field] !== undefined) connection[field] = db[field]
+    if (db.host) connection.host = db.host
+  } else {
+    connection = {
+      host: db.host || '127.0.0.1',
+      user: db.user,
+      password: db.password,
+      database: db.database,
+      port: db.port
+    }
   }
+
+  for (const option of DRIVER_OPTIONS[client] ?? []) {
+    if (db[option] !== undefined) connection[option] = db[option]
+  }
+  // mysql2 enables TLS with an options object; `ssl: true` means "TLS with defaults".
+  if (client === 'mysql2' && connection.ssl === true) connection.ssl = {}
+  if (client === 'pg' && db.timezone !== undefined) {
+    if (typeof db.timezone !== 'string' || !PG_TIMEZONE.test(db.timezone)) {
+      throw new Error(`Invalid database timezone "${db.timezone}"`)
+    }
+    connection.options = `${connection.options ? connection.options + ' ' : ''}-c TimeZone=${db.timezone}`
+  }
+  if (db.options && typeof db.options === 'object') Object.assign(connection, db.options)
+
+  return connection
 }
 
 /** @type {Record<string, string>} Maps ODAC db type to the npm package that must be installed */
@@ -46,14 +81,69 @@ const DRIVER_PACKAGES = {
   sqlite3: 'sqlite3'
 }
 
+/** @type {Set<string>} Drivers that ship a native addon built or fetched by an install script */
+const NATIVE_DRIVERS = new Set(['sqlite3'])
+
+/**
+ * Loads a database driver package, telling a missing driver apart from one that fails to load.
+ * Why: npm 12+ blocks dependency install scripts unless `allowScripts` covers them, so sqlite3
+ * installs without its native binding. Reporting that as "not installed" sent users to
+ * `npm install`, which leaves the binding missing.
+ * @param {string} pkg Driver package name.
+ * @throws {Error} When the package is absent, or present but its module throws on load.
+ */
+function loadDriver(pkg) {
+  try {
+    require(pkg)
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND' && err.message.startsWith(`Cannot find module '${pkg}'`)) {
+      throw new Error(`Database driver "${pkg}" is not installed. Run: npm install ${pkg}`, {cause: err})
+    }
+    const hint = NATIVE_DRIVERS.has(pkg)
+      ? ` Its native addon is missing or was built for another Node version. Run: npm rebuild ${pkg}` +
+        ` (npm 12+ skips install scripts unless allowed: npm install-scripts approve ${pkg})`
+      : ''
+    throw new Error(`Database driver "${pkg}" is installed but failed to load.${hint}\nCause: ${err.message}`, {cause: err})
+  }
+}
+
+// Connections the whole cluster may open to one database when the config sets
+// no connectionLimit. Sized to fit PostgreSQL's default max_connections (100)
+// with room for admin sessions and other clients.
+const CLUSTER_POOL_BUDGET = 80
+const POOL_MAX = 10
+// A process holding a transaction needs a second connection for any query run
+// outside it; with a pool of one that query would wait forever.
+const POOL_MIN_MAX = 2
+
+/**
+ * Picks the per-process pool size.
+ * Why: every process (primary + each worker) opens its own pool, so a fixed
+ * size multiplied by the core count exceeded the database's connection limit
+ * on large machines. An explicit connectionLimit is honored as given.
+ * @param {object} db Single database config node.
+ * @param {number} processCount Processes that will each open a pool.
+ * @returns {number}
+ */
+function poolMax(db, processCount) {
+  if (db.connectionLimit) return db.connectionLimit
+  return Math.min(POOL_MAX, Math.max(POOL_MIN_MAX, Math.floor(CLUSTER_POOL_BUDGET / processCount)))
+}
+
 /**
  * Creates knex connections map from ODAC database config.
  * Why: Centralizes zero-config connection bootstrap used by runtime and migration CLI.
  * @param {object} databaseConfig ODAC database config (single or multiple).
+ * @param {object} [options]
+ * @param {number} [options.processCount=1] Processes that each open these pools
+ *   (primary + workers at runtime, 1 for the CLI); used to size the pools.
  * @returns {Record<string, any>} Knex connections by key.
  */
-function buildConnections(databaseConfig) {
-  const isMultiple = typeof databaseConfig[Object.keys(databaseConfig)[0]] === 'object'
+function buildConnections(databaseConfig, {processCount = 1} = {}) {
+  // Several connections when every value is a connection node. A single node may hold objects
+  // too (`ssl`, `options`), so its first key alone does not decide.
+  const values = Object.values(databaseConfig)
+  const isMultiple = values.length > 0 && values.every(value => value !== null && typeof value === 'object' && !Array.isArray(value))
   const dbs = isMultiple ? databaseConfig : {default: databaseConfig}
   const connections = {}
 
@@ -71,18 +161,12 @@ function buildConnections(databaseConfig) {
     const connection = buildConnectionConfig(db, client)
 
     const pkg = DRIVER_PACKAGES[client]
-    if (pkg) {
-      try {
-        require(pkg)
-      } catch {
-        throw new Error(`Database driver "${pkg}" is not installed. Run: npm install ${pkg}`)
-      }
-    }
+    if (pkg) loadDriver(pkg)
 
     connections[key] = knex({
       client,
       connection,
-      pool: {min: 0, max: db.connectionLimit || 10},
+      pool: {min: 0, max: poolMax(db, processCount)},
       useNullAsDefault: true
     })
     connections[key]._odacConnectionKey = key

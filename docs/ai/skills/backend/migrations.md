@@ -18,7 +18,7 @@ ODAC migrations are **declarative**. The `schema/` directory is the single sourc
 3. **Cluster Safety**: Auto-migration runs only on `cluster.isPrimary` to prevent race conditions.
 4. **Index Sync**: Define indexes in schema; engine adds/removes them automatically.
 5. **Drop Behavior**: If a column/index is removed from schema, it is removed from DB on next startup.
-6. **Seeds**: Use `seed` + `seedKey` for idempotent reference data.
+6. **Seeds**: Use `seed` + `seedKey` for idempotent reference data. Never seed users or credentials: seeds are re-applied on every startup and reset the row.
 7. **NanoID Columns**: `type: 'nanoid'` maps to string columns and missing values are auto-generated on insert/seed.
 8. **Data Transformations**: Use imperative files under `migration/` only for one-time data migration logic.
 
@@ -160,6 +160,7 @@ npx odac migrate:snapshot
 
 ## Performance and Safety Notes
 - Keep schema declarations deterministic and minimal.
-- Prefer additive changes; drops are destructive and should be intentional.
+- Prefer additive changes; drops are destructive and should be intentional. With `NODE_ENV=production`, column drops, type changes and shorter lengths are skipped unless `npx odac migrate --allow-destructive` or `"migration": {"allowDestructive": true}` is used.
+- Migration files run inside a transaction with their tracking row; export `transaction: false` for statements that cannot run in one.
 - Ensure high-cardinality lookup columns are indexed in schema definitions.
 - For very large tables, plan expensive column rewrites as dedicated data migrations.

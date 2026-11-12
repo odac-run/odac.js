@@ -143,3 +143,7 @@ module.exports = function (Odac) {
 -   **Both `{{ }}` and `<odac var>` are XSS-safe**: Both apply HTML escaping by default.
 -   **Raw output requires trust**: Only use `raw` / `{!! !!}` with content you fully control. Never with user input.
 -   **Limit `<script:odac>`**: Do not perform database queries or API calls inside views; keep them in the controller.
+
+## Render Errors and Production Caching
+-   **A throwing view answers 500**: the error is logged with view file and line, `Odac.cache()` headers are dropped, and the `Odac.Route.error(500, ...)` page renders. Never rely on an empty region as a fallback.
+-   **Production caches view lookups**: compiled views, file existence and skeletons are cached per process when `debug` is off; restart (deploy) to pick up new view files.

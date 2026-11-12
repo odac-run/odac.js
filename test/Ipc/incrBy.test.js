@@ -62,4 +62,42 @@ describe('Ipc - incrBy()', () => {
     const result = await Ipc.decrBy('counter:e', 4)
     expect(result).toBe(6)
   })
+  it('expires a counter created with a ttl and starts it over', async () => {
+    jest.useFakeTimers({now: 1_000_000, doNotFake: ['nextTick', 'setImmediate']})
+    try {
+      await Ipc.incrBy('counter:ttl', 1, 60)
+      await Ipc.incrBy('counter:ttl', 1, 60)
+      expect(await Ipc.get('counter:ttl')).toBe(2)
+
+      jest.setSystemTime(1_000_000 + 61_000)
+      expect(await Ipc.get('counter:ttl')).toBeNull()
+      expect(await Ipc.incrBy('counter:ttl', 1, 60)).toBe(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('does not extend the window on later increments', async () => {
+    jest.useFakeTimers({now: 2_000_000, doNotFake: ['nextTick', 'setImmediate']})
+    try {
+      await Ipc.incrBy('counter:window', 1, 60)
+      jest.setSystemTime(2_000_000 + 50_000)
+      await Ipc.incrBy('counter:window', 1, 60)
+      jest.setSystemTime(2_000_000 + 61_000)
+      expect(await Ipc.incrBy('counter:window', 1, 60)).toBe(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('keeps counters without a ttl forever', async () => {
+    jest.useFakeTimers({now: 3_000_000, doNotFake: ['nextTick', 'setImmediate']})
+    try {
+      await Ipc.incrBy('counter:forever', 4)
+      jest.setSystemTime(3_000_000 + 10 * 365 * 86400_000)
+      expect(await Ipc.get('counter:forever')).toBe(4)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
 })

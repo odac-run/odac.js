@@ -17,10 +17,19 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # `current` resolves to the newest entry in nodejs.org/dist/index.json, which includes
+    # alpha releases. That job is an early warning for upcoming Node majors and must not
+    # block merges or releases.
+    continue-on-error: ${{ matrix.experimental }}
 
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 24.x]
+        node-version: [22.x, 'lts/*']
+        experimental: [false]
+        include:
+          - node-version: current
+            experimental: true
 
     steps:
       - name: Checkout code
@@ -41,7 +50,7 @@ jobs:
         run: npm test
 
       - name: Upload coverage reports
-        if: matrix.node-version == '18.x'
+        if: matrix.node-version == '22.x'
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage/lcov.info
@@ -51,7 +60,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
 
       - name: Coverage Summary
-        if: matrix.node-version == '18.x'
+        if: matrix.node-version == '22.x'
         run: |
           echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

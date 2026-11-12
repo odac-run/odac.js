@@ -14,10 +14,10 @@ module.exports = {
     timestamps: {type: 'timestamps'}
   },
 
-  indexes: [{columns: ['email'], unique: true}, {columns: ['role', 'is_active']}],
+  indexes: [{columns: ['email'], unique: true}, {columns: ['role', 'is_active']}]
 
-  // Seed data — idempotent, runs on every migrate.
-  // seedKey determines the uniqueness check for upsert.
-  seed: [{name: 'Admin', email: 'admin@example.com', password: 'changeme', role: 'admin'}],
-  seedKey: 'email'
+  // Seed data (`seed` + `seedKey`) is re-applied on every migrate and reverts
+  // rows to the seeded values. Use it for reference data only; never seed
+  // accounts or credentials, which would ship with a known, unchangeable
+  // password. Create users at runtime with Odac.Auth.register().
 }

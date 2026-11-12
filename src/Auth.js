@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const Hook = require('./Hook.js')
 const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 // Window after rotation during which the old token can still recover a lost
 // rotation response (one-shot). Shorter = smaller replay surface; too short
@@ -6,7 +7,34 @@ const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 const TOKEN_ROTATION_GRACE_PERIOD_MS = 30 * 1000
 const TOKEN_SWEEP_INTERVAL_MS = 60 * 60 * 1000
 const TOKEN_SWEEP_BOOT_DELAY_MS = 5 * 60 * 1000
+// Password login throttling defaults (see #loginThrottleKeys).
+const LOGIN_WINDOW_SECONDS = 15 * 60
+const LOGIN_MAX_ATTEMPTS = 5
+const LOGIN_MAX_ATTEMPTS_PER_IP = 50
+// hostname or IPv4 with optional port, or a bracketed IPv6 literal with optional port. Anything
+// else (userinfo `@`, paths, whitespace) could redirect a generated absolute URL elsewhere.
+const SAFE_HOST = /^(?:(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?|\[[0-9a-f:.]+\])(?::\d{1,5})?$/i
+// SQLite fills CURRENT_TIMESTAMP defaults with UTC text that has no zone ('2026-11-11 10:00:00'),
+// which Date parses as local time. Rows written by earlier versions still carry such values.
+const SQL_UTC_TEXT = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/
+
+/**
+ * Milliseconds since the epoch for a timestamp column as returned by any supported driver.
+ * Why: a zoneless SQLite text default read as local time made every token look hours old
+ * east of UTC, so the first request after login rotated immediately.
+ * @param {Date|number|string} value
+ * @returns {number}
+ */
+function toMillis(value) {
+  if (value instanceof Date) return value.getTime()
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && SQL_UTC_TEXT.test(value)) return Date.parse(value.replace(' ', 'T') + 'Z')
+  return new Date(value).getTime()
+}
+
 class Auth {
+  #magicError = undefined
+  #odac = null
   #request = null
   #table = null
   #token = null
@@ -22,8 +50,13 @@ class Auth {
   // sweep instead of resetting a full interval on every restart.
   static #lastTokenSweep = Date.now() - TOKEN_SWEEP_INTERVAL_MS + TOKEN_SWEEP_BOOT_DELAY_MS
 
-  constructor(request) {
+  /**
+   * @param {object} request The request this instance authenticates.
+   * @param {object} [odac] The request's Odac instance, handed to `hook/auth.js` handlers.
+   */
+  constructor(request, odac = null) {
     this.#request = request
+    this.#odac = odac
   }
 
   #validateInput(where) {
@@ -43,7 +76,6 @@ class Auth {
     if (where) {
       if (!this.#validateInput(where)) return false
 
-      // Using new DB API
       let query = Odac.DB[this.#table]
 
       if (!query) {
@@ -51,8 +83,6 @@ class Auth {
         return false
       }
 
-      // Knex build queries differently than previous builder
-      // Need to chain where clauses
       // Resolve input promises upfront to avoid side effects and race conditions
       const criteria = {}
       const keys = Object.keys(where)
@@ -63,42 +93,29 @@ class Auth {
         criteria[key] = where[key] instanceof Promise ? await where[key] : where[key]
       }
 
-      // Chain where clauses
-      for (const key in criteria) {
-        query = query.orWhere(key, criteria[key])
-      }
+      const secretFields = Auth.#secretFields()
+      const identityKeys = keys.filter(key => !secretFields.includes(key))
+      const secretKeys = keys.filter(key => secretFields.includes(key))
 
-      // Execute query
-      const candidates = await query
+      // Secrets are never sent to the database: the row is located by its identity
+      // fields alone and the secret is verified against the stored hash in-process.
+      if (identityKeys.length === 0) return false
+      for (const key of identityKeys) query = query.where(key, criteria[key])
 
-      if (!candidates || candidates.length === 0) return false
+      const candidates = (await query) || []
+      let verified = false
 
-      // Iterate candidates to find the exact match
-      candidateLoop: for (const user of candidates) {
-        for (const key of keys) {
-          const userValue = user[key]
-          const targetValue = criteria[key]
-
-          if (!userValue) continue candidateLoop
-
-          // Strict equality check
-          if (userValue === targetValue) continue
-
-          // Security: Check hashed fields (Bcrypt/MD5)
-          const valueHandler = Odac.Var(userValue)
-          let hashMatch = false
-
-          if (valueHandler.is('hash')) {
-            hashMatch = valueHandler.hashCheck(targetValue)
-          } else if (valueHandler.is('md5')) {
-            hashMatch = Odac.Var(targetValue).md5() === userValue
-          }
-
-          if (!hashMatch) continue candidateLoop
-        }
-
+      for (const user of candidates) {
+        const result = await this.#matchCredentials(user, criteria, identityKeys, secretKeys)
+        if (result.verified) verified = true
+        if (!result.match) continue
+        await Promise.all(result.legacyKeys.map(key => this.#upgradeLegacyHash(user, key, criteria[key])))
         return user
       }
+
+      // Unknown identities would otherwise answer without running scrypt, revealing which
+      // accounts exist through response time.
+      if (secretKeys.length > 0 && !verified) await Odac.Var(await Auth.#dummyHash()).hashCheckAsync(String(criteria[secretKeys[0]]))
 
       return false
     } else if (this.#user) {
@@ -114,7 +131,9 @@ class Auth {
       let odac_y = this.#request.cookie('odac_y')
       let browser = this.#request.header('user-agent')
 
-      if (!odac_x || !odac_y || !browser) return false
+      // Cookie values are client-controlled and may parse as JSON objects; only strings are
+      // tokens, so an object never reaches the query as a binding.
+      if (typeof odac_x !== 'string' || typeof odac_y !== 'string' || !odac_x || !odac_y || !browser) return false
 
       const tokenTable = Odac.Config.auth.token || 'odac_auth'
       const primaryKey = Odac.Config.auth.key || 'id'
@@ -139,7 +158,7 @@ class Auth {
 
       // Verify the secret. New tokens are SHA-256 (fast, high-entropy);
       // legacy scrypt tokens are still accepted and upgraded on next rotation.
-      if (!this.#verifyToken(sql_token[0].token_y, odac_y)) return false
+      if (!(await this.#verifyToken(sql_token[0].token_y, odac_y))) return false
 
       // Session hijack / stale-session heuristics.
       // On a strong anomaly (OS/browser change, version downgrade or implausible
@@ -180,9 +199,8 @@ class Auth {
       const shouldRotate = Odac.Config.auth?.rotation !== false // Allow disabling rotation
       const now = Date.now()
 
-      // Active comes as Date object usually from drivers
-      const lastActive = new Date(sql_token[0].active).getTime()
-      const tokenDate = new Date(sql_token[0].date).getTime()
+      const lastActive = toMillis(sql_token[0].active)
+      const tokenDate = toMillis(sql_token[0].date)
       const inactiveAge = now - lastActive
       const tokenAge = now - tokenDate
 
@@ -213,10 +231,10 @@ class Auth {
       let triggerRotation = false
       let isRecoveryRotation = false
 
-      // WebSocket connections (res === null) cannot deliver Set-Cookie headers.
-      // Rotating a token during a WS upgrade would invalidate the browser's cookies
-      // with no way to deliver replacements, causing silent logout on the next HTTP request.
-      const canDeliverCookies = !!this.#request.res
+      // WebSocket connections (res === null) and responses whose headers are already out (an
+      // open SSE stream) cannot deliver Set-Cookie headers. Rotating then would invalidate the
+      // browser's cookies with no way to deliver replacements, causing a silent logout.
+      const canDeliverCookies = !!this.#request.res && !this.#request.res.headersSent
 
       if (!isRotated) {
         if (shouldRotate && tokenAge > rotationAge) {
@@ -267,49 +285,40 @@ class Auth {
           active: new Date()
         }
 
-        // 1. Persist new token (await to ensure it exists before client uses new cookies)
-        const insertOk = await Odac.DB[tokenTable].insert(newToken).catch(e => {
-          console.error('Odac Auth Error: Token rotation failed', e.message)
-          return false
-        })
+        // Concurrent requests carrying the same token must not each mint a replacement: only
+        // the one that claims the old row rotates, the others stay signed in on the old token
+        // (now in its grace period) and leave the cookies to the winner's response.
+        const claimed = await this.#claimRotation(tokenTable, sql_token[0], isRecoveryRotation, now, maxAge, rotationGrace)
 
-        if (insertOk !== false) {
-          if (!isRecoveryRotation) {
-            // 2a. Normal rotation: Mark old token as rotated with 60s grace period
-            // Non-blocking I/O (Fire & Forget) -> High Throughput
-            const rotatedActiveDate = new Date(now - maxAge + rotationGrace)
-            const epochDate = new Date(0)
+        if (claimed) {
+          const insertOk = await Odac.DB[tokenTable].insert(newToken).catch(e => {
+            console.error('Odac Auth Error: Token rotation failed', e.message)
+            return false
+          })
 
-            Odac.DB[tokenTable]
-              .where('id', sql_token[0].id)
-              .update({
-                active: rotatedActiveDate,
-                date: epochDate
-              })
-              .catch(() => {})
+          if (insertOk === false) {
+            // Hand the old token its validity back instead of letting it lapse with the grace
+            // period. A consumed recovery token is gone; that session ends as it would have.
+            if (!isRecoveryRotation) {
+              Odac.DB[tokenTable]
+                .where('id', sql_token[0].id)
+                .update({date: sql_token[0].date, active: sql_token[0].active})
+                .catch(() => {})
+            }
           } else {
-            // 2b. Recovery rotation: Delete old rotated token immediately.
-            // Why: Prevents unbounded token multiplication. The old token already
-            // had its grace period; one recovery attempt is the maximum.
-            Odac.DB[tokenTable]
-              .where('id', sql_token[0].id)
-              .delete()
-              .catch(() => {})
+            this.#request.cookie('odac_x', newTokenX, {
+              httpOnly: true,
+              secure: true,
+              sameSite: 'Lax',
+              'max-age': Math.floor(maxAge / 1000)
+            })
+            this.#request.cookie('odac_y', newTokenY, {
+              httpOnly: true,
+              secure: true,
+              sameSite: 'Lax',
+              'max-age': Math.floor(maxAge / 1000)
+            })
           }
-
-          // 3. Issue new cookies immediately
-          this.#request.cookie('odac_x', newTokenX, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'Lax',
-            'max-age': Math.floor(maxAge / 1000)
-          })
-          this.#request.cookie('odac_y', newTokenY, {
-            httpOnly: true,
-            secure: true,
-            sameSite: 'Lax',
-            'max-age': Math.floor(maxAge / 1000)
-          })
         }
       }
 
@@ -317,10 +326,176 @@ class Auth {
     }
   }
 
+  /**
+   * Claims the right to rotate a token with a conditional write.
+   * Why: rotation used to insert first and mark the old row afterwards, so parallel requests
+   * with the same cookie each created a replacement and all but one were left orphaned. The
+   * conditional update (or delete, for a one-shot recovery) succeeds for exactly one request.
+   * A normal rotation keeps the old row for the grace period (TOKEN_ROTATION_GRACE_PERIOD_MS,
+   * `auth.rotationGrace`) instead of deleting it, so a lost response can still recover.
+   * @returns {Promise<boolean>} Whether this request won the claim.
+   */
+  async #claimRotation(tokenTable, token, isRecovery, now, maxAge, rotationGrace) {
+    const row = Odac.DB[tokenTable].where('id', token.id)
+    const affected = isRecovery
+      ? await row.delete().catch(() => 0)
+      : await row
+          .where('date', '>=', new Date(ROTATED_TOKEN_EPOCH_THRESHOLD_MS))
+          .update({active: new Date(now - maxAge + rotationGrace), date: new Date(0)})
+          .catch(() => 0)
+    return Number(affected) > 0
+  }
+
+  /**
+   * Reports whether password logins with these credentials are currently blocked.
+   * Why: lets login UIs tell a locked-out user to wait instead of reporting bad credentials.
+   * @param {object} where Same shape as login().
+   * @returns {Promise<boolean>}
+   */
+  async loginThrottled(where) {
+    const throttle = this.#loginThrottleKeys(await Auth.#resolveCriteria(where))
+    return !!throttle && (await this.#isThrottled(throttle))
+  }
+
+  static async #resolveCriteria(where) {
+    if (!where || typeof where !== 'object') return where
+    const entries = await Promise.all(Object.entries(where).map(async ([key, value]) => [key, await value]))
+    return Object.fromEntries(entries)
+  }
+
+  // Failed password logins are counted per account and client IP (stops guessing one account
+  // without letting others lock it out from elsewhere) and per IP across all accounts (stops
+  // credential stuffing). Each counter is a fixed window that starts at the first failure.
+  #loginThrottleKeys(where) {
+    if (!where || typeof where !== 'object' || !Odac.Ipc) return null
+    const secrets = Auth.#secretFields()
+    const keys = Object.keys(where)
+    if (!keys.some(key => secrets.includes(key))) return null
+
+    const identity = keys
+      .filter(key => !secrets.includes(key))
+      .sort()
+      .map(key => `${key}=${where[key]}`)
+      .join('&')
+    const account = nodeCrypto.createHash('sha256').update(identity).digest('hex')
+    const ip = this.#request.ip || 'unknown'
+    const config = Odac.Config.auth || {}
+    return {
+      account: `auth:login:account:${account}:${ip}`,
+      ip: `auth:login:ip:${ip}`,
+      maxAccount: config.loginMaxAttempts || LOGIN_MAX_ATTEMPTS,
+      maxIp: config.loginMaxAttemptsPerIP || LOGIN_MAX_ATTEMPTS_PER_IP,
+      window: Math.ceil((config.loginWindow || LOGIN_WINDOW_SECONDS * 1000) / 1000)
+    }
+  }
+
+  async #isThrottled(throttle) {
+    const [account, ip] = await Promise.all([Odac.Ipc.get(throttle.account), Odac.Ipc.get(throttle.ip)])
+    return Number(account ?? 0) >= throttle.maxAccount || Number(ip ?? 0) >= throttle.maxIp
+  }
+
+  async #recordLoginFailure(throttle) {
+    await Promise.all([Odac.Ipc.incrBy(throttle.account, 1, throttle.window), Odac.Ipc.incrBy(throttle.ip, 1, throttle.window)])
+  }
+
+  /**
+   * Columns that hold password hashes.
+   * Why: these must never appear in a WHERE clause or be compared by equality; a plaintext
+   * comparison accepts plaintext-stored passwords and lets a leaked hash act as the password.
+   * @returns {string[]}
+   */
+  static #secretFields() {
+    const configured = Odac.Config.auth?.passwordField || 'password'
+    return Array.isArray(configured) ? configured : [configured]
+  }
+
+  // A real scrypt hash of a random value, computed once, so a failed lookup costs the same
+  // as a failed password check.
+  static #dummyHashValue = null
+  static #dummyHash() {
+    Auth.#dummyHashValue ??= Odac.Var(nodeCrypto.randomBytes(16).toString('hex')).hashAsync()
+    return Auth.#dummyHashValue
+  }
+
+  async #matchCredentials(user, criteria, identityKeys, secretKeys) {
+    const outcome = {match: false, verified: false, legacyKeys: []}
+    for (const key of identityKeys) {
+      // The database may compare case- or type-insensitively; require an exact match.
+      if (user[key] === null || user[key] === undefined || String(user[key]) !== String(criteria[key])) return outcome
+    }
+    for (const key of secretKeys) {
+      const result = await this.#verifySecret(user[key], criteria[key])
+      if (result.verified) outcome.verified = true
+      if (!result.match) return outcome
+      if (result.legacy) outcome.legacyKeys.push(key)
+    }
+    outcome.match = true
+    return outcome
+  }
+
+  // scrypt runs on the thread pool: a synchronous hash on every login, registration and
+  // magic-link check stalled the worker, and these endpoints need no authentication.
+  async #verifySecret(stored, candidate) {
+    if (typeof stored !== 'string' || stored === '' || candidate === null || candidate === undefined) return {match: false}
+    const handler = Odac.Var(stored)
+    if (handler.is('hash')) return {match: await handler.hashCheckAsync(String(candidate)), verified: true}
+    // Unsalted MD5 is accepted only so existing accounts can sign in once and be migrated to scrypt.
+    if (handler.is('md5')) return {match: Odac.Var(String(candidate)).md5() === stored.toLowerCase(), legacy: true}
+    return {match: false}
+  }
+
+  async #upgradeLegacyHash(user, field, password) {
+    const primaryKey = Odac.Config.auth.key || 'id'
+    if (user[primaryKey] === undefined || user[primaryKey] === null) return
+    try {
+      const hash = await Odac.Var(String(password)).hashAsync()
+      await Odac.DB[this.#table].where(primaryKey, user[primaryKey]).update({[field]: hash})
+      user[field] = hash
+    } catch (e) {
+      console.error('Odac Auth Error: Failed to upgrade legacy password hash:', e.message)
+    }
+  }
+
+  /**
+   * Signs the user in and issues the auth cookies.
+   * Why: password logins are throttled here, not in each caller, so the built-in form and
+   * custom controllers share one limit. A throttled attempt returns false without touching the
+   * database, exactly like wrong credentials. Every sign-in path (password, magic link,
+   * registration) ends here, so `hook/auth.js` sees all of them.
+   * @param {object} where Identity fields plus, for password logins, the password field(s).
+   * @returns {Promise<boolean>}
+   */
   async login(where) {
+    return (await this.#login(where, null)).success
+  }
+
+  // Resolves to {success: true} or {success: false, reason}; reason is the loginFailed one
+  // ('invalid', 'throttled', 'denied') or 'failed' when the token could not be stored.
+  async #login(where, method) {
     this.#user = null
+    where = await Auth.#resolveCriteria(where)
+    method ??= Auth.#hasSecret(where) ? 'password' : 'direct'
+    const throttle = this.#loginThrottleKeys(where)
+    if (throttle && (await this.#isThrottled(throttle))) {
+      await this.#loginFailed(where, method, 'throttled')
+      return {success: false, reason: 'throttled'}
+    }
+
     let user = await this.check(where)
-    if (!user) return false
+    if (!user) {
+      if (throttle) await this.#recordLoginFailure(throttle)
+      await this.#loginFailed(where, method, 'invalid')
+      return {success: false, reason: 'invalid'}
+    }
+    if (throttle) await Odac.Ipc.del(throttle.account).catch(() => {})
+
+    if (!(await this.#allowLogin(user, method))) {
+      await this.#loginFailed(where, method, 'denied')
+      return {success: false, reason: 'denied'}
+    }
+
+    // A session identifier chosen before sign-in (possibly planted) must not carry over.
+    this.#request.regenerateSession()
 
     let key = Odac.Config.auth.key || 'id'
     let token = Odac.Config.auth.token || 'odac_auth'
@@ -344,7 +519,11 @@ class Auth {
       token_y: this.#hashToken(token_y),
       browser: this.#request.header('user-agent'),
       accept_language: this.#request.header('accept-language'),
-      ip: this.#request.ip
+      ip: this.#request.ip,
+      // Written explicitly: the column default stores zoneless text on SQLite while every
+      // later write stores a Date, and the two do not compare (see toMillis()).
+      date: new Date(),
+      active: new Date()
     }
 
     const maxAge = Odac.Config.auth?.maxAge || 30 * 24 * 60 * 60 * 1000
@@ -364,7 +543,47 @@ class Auth {
 
     // Knex insert returns ids on some dbs, promise resolves to result
     const result = await Odac.DB[token].insert(cookie)
-    return !!result
+    if (!result) return {success: false, reason: 'failed'}
+
+    if (Hook.has('auth', 'login')) await Hook.run('auth', 'login', this.#hookContext(), {user: Auth.#publicUser(user), method})
+    return {success: true}
+  }
+
+  // --- LOGIN HOOKS (hook/auth.js) ---
+
+  static #hasSecret(where) {
+    if (!where || typeof where !== 'object') return false
+    const secrets = Auth.#secretFields()
+    return Object.keys(where).some(key => secrets.includes(key))
+  }
+
+  // Hooks get the row without password hashes, so logging or forwarding it cannot leak them.
+  static #publicUser(user) {
+    const copy = {...user}
+    for (const field of Auth.#secretFields()) delete copy[field]
+    return copy
+  }
+
+  #hookContext() {
+    return this.#odac || global.Odac
+  }
+
+  // A veto hook fails closed: if the check that would block an account cannot run, the
+  // account is not let in. Only an explicit `false` denies; any other return value allows.
+  async #allowLogin(user, method) {
+    if (!Hook.has('auth', 'beforeLogin')) return true
+    const result = await Hook.run('auth', 'beforeLogin', this.#hookContext(), {user: Auth.#publicUser(user), method})
+    return !result.error && result.value !== false
+  }
+
+  async #loginFailed(where, method, reason) {
+    if (!Hook.has('auth', 'loginFailed')) return
+    const secrets = Auth.#secretFields()
+    const identity = {}
+    if (where && typeof where === 'object') {
+      for (const key of Object.keys(where)) if (!secrets.includes(key)) identity[key] = where[key]
+    }
+    await Hook.run('auth', 'loginFailed', this.#hookContext(), {identity, method, reason})
   }
 
   async #cleanupExpiredTokens(tokenTable) {
@@ -378,6 +597,14 @@ class Auth {
       .catch(() => {})
   }
 
+  /**
+   * Creates a user and, unless `options.autoLogin` is false, signs them in.
+   * Why: one place enforces unique fields, hashes the password and picks the id strategy, so
+   * custom sign-up controllers and magic-link sign-ups produce identical rows.
+   * @param {object} data Column values of the new user.
+   * @param {object} [options] passwordField, uniqueFields, autoLogin.
+   * @returns {Promise<{success: boolean, user?: object, autoLogin?: boolean, error?: string}>}
+   */
   async register(data, options = {}) {
     if (!Odac.Config.auth) {
       Odac.Config.auth = {}
@@ -385,7 +612,7 @@ class Auth {
 
     this.#table = Odac.Config.auth.table || 'users'
     const primaryKey = Odac.Config.auth.key || 'id'
-    const passwordField = options.passwordField || 'password'
+    const passwordField = options.passwordField || Auth.#secretFields()[0]
     const uniqueFields = options.uniqueFields || ['email']
 
     try {
@@ -404,7 +631,7 @@ class Auth {
     }
 
     if (data[passwordField] && !Odac.Var(data[passwordField]).is('hash')) {
-      data[passwordField] = Odac.Var(data[passwordField]).hash()
+      data[passwordField] = await Odac.Var(data[passwordField]).hashAsync()
     }
 
     // Check unique fields
@@ -456,11 +683,9 @@ class Auth {
         data[primaryKey] = Odac.DB.nanoid()
       }
 
-      await Odac.DB[this.#table].insert(data)
+      const userId = await this.#insertUser(data, primaryKey, uniqueFields)
 
-      let userId = data[primaryKey]
-
-      if (!userId) {
+      if (userId === undefined || userId === null) {
         console.error('Odac Auth Error: Could not determine new user ID')
         return {success: false, error: 'Failed to create user'}
       }
@@ -476,19 +701,72 @@ class Auth {
       if (options.autoLogin !== false) {
         const loginData = {}
         loginData[primaryKey] = userId
-        const loginSuccess = await this.login(loginData)
+        const login = await this.#login(loginData, 'register')
 
-        if (!loginSuccess) {
+        if (!login.success) {
           return {success: true, user: newUser, autoLogin: false, message: 'User created but auto-login failed'}
         }
       }
 
       return {success: true, user: newUser}
     } catch (error) {
-      console.error('Odac Auth Error: Registration failed with exception')
-      console.error('Error:', error.message)
-      return {success: false, error: error.message || 'Registration failed'}
+      // Driver messages name tables, columns and submitted values; they stay in the log.
+      console.error('Odac Auth Error: Registration failed:', error.message)
+      return {success: false, error: 'Registration failed'}
     }
+  }
+
+  /**
+   * Inserts the user row and resolves its primary key.
+   * Why: with database-generated keys (auto-increment) the id is not in `data`; it has to come
+   * from the insert itself, or registration fails after the row was already written.
+   */
+  async #insertUser(data, primaryKey, uniqueFields) {
+    if (data[primaryKey] !== undefined && data[primaryKey] !== null) {
+      await Odac.DB[this.#table].insert(data)
+      return data[primaryKey]
+    }
+
+    let insert = Odac.DB[this.#table].insert(data)
+    // MySQL has no RETURNING (Knex warns and ignores it) but resolves to [insertId] on its own.
+    const client = String(insert.client?.config?.client || '')
+    if (!client.startsWith('mysql') && typeof insert.returning === 'function') insert = insert.returning(primaryKey)
+
+    const result = await insert
+    const first = Array.isArray(result) ? result[0] : result
+    const id = first !== null && typeof first === 'object' ? first[primaryKey] : first
+    if (id !== undefined && id !== null && id !== 0) return id
+
+    // Drivers that report nothing usable: locate the row through a unique field instead.
+    const field = uniqueFields.find(name => data[name] !== undefined && data[name] !== null)
+    if (!field) return undefined
+    const row = await Odac.DB[this.#table].where(field, data[field]).first()
+    return row?.[primaryKey]
+  }
+
+  /**
+   * Public base URL that magic links point to.
+   * Why: the link carries a login token. Building it from a client-supplied Host header lets an
+   * attacker request a link for the victim's address that points at the attacker's domain. A
+   * configured URL is always preferred; the request's own Host is used only when it arrived
+   * through a trusted proxy (which only routes the app's domains) and is a plain host[:port].
+   * @returns {string|null} Origin plus optional path prefix, without a trailing slash.
+   */
+  #magicLinkBase(options) {
+    const configured = options.url || Odac.Config.auth?.magicLinkUrl || Odac.Config.url
+    if (configured) {
+      try {
+        const url = new URL(configured)
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+        return url.origin + url.pathname.replace(/\/+$/, '')
+      } catch {
+        return null
+      }
+    }
+
+    const host = this.#request.host
+    if (!this.#request.fromTrustedProxy || typeof host !== 'string' || !SAFE_HOST.test(host)) return null
+    return (this.#request.ssl ? 'https://' : 'http://') + host
   }
 
   async logout() {
@@ -502,11 +780,18 @@ class Auth {
     const odacX = this.#request.cookie('odac_x')
     const browser = this.#request.header('user-agent')
 
-    if (odacX && browser) {
-      // Delete current token AND any rotated grace-period tokens for this user+browser
-      // Why: After rotation, the old token stays alive for the grace period. Explicit logout must kill it too.
-      const userId = this.#user[primaryKey]
-      await Odac.DB[tokenTable].where('user', userId).where('browser', browser).delete()
+    // Only this device signs out. Deleting every token of the user with the same User-Agent
+    // also signed out other devices running the same browser build.
+    if (this.#token) await Odac.DB[tokenTable].where('id', this.#token.id).delete()
+    else if (typeof odacX === 'string' && odacX) await Odac.DB[tokenTable].where('token_x', odacX).delete()
+    // The token this one replaced is still valid for the rotation grace period; it has no
+    // link to its successor, so rotated rows of this user and browser go with it.
+    if (browser) {
+      await Odac.DB[tokenTable]
+        .where('user', this.#user[primaryKey])
+        .where('browser', browser)
+        .where('date', '<', new Date(ROTATED_TOKEN_EPOCH_THRESHOLD_MS))
+        .delete()
     }
 
     this.#request.cookie('odac_x', '', {'max-age': -1})
@@ -570,8 +855,11 @@ class Auth {
       if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
         return {success: false, error: 'Too many requests from this IP. Please wait a while.'}
       }
-    } catch {
-      // Ignore rate limit check errors, proceed with request
+    } catch (e) {
+      // An unenforceable limit must not turn into no limit: this endpoint sends email to any
+      // address without authentication.
+      console.error('Odac Auth Error: Magic link rate limit check failed:', e.message)
+      return {success: false, error: 'Magic link login is temporarily unavailable.'}
     }
 
     // Cleanup: Remove expired tokens periodically
@@ -597,22 +885,33 @@ class Auth {
     // If user doesn't exist, we still proceed to send the link to allow for "Sign Up via Magic Link" (Passwordless Signup)
     // The user will be created upon verification.
 
-    // 2. Generate secure token
-    const tokenRaw = nodeCrypto.randomBytes(32).toString('hex')
-    const tokenHash = Odac.Var(tokenRaw).hash() // Hash it for DB storage
+    const baseUrl = this.#magicLinkBase(options)
+    if (!baseUrl) {
+      console.error(
+        'Odac Auth Error: cannot build a trusted magic link URL for this request. Set "url" (or "auth.magicLinkUrl") in odac.json to the public address of the app.'
+      )
+      return {success: false, error: 'Magic link login is not available.'}
+    }
 
-    // 3. Save to DB
+    // 2. Generate secure token. 256 random bits need no slow hash (see #hashToken).
+    const tokenRaw = nodeCrypto.randomBytes(32).toString('hex')
+    const tokenHash = this.#hashToken(tokenRaw)
+
+    // 3. Save to DB. created_at is explicit for the same reason as the auth token timestamps.
     await Odac.DB[magicTable].insert({
       email: email,
       token_hash: tokenHash,
       ip: this.#request.ip,
       browser: this.#request.header('user-agent'),
+      created_at: new Date(),
       expires_at: new Date(Date.now() + 15 * 60 * 1000) // 15 mins
     })
 
     // 4. Send Email
-    let link = `${(this.#request.ssl ? 'https://' : 'http://') + this.#request.host}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
+    let link = `${baseUrl}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
     if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
+    // Where a failed link sends the visitor; checked against same-site paths when followed.
+    if (options.errorRedirect) link += `&error_url=${encodeURIComponent(options.errorRedirect)}`
 
     try {
       let mail = Odac.Mail(options.template || 'auth/magic-link')
@@ -624,47 +923,68 @@ class Auth {
         else mail.from(options.from)
       }
 
-      await mail.send({
+      // send() reports failure by resolving false (or a Core response with success: false),
+      // not by rejecting.
+      const sent = await mail.send({
         link: link,
         magic_link: link,
-        network: this.#request.host,
+        network: new URL(baseUrl).host,
         ip: this.#request.ip
       })
+      if (!sent || sent.success === false) throw new Error(sent?.error || 'Mail delivery failed')
     } catch (e) {
-      console.error('Magic Link Email Error:', e)
+      console.error('Magic Link Email Error:', e.message ?? e)
+      // The link never reached the inbox; drop it so it does not count against the limits.
+      Odac.DB[magicTable]
+        .where('token_hash', tokenHash)
+        .delete()
+        .catch(() => {})
       return {success: false, error: 'Failed to send email'}
     }
 
     return {success: true, message: 'Magic link sent!'}
   }
 
+  /**
+   * Verifies a magic link and signs its owner in, registering a new user when needed.
+   * Why: a failed link must tell the person what to do next, so every failure carries a
+   * stable `code` besides the `error` text: 'invalid' (malformed, already used or unknown),
+   * 'expired', 'denied' (refused by the beforeLogin hook) or 'failed' (registration or
+   * sign-in could not complete).
+   * @param {string} tokenRaw Token from the link.
+   * @param {string} email Address from the link.
+   * @returns {Promise<{success: boolean, user?: object, code?: string, error?: string}>}
+   */
   async verifyMagicLink(tokenRaw, email) {
     if (!tokenRaw || !email) {
-      return {success: false, error: 'Invalid link'}
+      return {success: false, code: 'invalid', error: 'Invalid link'}
     }
 
     const magicTable = Odac.Config.auth?.magicTable || 'odac_magic'
     this.#table = Odac.Config.auth?.table || 'users'
     const primaryKey = Odac.Config.auth?.key || 'id'
 
-    // 1. Find potential tokens for this email
-    const records = await Odac.DB[magicTable].where('email', email).where('expires_at', '>', new Date())
-
-    if (!records || records.length === 0) {
-      return {success: false, error: 'Link expired or invalid'}
-    }
+    // 1. Find the tokens of this email, expired ones included, so an expired link can be told
+    // apart from a wrong one. The magic-link rate limit keeps this a handful of rows.
+    const records = (await Odac.DB[magicTable].where('email', email)) || []
 
     // 2. Find the matching token (verify hash)
     let validRecord = null
     // Iterate through all records without an early exit to mitigate timing attacks.
     for (const record of records) {
-      if (Odac.Var(record.token_hash).hashCheck(tokenRaw)) {
+      if (await this.#verifyToken(record.token_hash, tokenRaw)) {
         validRecord = record
       }
     }
 
     if (!validRecord) {
-      return {success: false, error: 'Invalid token'}
+      await this.#loginFailed({email}, 'magic', 'invalid')
+      return {success: false, code: 'invalid', error: records.length === 0 ? 'Link expired or invalid' : 'Invalid token'}
+    }
+
+    if (!(toMillis(validRecord.expires_at) > Date.now())) {
+      await this.#loginFailed({email}, 'magic', 'expired')
+      return {success: false, code: 'expired', error: 'Link expired or invalid'}
     }
 
     // 3. Consume all tokens for this email to prevent reuse of other valid links.
@@ -672,55 +992,61 @@ class Auth {
 
     // 4. Log in user (or Register if new)
     let user = await Odac.DB[this.#table].where('email', email).first()
-    let alreadyLoggedIn = false
 
     if (!user) {
       // Auto-Register the user
-
-      const passwordField = Odac.Config.auth?.passwordField || 'password'
-      // Optimization: If explicitly configured as passwordless, skip password generation overhead
-      const isPasswordless = Odac.Config.auth?.passwordless === true
 
       const registerData = {
         email: email
       }
 
-      if (!isPasswordless) {
-        // Generate a random high-entropy password since they are using passwordless auth but DB might require password
-        registerData[passwordField] = nodeCrypto.randomBytes(32).toString('hex')
+      // A random high-entropy password fills a required password column; a passwordless
+      // schema has no such column. Asking the schema replaces matching driver error texts,
+      // which register() no longer returns.
+      if (await this.#needsGeneratedPassword()) {
+        registerData[Auth.#secretFields()[0]] = nodeCrypto.randomBytes(32).toString('hex')
       }
 
-      let regResult = await this.register(registerData)
-
-      // Fallback: If we tried to be secure (sent password) but DB failed because column doesn't exist, retry without password
-      if (
-        !isPasswordless &&
-        !regResult.success &&
-        regResult.error &&
-        (regResult.error.includes(`column "${passwordField}"`) || regResult.error.includes(`Unknown column '${passwordField}'`)) &&
-        (regResult.error.includes('does not exist') || regResult.error.includes('field list'))
-      ) {
-        regResult = await this.register({
-          email: email
-        })
-      }
+      // Signed in below, once, so the hooks see a single 'magic' attempt.
+      const regResult = await this.register(registerData, {autoLogin: false})
 
       if (!regResult.success) {
-        return {success: false, error: 'Registration failed: ' + regResult.error}
+        return {success: false, code: 'failed', error: 'Registration failed'}
       }
 
       user = regResult.user
-      // register() already performs auto-login by default, skip duplicate login
-      alreadyLoggedIn = regResult.autoLogin !== false
     }
 
-    if (!alreadyLoggedIn) {
-      const loginData = {}
-      loginData[primaryKey] = user[primaryKey]
-      await this.login(loginData)
-    }
+    const login = await this.#login({[primaryKey]: user[primaryKey]}, 'magic')
+    if (!login.success) return {success: false, code: login.reason === 'denied' ? 'denied' : 'failed', error: 'Login failed'}
 
     return {success: true, user: user}
+  }
+
+  /**
+   * The magic-link failure that sent the visitor to this page, read once.
+   * Why: a failed link redirects to the page it was requested from (or a configured page)
+   * instead of a bare error screen; this lets that page explain what went wrong. The value is
+   * kept for the rest of the request, so several forms on one page all see it.
+   * @returns {{code: string, message: string}|null}
+   */
+  magicError() {
+    if (this.#magicError !== undefined) return this.#magicError
+    // Written by the /_odac/magic-verify route (Internal.magicVerify) before it redirects.
+    const flash = this.#request.session('_odac_magic_error')
+    if (flash) this.#request.session('_odac_magic_error', null)
+    this.#magicError = flash && typeof flash.code === 'string' ? {code: flash.code, message: String(flash.message ?? '')} : null
+    return this.#magicError
+  }
+
+  async #needsGeneratedPassword() {
+    if (Odac.Config.auth?.passwordless === true) return false
+    try {
+      return await Odac.DB.schema.hasColumn(this.#table, Auth.#secretFields()[0])
+    } catch {
+      // Table not created yet: register() creates it with a password column.
+      return true
+    }
   }
 
   async #ensureMagicLinkTable(tableName) {
@@ -840,7 +1166,7 @@ class Auth {
     return '$sha256$' + nodeCrypto.createHash('sha256').update(String(value)).digest('hex')
   }
 
-  #verifyToken(stored, provided) {
+  async #verifyToken(stored, provided) {
     if (typeof stored !== 'string' || !provided) return false
 
     if (stored.startsWith('$sha256$')) {
@@ -853,7 +1179,7 @@ class Auth {
     // Backward compatibility: legacy scrypt tokens. Rehashed in place to
     // SHA-256 immediately after the first successful verification (see check()).
     if (stored.startsWith('$scrypt$')) {
-      return Odac.Var(stored).hashCheck(provided)
+      return Odac.Var(stored).hashCheckAsync(provided)
     }
 
     return false
@@ -926,7 +1252,7 @@ class Auth {
     // idle time (a long absence justifies proportionally larger jumps).
     if (cur.version < prev.version) return 'version_downgrade'
 
-    const lastActive = new Date(token.active).getTime()
+    const lastActive = toMillis(token.active)
     const monthsInactive = Number.isFinite(lastActive) ? Math.max(0, (Date.now() - lastActive) / 2592000000) : 0
     const allowedJump = 3 + monthsInactive * 2
     if (cur.version - prev.version > allowedJump) return 'version_jump'

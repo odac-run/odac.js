@@ -208,8 +208,9 @@ MYSQL_PASSWORD=super_secure_production_password
 
 The `.env` file supports:
 
-- **Comments:** Lines starting with `#`
-- **Quotes:** Values can be wrapped in single or double quotes
+- **Comments:** Lines starting with `#`, and inline comments that start with a `#` preceded by whitespace. A `#` inside a value (`PASSWORD=ab#cd`) is kept.
+- **Quotes:** Values can be wrapped in single or double quotes. Double-quoted values understand `\n`, `\r`, `\t`, `\"` and `\\`; single-quoted values are literal. Quoted values may span multiple lines.
+- **`export` prefix:** `export KEY=value` lines are accepted, so a file can also be sourced by a shell.
 - **Spaces:** Spaces around `=` are trimmed
 
 ```bash
@@ -217,6 +218,11 @@ The `.env` file supports:
 API_KEY=simple_value
 DB_PASSWORD="password with spaces"
 MAIL_FROM='noreply@example.com'
+SMTP_PASSWORD=p@ss#word   # inline comment, the value is "p@ss#word"
+export REGION=eu-west-1
+PRIVATE_KEY="-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASC...
+-----END PRIVATE KEY-----"
 ```
 
 ### Important Notes
@@ -226,3 +232,4 @@ MAIL_FROM='noreply@example.com'
 - The `.env` file is **optional** - you can use direct values in `odac.json` if preferred
 - Variables defined in `.env` are available throughout your entire application
 - If a variable is not found, `Odac.env()` returns the default value or `undefined`
+- A `${VARIABLE}` in `odac.json` that is not set becomes an empty string and logs a warning at startup (once per variable)

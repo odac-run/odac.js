@@ -3,10 +3,11 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline')
-const {execSync, spawn} = require('node:child_process')
+const {execSync, spawn, spawnSync} = require('node:child_process')
 const cluster = require('node:cluster')
 const Env = require('../src/Env')
 const {buildConnections} = require('../src/Database/ConnectionFactory')
+const {copyTemplate} = require('../src/Cli/Scaffold')
 
 const command = process.argv[2]
 const args = process.argv.slice(3)
@@ -89,6 +90,19 @@ const select = async (title, options) => {
  * Supports multiple CSS entry points from 'view/css'.
  * @returns {Array<{ input: string, cssOutput: string, isCustom: boolean, name: string }>}
  */
+/**
+ * Path of the Tailwind CLI entry script, preferring the project's own install.
+ * Why: the CLI runs as `node <entry> ...args` without a shell, so CSS file names and project
+ * paths (spaces, quotes, $(...)) are passed as plain arguments instead of being interpreted
+ * by sh. @tailwindcss/cli is a dependency of ODAC, so it always resolves.
+ * @returns {string}
+ */
+function tailwindCli() {
+  const pkgPath = require.resolve('@tailwindcss/cli/package.json', {paths: [process.cwd(), __dirname]})
+  const {bin} = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+  return path.join(path.dirname(pkgPath), typeof bin === 'string' ? bin : bin.tailwindcss)
+}
+
 function getTailwindConfigs() {
   const cssDir = path.join(process.cwd(), 'view/css')
   const cacheDir = path.join(process.cwd(), 'storage/.cache')
@@ -427,22 +441,10 @@ async function manageSkills(targetDir = process.cwd()) {
  */
 async function runMigration(cmd, cliArgs) {
   const projectDir = process.cwd()
-  const envPath = path.join(projectDir, '.env')
   const configPath = path.join(projectDir, 'odac.json')
 
-  // Load .env
-  if (fs.existsSync(envPath)) {
-    const envContent = fs.readFileSync(envPath, 'utf8')
-    envContent.split('\n').forEach(line => {
-      line = line.trim()
-      if (!line || line.startsWith('#')) return
-      const idx = line.indexOf('=')
-      if (idx === -1) return
-      const key = line.slice(0, idx).trim()
-      const value = Env._parseValue(line.slice(idx + 1).trim())
-      if (process.env[key] === undefined) process.env[key] = value
-    })
-  }
+  // Load .env with the same parser as the server (quotes, multi-line values, export).
+  await Env.init(projectDir)
 
   // Load config
   if (!fs.existsSync(configPath)) {
@@ -501,6 +503,10 @@ async function runMigration(cmd, cliArgs) {
   // Parse --db flag
   const dbFlag = cliArgs.find(a => a.startsWith('--db='))
   const options = dbFlag ? {db: dbFlag.split('=')[1]} : {}
+  // Destructive schema changes (dropping/narrowing columns) are skipped in production unless
+  // explicitly allowed by flag or config.
+  if (cliArgs.includes('--allow-destructive')) options.allowDestructive = true
+  else if (typeof config.migration?.allowDestructive === 'boolean') options.allowDestructive = config.migration.allowDestructive
 
   // Initialize migration engine
   const Migration = require('../src/Database/Migration')
@@ -547,6 +553,7 @@ async function runMigration(cmd, cliArgs) {
  */
 function printMigrationSummary(summary) {
   let totalOps = 0
+  let skippedOps = 0
 
   for (const [key, result] of Object.entries(summary)) {
     console.log(`  \x1b[36m[${key}]\x1b[0m`)
@@ -558,6 +565,11 @@ function printMigrationSummary(summary) {
     }
 
     for (const op of allOps) {
+      if (op.skipped) {
+        skippedOps++
+        console.log(`    ${formatOp(op)} \x1b[33m(skipped: destructive)\x1b[0m`)
+        continue
+      }
       totalOps++
       const label = formatOp(op)
       console.log(`    ${label}`)
@@ -566,6 +578,9 @@ function printMigrationSummary(summary) {
   }
 
   console.log(totalOps > 0 ? `✅ ${totalOps} operation(s) completed.` : '✅ Everything is up to date.')
+  if (skippedOps > 0) {
+    console.log(`⚠️  ${skippedOps} destructive operation(s) skipped. Back up the data and re-run with --allow-destructive to apply them.`)
+  }
 }
 
 /**
@@ -613,7 +628,7 @@ async function run() {
     const templateDir = path.resolve(__dirname, '../template')
 
     try {
-      fs.cpSync(templateDir, targetDir, {recursive: true})
+      await copyTemplate(templateDir, targetDir)
 
       const pkgPath = path.join(targetDir, 'package.json')
       const frameworkPkg = require('../package.json')
@@ -665,16 +680,8 @@ async function run() {
         let tailwindProcess = null
 
         const startWatcher = () => {
-          const localCli = path.join(process.cwd(), 'node_modules', '.bin', 'tailwindcss')
-          const useLocal = fs.existsSync(localCli)
-          const cmd = useLocal ? localCli : 'npx'
-          const args = useLocal
-            ? ['-i', input, '-o', cssOutput, '--watch=always']
-            : ['@tailwindcss/cli', '-i', input, '-o', cssOutput, '--watch=always']
-
-          tailwindProcess = spawn(cmd, args, {
+          tailwindProcess = spawn(process.execPath, [tailwindCli(), '-i', input, '-o', cssOutput, '--watch=always'], {
             stdio: ['pipe', 'ignore', 'pipe'],
-            shell: !useLocal,
             cwd: process.cwd()
           })
 
@@ -755,13 +762,12 @@ async function run() {
 
     configs.forEach(({input, cssOutput, name, isCustom}) => {
       console.log(`🎨 Compiling ${name} (${isCustom ? 'Custom' : 'Default'}) CSS...`)
-      try {
-        execSync(`npx @tailwindcss/cli -i "${input}" -o "${cssOutput}" --minify`, {
-          stdio: 'inherit',
-          cwd: process.cwd()
-        })
-      } catch (error) {
-        console.error(`❌ Build failed for ${name}:`, error.message)
+      const result = spawnSync(process.execPath, [tailwindCli(), '-i', input, '-o', cssOutput, '--minify'], {
+        stdio: 'inherit',
+        cwd: process.cwd()
+      })
+      if (result.error || result.status !== 0) {
+        console.error(`❌ Build failed for ${name}:`, result.error?.message ?? `exit code ${result.status}`)
         hasError = true
       }
     })
@@ -793,6 +799,8 @@ async function run() {
     await manageSkills()
   } else if (command === 'migrate' || command === 'migrate:status' || command === 'migrate:rollback' || command === 'migrate:snapshot') {
     await runMigration(command, args)
+  } else if (command === 'lang:sync' || command === 'lang:check' || command === 'lang:prune') {
+    process.exitCode = await require('../src/Cli/Lang').run(command, args)
   } else {
     console.log('Usage:')
     console.log('  npx odac init            (Interactive mode)')
@@ -801,10 +809,13 @@ async function run() {
     console.log('  npx odac build           (Production build)')
     console.log('  npx odac start           (Start server)')
     console.log('  npx odac skills          (Sync AI Agent skills)')
-    console.log('  npx odac migrate         (Run pending migrations)')
+    console.log('  npx odac migrate         (Run pending migrations; add --allow-destructive to drop/narrow columns in production)')
     console.log('  npx odac migrate:status  (Show pending changes)')
     console.log('  npx odac migrate:rollback (Rollback last batch)')
     console.log('  npx odac migrate:snapshot (Reverse-engineer DB to schema/)')
+    console.log('  npx odac lang:sync       (Add the keys used in code to every language file)')
+    console.log('  npx odac lang:check      (Report missing, unused and untranslated keys; --strict for CI)')
+    console.log('  npx odac lang:prune      (List unused keys; --write removes them, --include-runtime also those used only at runtime)')
   }
 
   rl.close()

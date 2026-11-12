@@ -10,6 +10,9 @@
   "dependencies": {
     "odac": "*"
   },
+  "allowScripts": {
+    "sqlite3": true
+  },
   "keywords": [
     "odac",
     "website"

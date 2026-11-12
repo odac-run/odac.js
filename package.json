@@ -10,7 +10,7 @@
   "version": "1.5.3",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.0.0"
   },
   "bin": {
     "odac": "./bin/odac.js"
@@ -32,12 +32,16 @@
     "sharp": "^0.35.3"
   },
   "peerDependencies": {
+    "@clickhouse/client": "^1.0.0",
     "mysql2": "^3.16.0",
     "pg": "^8.16.3",
     "redis": "^5.10.0",
     "sqlite3": "^6.0.0"
   },
   "peerDependenciesMeta": {
+    "@clickhouse/client": {
+      "optional": true
+    },
     "mysql2": {
       "optional": true
     },
@@ -61,6 +65,9 @@
     },
     "picomatch": "4.0.4",
     "tar": "7.5.21"
+  },
+  "allowScripts": {
+    "sqlite3@6.0.1": true
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

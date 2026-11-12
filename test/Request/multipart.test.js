@@ -152,6 +152,33 @@ describe('Request multipart parsing', () => {
     expect(noLeftovers).toBe(true)
   })
 
+  it('does not parse or store the body until it is read', async () => {
+    const r = run(buildBody([{name: 'avatar', filename: 'x.bin', contentType: 'application/octet-stream', data: Buffer.from('abc')}]))
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(fs.readdirSync(tmpDir).filter(n => n.startsWith('odac-'))).toHaveLength(0)
+
+    const file = await r.file('avatar')
+    expect(fs.readFileSync(file.path, 'utf8')).toBe('abc')
+  })
+
+  it('answers 413 when the text fields together exceed maxBodySize', async () => {
+    global.Odac.Config.request.maxBodySize = 100
+    const fields = Array.from({length: 5}, (_, i) => ({name: `f${i}`, value: 'x'.repeat(40)}))
+    const r = run(buildBody(fields))
+
+    expect(await r.request('f4')).toBeUndefined()
+    expect(r.statusCode).toBe(413)
+    expect(r.res.end).toHaveBeenCalled()
+  })
+
+  it('answers 413 when a single field exceeds maxBodySize', async () => {
+    global.Odac.Config.request.maxBodySize = 100
+    const r = run(buildBody([{name: 'bio', value: 'x'.repeat(500)}]))
+
+    expect(await r.request('bio')).toBeUndefined()
+    expect(r.statusCode).toBe(413)
+  })
+
   it('cleans up unstored temp files after the response ends', async () => {
     const r = run(buildBody([{name: 'avatar', filename: 'x.bin', contentType: 'application/octet-stream', data: Buffer.from('abc')}]))
     const file = await r.file('avatar')

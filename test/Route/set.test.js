@@ -36,6 +36,71 @@ describe('Route.set()', () => {
     expect(route.routes.test_route.get['/test'].type).toBe('function')
   })
 
+  // The controller load awaits fs.stat; another route file may start loading meanwhile.
+  it('registers a controller route under the file that was loading when set() ran', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-set-'))
+    fs.mkdirSync(path.join(dir, 'controller', 'get'), {recursive: true})
+    fs.writeFileSync(path.join(dir, 'controller', 'get', 'home.js'), 'module.exports = () => "home"')
+    global.__dir = dir
+    try {
+      global.Odac.Route.buff = 'first'
+      route.set('get', '/home', 'home')
+      global.Odac.Route.buff = 'second'
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.first.get['/home'].type).toBe('controller')
+      expect(route.routes.second).toBeUndefined()
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true})
+    }
+  })
+
+  describe('rateLimit option', () => {
+    beforeEach(() => {
+      global.Odac.Route.buff = 'test_route'
+    })
+
+    it('stores a validated limit scoped to the route', async () => {
+      route.set('post', '/send/', jest.fn(), {rateLimit: {max: 5, window: 1000}})
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.test_route.post['/send'].rateLimit).toEqual({max: 5, window: 1000, key: null, scope: 'test_route:post:/send'})
+    })
+
+    it('fails the route file load on an invalid limit', () => {
+      expect(() => route.set('post', '/send', jest.fn(), {rateLimit: {max: 0}})).toThrow(/rateLimit.max/)
+    })
+
+    it('gives each verb of a multi-verb route its own budget', async () => {
+      route.set(['get', 'post'], '/send', jest.fn(), {rateLimit: {max: 5}})
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.test_route.get['/send'].rateLimit.scope).toBe('test_route:get:/send')
+      expect(route.routes.test_route.post['/send'].rateLimit.scope).toBe('test_route:post:/send')
+    })
+
+    it('updates and removes the limit when the route file is reloaded', async () => {
+      const handler = jest.fn()
+      route.set('post', '/send', handler, {rateLimit: {max: 5}})
+      await Promise.all(route._pendingRouteLoads)
+      route.set('post', '/send', handler, {rateLimit: {max: 9}})
+      await Promise.all(route._pendingRouteLoads)
+      expect(route.routes.test_route.post['/send'].rateLimit.max).toBe(9)
+
+      route.set('post', '/send', handler)
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.test_route.post['/send'].rateLimit).toBeUndefined()
+    })
+
+    it('reaches the auth route registered through auth.post', async () => {
+      route.authPost('/send', jest.fn(), undefined, {rateLimit: {max: 3}})
+      await Promise.all(route._pendingRouteLoads)
+
+      expect(route.routes.test_route['#post']['/send'].rateLimit.max).toBe(3)
+    })
+  })
+
   it('should handle array of methods', () => {
     global.Odac.Route.buff = 'test_route'
     const handler = jest.fn()

@@ -10,20 +10,21 @@ Odac provides built-in internationalization (i18n) support, allowing you to crea
 <odac translate>Login</odac>
 ```
 
-The text inside the tag is used as the translation key. Odac looks up this key in your locale files.
+The text inside the tag is used as the translation key. Odac looks up this key in your language files.
 
 ### Translation Files
 
-Translation files are stored in the `locale/` directory:
+Translation files are stored in `storage/language/`, one JSON file per two-letter language code:
 
 ```
-locale/
-├── en.json
-├── tr.json
-└── de.json
+storage/
+└── language/
+    ├── en.json
+    ├── tr.json
+    └── de.json
 ```
 
-**Example: `locale/en.json`**
+**Example: `storage/language/en.json`**
 ```json
 {
   "Welcome": "Welcome",
@@ -33,7 +34,7 @@ locale/
 }
 ```
 
-**Example: `locale/tr.json`**
+**Example: `storage/language/tr.json`**
 ```json
 {
   "Welcome": "Hoş Geldiniz",
@@ -42,6 +43,58 @@ locale/
   "Logout": "Çıkış Yap"
 }
 ```
+
+### Missing Keys
+
+In development (`debug` mode) a key without an entry is added to **every** language file at once: the default language gets the key itself as its value, every other language gets `""` (not translated yet). Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too.
+
+```json
+// storage/language/en.json (default)     // storage/language/tr.json
+{                                          {
+    "Login": "Login",                          "Login": "Giriş Yap",
+    "Logout": "Logout"                         "Logout": ""
+}                                          }
+```
+
+All language files therefore list the same entries in the same order (sorted by key), which keeps them easy to compare and keeps diffs small. Writes from several workers are serialized, and a language file that is not valid JSON (for example while you are editing it) is never overwritten; a warning is logged instead. Language files are loaded once per worker and re-read when they change on disk.
+
+To remove a key, use `odac lang:prune` (see [Managing Language Files](#managing-language-files)); deleting it from a single file by hand is undone the next time keys are synced, because the other files still have it.
+
+#### Spotting Missing Translations
+
+- An empty string marks a translation that is still missing; it is served from the default language meanwhile.
+- In debug mode each missing translation is logged once as a `WARN` (`{"message": "Missing translation", "lang": "tr", "key": "Logout"}`).
+- Set `"lang": {"highlightMissing": true}` to mark text served from the fallback on the page itself, e.g. `⟦Logout⟧`. It only takes effect in debug mode.
+
+### Context: Same Text, Different Meanings
+
+The same source text can need different translations depending on where it is used. In Turkish, "Gül" is both the flower ("Rose") and the verb ("Smile"); "Open" can be a button label or a status. Add a `context` to tell them apart:
+
+```html
+<odac translate context="flower">Gül</odac>
+<odac translate context="verb">Gül</odac>
+```
+
+```javascript
+// Controller
+Odac.__x('Gül', 'verb')            // "Smile"
+Odac.__x('%s1 gül', 'flower', 3)   // placeholders come after the context
+```
+
+The context is part of the entry's identity. In the language file the key holds an object of context → translation, where `""` is the variant used without a context:
+
+```json
+// storage/language/en.json
+{
+  "Gül": {
+    "": "Gül",
+    "flower": "Rose",
+    "verb": "Smile"
+  }
+}
+```
+
+Keys without a context stay plain strings. A missing context variant falls back to the same variant in the default language, then to the key, never to another context's translation. Keep contexts short and descriptive (`button`, `status`, `verb`): translators read them to decide what the text means. Contexts are capped at 100 characters.
 
 ### Translations with Placeholders
 
@@ -53,13 +106,20 @@ Use nested `<odac>` tags to insert dynamic values:
 
 **How it works:**
 1. The content becomes: `Hello %s1`
-2. Odac looks up this key in the locale file
+2. Odac looks up this key in the language file
 3. `%s1` is replaced with the actual value
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Hello %s1": "Hello %s1",
+  "Hello %s1": "Hello %s1"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Hello %s1": "Merhaba %s1"
 }
 ```
@@ -74,10 +134,17 @@ Use nested `<odac>` tags to insert dynamic values:
 
 This creates the key `%s1 %s2` and replaces both placeholders.
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "%s1 %s2": "%s1 %s2",
+  "%s1 %s2": "%s1 %s2"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "%s1 %s2": "%s1 %s2"
 }
 ```
@@ -88,10 +155,17 @@ This creates the key `%s1 %s2` and replaces both placeholders.
 <odac translate>Hello <odac>John</odac>, how are you?</odac>
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Hello %s1, how are you?": "Hello %s1, how are you?",
+  "Hello %s1, how are you?": "Hello %s1, how are you?"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Hello %s1, how are you?": "Merhaba %s1, nasılsın?"
 }
 ```
@@ -110,10 +184,17 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 <!-- Output: Click <a href="/help">here</a> for help -->
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help",
+  "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Click <a href=\"/help\">here</a> for help": "Yardım için <a href=\"/help\">buraya</a> tıklayın"
 }
 ```
@@ -126,10 +207,17 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </odac>
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!",
+  "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Welcome <strong>%s1</strong>!": "Hoş geldin <strong>%s1</strong>!"
 }
 ```
@@ -160,12 +248,19 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
   "Welcome back, %s1!": "Welcome back, %s1!",
+  "You have %s1 new notifications": "You have %s1 new notifications"
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "Welcome back, %s1!": "Tekrar hoş geldin, %s1!",
-  "You have %s1 new notifications": "You have %s1 new notifications",
   "You have %s1 new notifications": "%s1 yeni bildiriminiz var"
 }
 ```
@@ -220,16 +315,23 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
   "Price: $%s1": "Price: $%s1",
-  "Price: $%s1": "Fiyat: $%s1",
   "%s1 units in stock": "%s1 units in stock",
-  "%s1 units in stock": "Stokta %s1 adet",
   "Out of stock": "Out of stock",
+  "Add to Cart": "Add to Cart"
+}
+```
+
+```json
+// storage/language/tr.json
+{
+  "Price: $%s1": "Fiyat: $%s1",
+  "%s1 units in stock": "Stokta %s1 adet",
   "Out of stock": "Stokta yok",
-  "Add to Cart": "Add to Cart",
   "Add to Cart": "Sepete Ekle"
 }
 ```
@@ -262,35 +364,75 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </div>
 ```
 
-**Locale file:**
+**Language files:**
 ```json
+// storage/language/en.json
 {
-  "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.",
+  "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>."
+}
+```
+
+```json
+// storage/language/tr.json
+{
   "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "\"Kayıt Ol\" butonuna tıklayarak <a href=\"/terms\">Hizmet Şartlarımızı</a> ve <a href=\"/privacy\">Gizlilik Politikamızı</a> kabul etmiş olursunuz."
 }
 ```
 
+### Supported Languages
+
+A request is only ever served in a language the application has. Without configuration, these are the languages with a file in `storage/language/` plus `lang.default`. To list them explicitly, set `lang.supported` in `odac.json`. The list is then a strict whitelist: other files are ignored, and the default language is always included.
+
+```json
+{
+  "lang": {
+    "default": "en",
+    "supported": ["en", "tr", "de"]
+  }
+}
+```
+
+A visitor who asks for an unsupported language gets the default one. Key collection never creates a file for a language a client asked for. To add a language, create its file (`storage/language/fr.json` containing `{}` is enough) or add it to `lang.supported`.
+
+### Missing Translations and Fallback
+
+A key without a translation in the active language is served in the default language, and if that has no translation either, as the key itself. An empty string in a language file means "not translated yet":
+
+```json
+// storage/language/tr.json
+{
+  "nav.home": "Ana Sayfa",
+  "nav.about": ""
+}
+```
+
+Here `nav.about` is served from `en.json` until it is translated.
+
 ### Setting the Language
 
-The language is typically set based on user preference or browser settings. You can set it in your controller:
+The language is chosen in this order:
+
+1. The code passed to `Odac.Lang.set()`, if it is supported.
+2. The most preferred supported language of the `Accept-Language` header (q values respected, e.g. `de-DE,de;q=0.9,tr;q=0.8` picks `tr` when there is no `de.json`).
+3. `lang.default` in `odac.json`, then `en`.
+
+You can override it in your controller:
 
 ```javascript
 // Controller
 module.exports = async function(Odac) {
   // Set language from user preference
-  const userLang = Odac.Auth.check() 
-    ? Odac.Auth.user().language 
-    : 'en'
-  
-  Odac.Lang.setLanguage(userLang)
-  
+  if (await Odac.Auth.check()) Odac.Lang.set(Odac.Auth.user('language'))
+
   // Or from query parameter
-  const lang = Odac.Request.get('lang') || 'en'
-  Odac.Lang.setLanguage(lang)
-  
+  const lang = Odac.Request.get('lang')
+  if (lang) Odac.Lang.set(lang)
+
   Odac.View.skeleton('main').set('content', 'home')
 }
 ```
+
+`Odac.Lang.set()` accepts only two-letter codes of supported languages; anything else falls back as described above. `Odac.Lang.current()` returns the active code.
 
 ### Using Translation Helper in Controllers
 
@@ -305,16 +447,67 @@ module.exports = async function(Odac) {
 }
 ```
 
+### Managing Language Files
+
+ODAC can read the translation keys straight from your code, so language files can be checked and cleaned up without visiting every page:
+
+```bash
+npx odac lang:sync           # add every key used in code to every language file
+npx odac lang:check          # report what is out of sync; exit code 1 if anything is
+npx odac lang:check --strict # also fail on missing translations (for CI)
+npx odac lang:prune          # list keys no code uses (dry run)
+npx odac lang:prune --write  # remove them from every language file
+npx odac lang:prune --write --include-runtime  # also remove keys only seen at runtime (see below)
+```
+
+The scan covers views and skeletons (`.html`, compiled the same way as at runtime, so `<odac translate>Hello <odac var="name" /></odac>` is found as `Hello %s1`) and JavaScript/TypeScript files (`Odac.__()`, `Odac.__x()`, `Odac.Lang.get()`, `Odac.Lang.getx()`). `node_modules/`, `storage/`, `public/`, dot directories and `*.min.*` files are skipped. Keys ODAC itself translates are always kept.
+
+`lang:prune` never runs automatically and removes nothing without `--write`, because removing a key deletes its translations in every language. Files that are not valid JSON stop `lang:prune` and are never modified.
+
+#### Keys Built at Runtime
+
+A key that is not a string literal cannot be found in the source:
+
+```javascript
+Odac.__(`status.${order.status}`)   // reported as a dynamic call
+```
+
+`lang:check` and `lang:prune` list such calls. List their keys in `lang.keep` so they are never reported as unused; an entry ending in `*` keeps every key with that prefix:
+
+```json
+{
+  "lang": {
+    "keep": ["status.*", "Some exact key"]
+  }
+}
+```
+
+As a safety net, ODAC also remembers which keys the app actually looked up while it ran in development (whenever key collection is on), with the day each was last used, in `storage/.cache/lang-runtime.json`. That file is git-ignored and specific to your machine. `lang:prune` does not remove a key found there, even with `--write`; it lists it separately:
+
+```
+1 key(s) not found in code but used while the app ran (kept):
+    "status.shipped"  (last used 2026-11-10)
+    Add them to "lang.keep", or pass --include-runtime to remove them too.
+```
+
+`npx odac lang:prune --write --include-runtime` removes those keys as well. `lang:check` still reports them as a failure, because CI has no such record. The record only knows the code paths you ran, so add these keys to `lang.keep`; that is what protects them everywhere.
+
+Prefer literal keys where you can (e.g. a map from status to `Odac.__('Shipped')`), so the scan sees them.
+
+### Translations in Browser Code
+
+`__()` and `__x()` also work in `view/js/` (as globals, or as `Odac.__()` and `Odac.__x()`); only the keys that code uses are sent to the browser. See the frontend guide, *Translations in the Browser*.
+
 ### Best Practices
 
-1. **Use descriptive keys**: Make translation keys meaningful and context-aware
+1. **Use descriptive keys**: Make translation keys meaningful; use `context` when the same text means different things
 2. **Keep keys consistent**: Use the same key for the same text across your app
-3. **Organize locale files**: Group related translations together
+3. **Group with prefixes**: Files are sorted by key, so a shared prefix (`nav.`, `form.`) keeps related entries together
 4. **Escape HTML carefully**: Only use `raw` with trusted content
-5. **Test all languages**: Ensure translations work correctly in all supported languages
-6. **Handle missing translations**: Provide fallback values
+5. **Check in CI**: Run `npx odac lang:check --strict` to catch missing and unused keys before release
+6. **Use literal keys**: Computed keys cannot be detected by `lang:check` and `lang:prune`; list them in `lang.keep`
 
-**Good locale structure:**
+**Good language file structure:**
 ```json
 {
   "nav.home": "Home",

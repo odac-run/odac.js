@@ -2,6 +2,11 @@ const nodeCrypto = require('crypto')
 const fs = require('fs')
 const os = require('os')
 
+// Keys that would reach Object.prototype or a constructor when merged by assignment.
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+// Unset ${VAR} names already reported, so a variable used in many places warns once.
+const missingEnv = new Set()
+
 module.exports = {
   auth: {
     key: 'id',
@@ -13,6 +18,15 @@ module.exports = {
     maxFileSize: 10 * 1024 * 1024,
     maxFiles: 10,
     uploadDir: null
+  },
+  // Response headers every request starts with. They mirror the values the ODAC proxy fills
+  // in, so an app reached directly or behind another proxy gets the same protection. Set a
+  // header to false or null in odac.json to drop it; an app can still override any of them
+  // per response with Odac.Request.header().
+  headers: {
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'SAMEORIGIN',
+    'Referrer-Policy': 'strict-origin-when-cross-origin'
   },
   encrypt: {
     key: 'odac' // Default encryption key. MUST be overridden in production.
@@ -68,7 +82,15 @@ module.exports = {
           return __dirname.replace(/\/src$/, '/client')
         }
         // Environment variables
-        return process.env[key] || ''
+        if (process.env[key] === undefined) {
+          // An unset variable used to vanish silently, e.g. an empty database password.
+          if (!missingEnv.has(key)) {
+            missingEnv.add(key)
+            console.warn(`ODAC Config: environment variable "${key}" is not set; using an empty string.`)
+          }
+          return ''
+        }
+        return process.env[key]
       })
     }
     if (Array.isArray(obj)) {
@@ -77,6 +99,7 @@ module.exports = {
     if (obj && typeof obj === 'object') {
       const result = {}
       for (const key of Object.keys(obj)) {
+        if (UNSAFE_KEYS.has(key)) continue
         result[key] = this._interpolate(obj[key])
       }
       return result
@@ -84,8 +107,14 @@ module.exports = {
     return obj
   },
 
+  /**
+   * Merges odac.json into the defaults.
+   * Why: prototype keys are dropped so a config file can never write to Object.prototype, and
+   * a config key never replaces one of Config's own methods (init, _interpolate, ...).
+   */
   _deepMerge: function (target, source) {
     for (const key of Object.keys(source)) {
+      if (UNSAFE_KEYS.has(key) || typeof target[key] === 'function') continue
       if (source[key] && typeof source[key] === 'object' && !Array.isArray(source[key])) {
         // Ensure target[key] is also an object before recursive merge
         if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) {

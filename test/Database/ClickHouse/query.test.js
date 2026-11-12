@@ -30,6 +30,28 @@ describe('ClickHouseQuery.toSQL()', () => {
     expect(q.toSQL()).toBe("SELECT * FROM `events` WHERE `created_at` >= '2026-01-01' AND `name` = 'O''Brien'")
   })
 
+  it('rejects operators outside the allowed set', () => {
+    const q = new ClickHouseQuery(makeAdapter(), 'events')
+    expect(() => q.where('a', '= 1 OR 1 = 1 --', 'x')).toThrow(TypeError)
+    expect(() => q.where('a', {}, 'x')).toThrow(TypeError)
+    expect(q.toSQL()).toBe('SELECT * FROM `events`')
+  })
+
+  it('normalizes word operators', () => {
+    const q = new ClickHouseQuery(makeAdapter(), 'events').where('path', ' not  like ', '/admin%')
+    expect(q.toSQL()).toBe("SELECT * FROM `events` WHERE `path` NOT LIKE '/admin%'")
+  })
+
+  it('renders Date values as UTC DateTime64 literals', () => {
+    const q = new ClickHouseQuery(makeAdapter(), 'events')
+      .where('created_at', '>=', new Date('2026-01-02T03:04:05.678Z'))
+      .whereIn('day', [new Date('2026-01-01T00:00:00Z')])
+    expect(q.toSQL()).toBe(
+      "SELECT * FROM `events` WHERE `created_at` >= toDateTime64('2026-01-02 03:04:05.678', 3, 'UTC') AND `day` IN (toDateTime64('2026-01-01 00:00:00.000', 3, 'UTC'))"
+    )
+    expect(() => q.where('created_at', new Date('nope'))).toThrow(TypeError)
+  })
+
   it('renders IS NULL / IS NOT NULL', () => {
     const eq = new ClickHouseQuery(makeAdapter(), 't').where('source', null)
     expect(eq.toSQL()).toBe('SELECT * FROM `t` WHERE `source` IS NULL')

@@ -16,6 +16,8 @@ describe('Route.request()', () => {
         abort: jest.fn(),
         end: jest.fn(),
         print: jest.fn(),
+        refreshTimeout: jest.fn(),
+        clearTimeout: jest.fn(),
         res: {finished: false, writableEnded: false}
       },
       View: {print: jest.fn()},
@@ -37,6 +39,58 @@ describe('Route.request()', () => {
     await route.request({}, {statusCode: 200, end: jest.fn(), destroy: jest.fn()})
 
     expect(param.Request.abort).toHaveBeenCalledWith(404)
+  })
+
+  describe('controller errors', () => {
+    beforeEach(() => {
+      route.routes = {unknown: {}}
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => console.error.mockRestore())
+
+    it('waits for abort(500) so a custom 500 page is not cut off by an empty end()', async () => {
+      route.check = jest.fn().mockRejectedValue(new Error('boom'))
+      let finishAbort
+      param.Request.abort = jest.fn(
+        () =>
+          new Promise(resolve => {
+            finishAbort = () => {
+              param.Request.res.writableEnded = true
+              resolve()
+            }
+          })
+      )
+
+      const done = route.request({}, {})
+      await new Promise(resolve => setImmediate(resolve))
+      expect(param.Request.end).not.toHaveBeenCalled()
+      finishAbort()
+      await done
+
+      expect(param.Request.abort).toHaveBeenCalledWith(500)
+      expect(param.Request.end).not.toHaveBeenCalled()
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    it('contains a failing abort(500) instead of rejecting', async () => {
+      route.check = jest.fn().mockRejectedValue(new Error('boom'))
+      param.Request.abort = jest.fn().mockRejectedValue(new Error('headers already sent'))
+      param.Request.res.destroy = jest.fn()
+
+      await expect(route.request({}, {})).resolves.toBeUndefined()
+      expect(param.Request.res.destroy).toHaveBeenCalled()
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+  })
+
+  it('gives each request a random UUID', async () => {
+    route.routes = {}
+    await route.request({}, {})
+    await route.request({}, {})
+    const [[first], [second]] = global.Odac.instance.mock.calls
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(first).not.toBe(second)
   })
 
   // A HEAD response carries no body. Piping a stream result (image route, user
@@ -62,15 +116,108 @@ describe('Route.request()', () => {
     })
 
     it('pipes the stream into the response on GET', async () => {
-      const stream = createStream()
-      route.check = jest.fn().mockResolvedValue(stream)
+      const {Readable, PassThrough} = require('stream')
+      const source = Readable.from([Buffer.from('hello '), Buffer.from('world')])
+      const res = new PassThrough()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
       param.Request.method = 'get'
 
-      await route.request({}, {})
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
 
       expect(param.Request.print).toHaveBeenCalled()
-      expect(stream.pipe).toHaveBeenCalledWith(param.Request.res)
-      expect(stream.destroy).not.toHaveBeenCalled()
+      expect(Buffer.concat(chunks).toString()).toBe('hello world')
+      await new Promise(resolve => setImmediate(resolve))
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+  })
+
+  // pipe() neither destroys the source when the client goes away nor handles
+  // source errors. An aborted download leaked the file descriptor, and a
+  // read error (e.g. a prod-cached public file deleted since) crashed the worker.
+  describe('stream lifecycle', () => {
+    const fs = require('fs')
+    const os = require('os')
+    const path = require('path')
+    const {PassThrough} = require('stream')
+
+    let tmpDir
+
+    beforeEach(() => {
+      route.routes = {unknown: {}}
+      param.Request.method = 'get'
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-request-'))
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, {recursive: true, force: true})
+      jest.restoreAllMocks()
+    })
+
+    it('closes the file when the client disconnects mid-download', async () => {
+      const file = path.join(tmpDir, 'big.bin')
+      fs.writeFileSync(file, Buffer.alloc(4 * 1024 * 1024))
+      const source = fs.createReadStream(file, {highWaterMark: 1024})
+      // Never consumed: mimics a client that stops reading, then hangs up.
+      const res = new PassThrough({highWaterMark: 1024})
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => source.once('data', resolve))
+      res.destroy()
+      await new Promise(resolve => source.once('close', resolve))
+
+      expect(source.destroyed).toBe(true)
+      expect(param.cleanup).toHaveBeenCalled()
+    })
+
+    // The request timeout is an idle deadline. A download longer than the
+    // timeout used to be cut mid-file with "Request Timeout" appended.
+    it('re-arms the idle timeout for every chunk streamed', async () => {
+      const {Readable} = require('stream')
+      const source = Readable.from([Buffer.from('a'), Buffer.from('b'), Buffer.from('c')])
+      const res = new PassThrough()
+      res.resume()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
+
+      expect(param.Request.refreshTimeout).toHaveBeenCalledTimes(3)
+    })
+
+    it('clears the timeout once the stream completes', async () => {
+      const {Readable} = require('stream')
+      const source = Readable.from([Buffer.from('done')])
+      const res = new PassThrough()
+      res.resume()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.on('finish', resolve))
+      await new Promise(resolve => setImmediate(resolve))
+
+      expect(param.Request.clearTimeout).toHaveBeenCalled()
+    })
+
+    it('contains a read error instead of crashing the worker', async () => {
+      const source = fs.createReadStream(path.join(tmpDir, 'deleted.css'))
+      const res = new PassThrough()
+      param.Request.res = res
+      route.check = jest.fn().mockResolvedValue(source)
+
+      await route.request({}, res)
+      await new Promise(resolve => res.once('close', resolve))
+
+      expect(res.destroyed).toBe(true)
+      expect(param.cleanup).toHaveBeenCalled()
     })
   })
 })

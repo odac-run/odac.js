@@ -70,7 +70,7 @@ await Odac.Ipc.publish('chat:global', { user: 'Emre', text: 'Hello World' });
 ```
 
 > [!TIP]
-> When using `memory` driver, the subscription listener is registered in the current worker. When a message is published, it goes to the Main process and is then broadcasted to all subscribed workers.
+> When using `memory` driver, the subscription listener is registered in the current worker. When a message is published, it goes to the Main process and is then broadcasted to all subscribed workers. Subscriptions made on the Main process itself (for example in cron jobs) receive messages too.
 
 #### Unsubscribing
 
@@ -186,6 +186,8 @@ try {
 }
 ```
 
+`unlock()` releases the lock only while this process still holds it: if the critical section outlived the TTL and another process took the lock, the late `unlock()` returns `false` and leaves that lock alone. To share a lock between processes, pass an owner token to `lock(key, ttl, owner)` and `unlock(key, owner)`. `forceUnlock(key)` removes a lock whoever holds it.
+
 > [!TIP]
 > With the `redis` driver, locks work across multiple servers — making them true distributed locks.
 
@@ -207,8 +209,9 @@ try {
 | `sadd(key, ...members)` | Add members to a set |
 | `smembers(key)` | Get all members of a set |
 | `srem(key, ...members)` | Remove members from a set |
-| `lock(key, ttl)` | Acquire a mutex lock |
-| `unlock(key)` | Release a mutex lock |
+| `lock(key, ttl, owner?)` | Acquire a mutex lock |
+| `unlock(key, owner?)` | Release a lock this process (or `owner`) holds |
+| `forceUnlock(key)` | Remove a lock regardless of its holder |
 | `subscribe(channel, handler)` | Subscribe to a Pub/Sub channel; returns a handle with `unsubscribe()` |
 | `unsubscribe(channel, handler)` | Remove a single subscription, leaving other subscribers intact |
 | `unsubscribeAll(channel)` | Remove every subscription on a channel |

@@ -1,5 +1,7 @@
 'use strict'
 
+const servedFromCache = require('./servedFromCache')
+
 const cluster = require('node:cluster')
 
 /**
@@ -59,9 +61,7 @@ describe('ReadCache.get()', () => {
     expect(result).toHaveLength(2)
     expect(result[0].title).toBe('First Post')
 
-    // Verify it was cached — check index
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await servedFromCache('posts', () => db('posts').where({active: true}).select('id', 'title'))).toBe(true)
   })
 
   it('should return cached result on cache HIT without querying DB', async () => {
@@ -88,9 +88,11 @@ describe('ReadCache.get()', () => {
 
     expect(result.title).toBe('First Post')
 
-    // Should still be cached
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    // Cached with the configured TTL (60 s)
+    const entries = [...Odac.Ipc._memoryStore].filter(([key]) => key.startsWith('rc:default:posts:'))
+    expect(entries).toHaveLength(1)
+    expect(entries[0][1].expireAt - Date.now()).toBeGreaterThan(55000)
+    expect(entries[0][1].expireAt - Date.now()).toBeLessThanOrEqual(60000)
   })
 
   it('should respect maxKeys limit', async () => {
@@ -108,9 +110,9 @@ describe('ReadCache.get()', () => {
     const executeFn2 = () => qb2.then(r => r)
     await readCache.get('default', 'posts', qb2, executeFn2, 60)
 
-    // Only 1 key should be in the index (first one cached, second skipped)
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    // First query cached, second skipped
+    expect(await servedFromCache('posts', () => db('posts').where({id: 1}).first())).toBe(true)
+    expect(await servedFromCache('posts', () => db('posts').where({id: 2}).first())).toBe(false)
   })
 
   it('should generate different keys for different queries', async () => {
@@ -122,7 +124,7 @@ describe('ReadCache.get()', () => {
     await readCache.get('default', 'posts', qb1, executeFn1, 60)
     await readCache.get('default', 'posts', qb2, executeFn2, 60)
 
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    const keys = [...Odac.Ipc._memoryStore.keys()].filter(key => key.startsWith('rc:default:posts:'))
     expect(keys).toHaveLength(2)
   })
 })

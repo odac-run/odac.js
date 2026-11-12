@@ -5,6 +5,12 @@ const path = require('node:path')
 const nanoid = require('./nanoid')
 const clickhouse = require('./ClickHouse')
 
+// Migration lock: how long a holder's claim lasts without renewal, and how long another
+// instance waits for it before giving up.
+const LOCK_TTL_MS = 2 * 60 * 1000
+const LOCK_WAIT_MS = 5 * 60 * 1000
+const LOCK_POLL_MS = 500
+
 /**
  * ODAC Migration Engine — "Schema-First with Auto-Diff"
  *
@@ -18,6 +24,7 @@ class Migration {
     this.migrationDir = null
     this.connections = null
     this.trackingTable = '_odac_migrations'
+    this.lockTable = '_odac_migrations_lock'
   }
 
   /**
@@ -45,6 +52,7 @@ class Migration {
   async migrate(options = {}) {
     const targetDb = options.db || null
     const dryRun = options.dryRun || false
+    const allowDestructive = this._allowDestructive(options)
     const summary = {}
 
     const connectionKeys = targetDb ? [targetDb] : Object.keys(this.connections)
@@ -60,16 +68,120 @@ class Migration {
         continue
       }
 
-      await this._ensureTrackingTable(knex)
+      const run = async () => {
+        await this._ensureTrackingTable(knex)
 
-      const schemaChanges = await this._applySchemaChanges(knex, key, dryRun)
-      const fileChanges = await this._applyMigrationFiles(knex, key, dryRun)
-      const seedChanges = await this._applySeeds(knex, key, dryRun)
+        const schemaChanges = await this._applySchemaChanges(knex, key, dryRun, allowDestructive)
+        const fileChanges = await this._applyMigrationFiles(knex, key, dryRun)
+        const seedChanges = await this._applySeeds(knex, key, dryRun)
 
-      summary[key] = {schema: schemaChanges, files: fileChanges, seeds: seedChanges}
+        return {schema: schemaChanges, files: fileChanges, seeds: seedChanges}
+      }
+
+      summary[key] = dryRun ? await run() : await this._withLock(knex, key, run)
     }
 
     return summary
+  }
+
+  /**
+   * Whether operations that can destroy data (dropping a column, changing its type, shortening
+   * it) may be applied.
+   * Why: the schema diff treats every column missing from schema/ as one to drop. In production
+   * that turns a rename, a rollback to an older release, or an old instance restarting during a
+   * rolling deploy into permanent data loss. Outside production the schema stays authoritative.
+   * Order: explicit option, then `migration.allowDestructive` in config, then "not production".
+   * @returns {boolean}
+   */
+  _allowDestructive(options) {
+    if (typeof options.allowDestructive === 'boolean') return options.allowDestructive
+    const configured = global.Odac?.Config?.migration?.allowDestructive
+    if (typeof configured === 'boolean') return configured
+    return process.env.NODE_ENV !== 'production'
+  }
+
+  _isDestructive(op) {
+    return op.type === 'drop_column' || (op.type === 'alter_column' && op.narrowing === true)
+  }
+
+  // ---------------------------------------------------------------------------
+  // MIGRATION LOCK
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Runs `fn` while holding the connection's migration lock.
+   * Why: "only the primary migrates" holds per machine. Several machines or containers starting
+   * together would otherwise diff and alter the same tables and run the same migration files
+   * concurrently. The lock is a row in a dedicated table, so it works on every SQL dialect;
+   * it expires if its holder dies and is renewed while migrations run.
+   */
+  async _withLock(knex, connectionKey, fn) {
+    await this._ensureLockTable(knex)
+    const owner = nanoid(21)
+    await this._acquireLock(knex, connectionKey, owner)
+
+    const renew = setInterval(() => {
+      knex(this.lockTable)
+        .where({id: 1, owner})
+        .update({expires_at: Date.now() + LOCK_TTL_MS})
+        .catch(() => {})
+    }, LOCK_TTL_MS / 4)
+    renew.unref?.()
+
+    try {
+      return await fn()
+    } finally {
+      clearInterval(renew)
+      await knex(this.lockTable)
+        .where({id: 1, owner})
+        .del()
+        .catch(() => {})
+    }
+  }
+
+  async _acquireLock(knex, connectionKey, owner) {
+    const deadline = Date.now() + LOCK_WAIT_MS
+    let unexplainedFailures = 0
+
+    for (;;) {
+      try {
+        await knex(this.lockTable).insert({id: 1, owner, expires_at: Date.now() + LOCK_TTL_MS})
+        return
+      } catch (insertError) {
+        const holder = await knex(this.lockTable).where('id', 1).first()
+        if (!holder) {
+          // Released in between, or the insert failed for another reason.
+          if (++unexplainedFailures > 3) throw insertError
+          continue
+        }
+        unexplainedFailures = 0
+        if (Number(holder.expires_at) < Date.now()) {
+          // The holder stopped renewing (crashed): take over its stale lock.
+          await knex(this.lockTable).where({id: 1, owner: holder.owner}).del()
+          continue
+        }
+        if (Date.now() > deadline) {
+          throw new Error(
+            `ODAC Migration: timed out waiting for the migration lock on '${connectionKey}' (held by ${holder.owner}). If no other instance is migrating, delete the row from ${this.lockTable}.`
+          )
+        }
+        await new Promise(resolve => setTimeout(resolve, LOCK_POLL_MS))
+      }
+    }
+  }
+
+  async _ensureLockTable(knex) {
+    if (await knex.schema.hasTable(this.lockTable)) return
+    try {
+      await knex.schema.createTable(this.lockTable, table => {
+        table.integer('id').primary()
+        table.string('owner', 64).notNullable()
+        table.bigInteger('expires_at').notNullable()
+      })
+    } catch (e) {
+      // Another instance created it first.
+      if (!(await knex.schema.hasTable(this.lockTable))) throw e
+    }
   }
 
   /**
@@ -116,8 +228,10 @@ class Migration {
         throw new Error(`ODAC Migration: rollback is not supported on ClickHouse connection '${key}'.`)
       }
 
-      await this._ensureTrackingTable(knex)
-      result[key] = await this._rollbackLastBatch(knex, key)
+      result[key] = await this._withLock(knex, key, async () => {
+        await this._ensureTrackingTable(knex)
+        return this._rollbackLastBatch(knex, key)
+      })
     }
 
     return result
@@ -162,7 +276,7 @@ class Migration {
    * @param {boolean} dryRun - If true, only compute changes
    * @returns {Promise<Array>} List of applied operations
    */
-  async _applySchemaChanges(knex, connectionKey, dryRun) {
+  async _applySchemaChanges(knex, connectionKey, dryRun, allowDestructive = true) {
     const desiredSchemas = this._loadSchemaFiles(connectionKey)
     const operations = []
 
@@ -183,10 +297,22 @@ class Migration {
         const diff = this._computeDiff(desired, currentColumns, currentIndexes, currentForeignKeys)
 
         if (diff.length > 0) {
-          operations.push(...diff.map(d => ({...d, table: tableName})))
+          const blocked = allowDestructive ? [] : diff.filter(op => this._isDestructive(op))
+          const applicable = blocked.length > 0 ? diff.filter(op => !blocked.includes(op)) : diff
+          operations.push(...applicable.map(d => ({...d, table: tableName})))
+          operations.push(...blocked.map(d => ({...d, table: tableName, skipped: 'destructive'})))
 
-          if (!dryRun) {
-            await this._applyDiff(knex, tableName, diff)
+          if (blocked.length > 0 && !dryRun) {
+            const list = blocked.map(op => `${op.type} ${tableName}.${op.column}`).join(', ')
+            console.warn(
+              `\x1b[33m[ODAC Migration]\x1b[0m Skipped destructive change(s) on '${connectionKey}': ${list}. ` +
+                'Back up the data, then run `npx odac migrate --allow-destructive` or set "migration": {"allowDestructive": true}. ' +
+                'A skipped NOT NULL column without a default still rejects inserts that omit it.'
+            )
+          }
+
+          if (!dryRun && applicable.length > 0) {
+            await this._applyDiff(knex, tableName, applicable)
           }
         }
       }
@@ -555,7 +681,13 @@ class Migration {
       if (!currentColumns[colName]) continue // New column, handled above
 
       if (this._columnNeedsAlter(colDef, currentColumns[colName])) {
-        ops.push({type: 'alter_column', column: colName, definition: colDef, currentNullable: currentColumns[colName].nullable})
+        ops.push({
+          type: 'alter_column',
+          column: colName,
+          definition: colDef,
+          currentNullable: currentColumns[colName].nullable,
+          narrowing: this._isNarrowingAlter(colDef, currentColumns[colName])
+        })
       }
     }
 
@@ -619,6 +751,20 @@ class Migration {
    * @param {object} current - Column metadata from introspection
    * @returns {boolean}
    */
+  /**
+   * Whether altering `current` to `desired` can lose or rewrite stored values: any type change,
+   * or a shorter maximum length. Nullability and default changes never do.
+   */
+  _isNarrowingAlter(desired, current) {
+    if (desired.type === 'specificType') {
+      if ((desired.length || '').toLowerCase().trim() !== (current.type || '').toLowerCase().trim()) return true
+    } else {
+      const desiredType = desired.type === 'nanoid' ? 'string' : desired.type
+      if (desiredType !== this._reverseMapType(current.type)) return true
+    }
+    return !!(desired.type !== 'specificType' && desired.length && current.maxLength && Number(desired.length) < Number(current.maxLength))
+  }
+
   _columnNeedsAlter(desired, current) {
     // Type mismatch — map the raw DB type back to an ODAC type and compare.
     // nanoid is stored as 'string' (varchar) in the DB, so normalize before comparison.
@@ -1146,20 +1292,29 @@ class Migration {
         throw new Error(`ODAC Migration: File '${file.name}' is missing an 'up' function.`)
       }
 
-      await migration.up(knex)
-
-      await knex(this.trackingTable).insert({
-        name: file.name,
-        connection: connectionKey,
-        type: 'file',
-        batch,
-        applied_at: new Date()
+      // up() and its tracking row commit together, so a failure cannot leave a migration applied
+      // but unrecorded (and re-run on the next start). Files that cannot run inside a
+      // transaction (e.g. CREATE INDEX CONCURRENTLY) opt out with `transaction: false`.
+      await this._inTransaction(knex, migration, async db => {
+        await migration.up(db)
+        await db(this.trackingTable).insert({
+          name: file.name,
+          connection: connectionKey,
+          type: 'file',
+          batch,
+          applied_at: new Date()
+        })
       })
 
       results.push({type: 'applied_file', name: file.name})
     }
 
     return results
+  }
+
+  async _inTransaction(knex, migration, fn) {
+    if (migration.transaction === false) return fn(knex)
+    return knex.transaction(trx => fn(trx))
   }
 
   /**
@@ -1215,11 +1370,10 @@ class Migration {
 
       const migration = this._requireSchema(filePath)
 
-      if (typeof migration.down === 'function') {
-        await migration.down(knex)
-      }
-
-      await knex(this.trackingTable).where('connection', connectionKey).where('name', row.name).where('type', 'file').del()
+      await this._inTransaction(knex, migration, async db => {
+        if (typeof migration.down === 'function') await migration.down(db)
+        await db(this.trackingTable).where('connection', connectionKey).where('name', row.name).where('type', 'file').del()
+      })
 
       results.push({type: 'rolled_back', name: row.name})
     }
@@ -1676,7 +1830,7 @@ class Migration {
     }
 
     for (const tableName of tables) {
-      if (tableName === this.trackingTable) continue
+      if (tableName === this.trackingTable || tableName === this.lockTable) continue
 
       const columns = await this._introspectColumns(knex, tableName)
       const indexes = await this._introspectIndexes(knex, tableName)

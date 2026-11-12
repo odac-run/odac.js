@@ -20,7 +20,7 @@ The `skills/` directory contains a master `SKILL.md` that indexes specialized ru
 Detailed instructions are organized into Backend and Frontend categories:
 
 ### Backend
-- `backend/authentication.md`: Sessions, Auth, and Realtime Hubs.
+- `backend/authentication.md`: Sessions, Auth, Login Hooks, and Realtime Hubs.
 - `backend/config.md`: Configuration management and environment variables.
 - `backend/controllers.md`: Request handling and Class-Based Controllers.
 - `backend/cron.md`: Scheduled background tasks and automation.
@@ -29,7 +29,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `backend/ipc.md`: Inter-Process Communication and state sharing.
 - `backend/mail.md`: Transactional email sending.
 - `backend/request_response.md`: Handling Odac.Request and Odac.Response.
-- `backend/routing.md`: Route definitions, Middlewares, and Error Pages.
+- `backend/routing.md`: Route definitions, Middlewares, Rate Limiting, and Error Pages.
 - `backend/storage.md`: Persistent key-value storage (LMDB).
 - `backend/streaming.md`: Server-Sent Events (SSE) and Streaming API.
 - `backend/structure.md`: Project organization and Service Classes.
@@ -44,6 +44,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `frontend/forms.md`: AJAX form handling and API requests.
 - `frontend/navigation.md`: AJAX Navigation (SPA) behavior.
 - `frontend/realtime.md`: WebSocket Hubs and EventSource usage.
+- `frontend/translations.md`: Translations in browser code (`Odac.__()`, `Odac.__x()`).
 
 ---
 

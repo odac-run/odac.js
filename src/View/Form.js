@@ -160,6 +160,8 @@ class Form {
     const meta = this.FORM_META[type]
     const token = nodeCrypto.randomBytes(32).toString('hex')
     config.token = token
+    // A failed magic link returns to the page the form is on unless error-redirect says otherwise.
+    if (type === 'magic-login' && !config.errorRedirect) config.errorRedirect = Odac.Request.url || null
     this.storeConfig(token, config, Odac, type)
 
     const method = (config.method || 'POST').toUpperCase()
@@ -177,7 +179,23 @@ class Form {
 
     let html = `<form ${attrs}>\n`
     html += `  <input type="hidden" name="${meta.tokenInputName}" value="${this.escapeHtml(token)}">\n`
+    if (type === 'magic-login') html += this.magicErrorHtml(Odac)
     return html
+  }
+
+  /**
+   * Markup for the magic-link failure that redirected the visitor here, if any.
+   * Why: the person lands back on the form that sent the link and sees why it did not sign
+   * them in, in the same element (and style) client-side form errors use, which the client
+   * hides again on the next submit.
+   */
+  static magicErrorHtml(Odac) {
+    const error = typeof Odac.Auth?.magicError === 'function' ? Odac.Auth.magicError() : null
+    if (!error?.message) return ''
+    return (
+      `  <div odac-form-error="_odac_form" data-odac-magic-error="${this.escapeHtml(error.code)}" ` +
+      `style="display:block;color:#dc3545;font-size:0.875rem;margin-bottom:1rem">${this.escapeHtml(error.message)}</div>\n`
+    )
   }
 
   // - RUNTIME: emits the trailing success span + </form>.
@@ -276,6 +294,7 @@ class Form {
     const config = {
       token: formToken,
       redirect: null,
+      errorRedirect: null,
       submitText: 'Send Magic Link',
       submitLoading: 'Sending...',
       fields: []
@@ -285,9 +304,11 @@ class Form {
     if (!tagMatch) return config
 
     const tag = tagMatch[0]
-    const redirectMatch = tag.match(/redirect=["']([^"']+)["']/)
+    const redirectMatch = tag.match(/\sredirect=["']([^"']+)["']/)
+    const errorRedirectMatch = tag.match(/\serror-redirect=["']([^"']+)["']/)
     const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
     if (redirectMatch) config.redirect = redirectMatch[1]
+    if (errorRedirectMatch) config.errorRedirect = errorRedirectMatch[1]
 
     const fieldMatches = html.match(/<odac:input([^>]*?)(?:\/>|>(?:[\s\S]*?)<\/odac:input>)/g)
     if (fieldMatches) {

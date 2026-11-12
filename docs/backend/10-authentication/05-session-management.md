@@ -34,14 +34,15 @@ Sessions use a **sliding window** approach (similar to NextAuth.js):
 Odac implements a non-blocking **Refresh Token Rotation** mechanism to enhance security:
 
 - **rotationAge**: How often to rotate tokens (default: 15 minutes)
-- **Grace Period**: When a token is rotated, the old token remains valid for **60 seconds** to prevent race conditions in Single Page Applications (SPAs) making concurrent requests.
+- **rotationGrace**: When a token is rotated, the old token remains valid for **30 seconds** (default) so concurrent requests from Single Page Applications and retries after a lost response still pass.
 
 **How it works:**
 1. A request is made with an active token older than `rotationAge`.
-2. Odac issues a brand new token set and sends them as cookies.
-3. The old token is marked as "rotated" and assigned a 60-second lütuf (grace) period.
-4. Subsequent concurrent requests using the old token still pass within those 60 seconds.
-5. After 60 seconds, the old token is naturally expired.
+2. Exactly one request claims the rotation; concurrent requests with the same token stay signed in without minting extra tokens.
+3. Odac issues a brand new token set and sends them as cookies.
+4. The old token is marked as "rotated" and stays valid for the grace period.
+5. If the client presents the old token again after 5 seconds (its rotation response was lost), it receives a new token set once.
+6. After the grace period, the old token is naturally expired.
 
 ### Configuration
 
@@ -55,6 +56,7 @@ Configure session behavior in `odac.json`:
     "maxAge": 2592000000,
     "updateAge": 86400000,
     "rotationAge": 900000,
+    "rotationGrace": 30000,
     "rotation": true
   }
 }
@@ -140,6 +142,9 @@ Sessions are protected with:
 ```javascript
 await Odac.Auth.logout()
 ```
+Only the current device is signed out; other devices of the same user keep their sessions.
+
+Signing in moves the visitor to a new session identifier (session data is carried over), so an identifier obtained before login cannot be reused afterwards.
 
 **Check session status:**
 ```javascript
@@ -173,6 +178,13 @@ Odac.session('theme', 'dark')
 // Retrieve data
 const theme = Odac.session('theme')
 ```
+
+How the session store behaves:
+
+- **Created on first write.** Reading from a visitor without a session returns `null` and stores nothing, so bots and health checks do not fill the store.
+- **Sliding expiry.** A session expires 7 days after its last activity (not after its creation). Activity is recorded at most once per hour, and the `odac_session` cookie's expiry is renewed with it.
+- **Bound to the browser.** The session is tied to the User-Agent with version numbers removed: a browser update keeps the session, a different browser or platform does not.
+- **CSRF tokens** (`Odac.token()`) are stored one key per token, so tokens issued in parallel by different workers are never lost. Each token is valid once, for the session lifetime.
 
 
 ### Best Practices

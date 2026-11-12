@@ -14,6 +14,8 @@ project/
 │   └── page/           # HTML page controllers
 │       ├── about.js
 │       └── home.js
+├── hook/               # Framework lifecycle hooks
+│   └── auth.js         # beforeLogin, login, loginFailed
 ├── middleware/         # Route middleware functions
 │   └── auth.js
 ├── public/             # Static assets (directly accessible)
@@ -26,7 +28,8 @@ project/
 │   ├── api.js          # Routes for api.example.com
 │   └── www.js          # Routes for www.example.com
 ├── storage/            # App storage (logs, cache, uploads)
-│   └── .cache/
+│   ├── .cache/
+│   └── language/       # Translation files (en.json, tr.json, ...); commit these
 ├── view/               # HTML templates
 │   ├── content/
 │   ├── css/            # (Optional) Custom Tailwind entry points
@@ -44,11 +47,20 @@ project/
 |-----------|---------|
 | `class/` | Request-scoped service classes for business logic |
 | `controller/` | HTTP handlers that process requests and return responses |
+| `hook/` | Framework lifecycle hooks; `auth.js` runs on every sign-in (see Login Hooks) |
 | `middleware/` | Functions that run before controllers (auth, logging, etc.) |
 | `route/` | Route definitions, one file per subdomain |
 | `view/` | HTML templates and partials |
 | `public/` | Static files served directly to browsers |
-| `storage/` | Runtime data (cache, logs, file uploads) |
+| `storage/` | Runtime data (cache, logs, file uploads); `storage/language/` holds translations and is version-controlled |
+
+### Serving `public/`
+
+- Files are revalidated on every visit (`Cache-Control: public, max-age=0, must-revalidate` with `ETag` and `Last-Modified`), so an unchanged file costs a `304` and a deploy reaches returning visitors immediately.
+- Add a `v` query parameter to cache a URL for a year: `<link href="/assets/css/app.css?v=2026-11-12">`. Change the value whenever the file changes.
+- Byte ranges (`Range: bytes=…`) are supported for video and audio seeking.
+- Dotfiles and dot-directories (`.env`, `.git/`) are never served; `.well-known/` is the exception.
+- Files with an unknown extension are sent as `application/octet-stream`.
 
 ### CLI Commands
 
