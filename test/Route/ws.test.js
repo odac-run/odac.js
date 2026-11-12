@@ -22,6 +22,32 @@ describe('Route WebSocket methods', () => {
       route.authWs('/test', handler)
     }).not.toThrow()
   })
+
+  it('registers a socket under the route file being loaded', () => {
+    global.Odac = {Route: {buff: 'api'}}
+    route.ws('/live', jest.fn(), {token: false})
+    delete global.Odac
+    expect(route.wsServer.getRoute('/live', 'www')).toBeNull()
+    expect(route.wsServer.getRoute('/live', 'api')).toBeTruthy()
+    // The subdomain resolves to its route file even when it has no HTTP routes.
+    expect(route.routes.api).toEqual({})
+  })
+})
+
+describe('Route.ws() token', () => {
+  it('finds the ODAC token in a protocol list without spaces after commas', async () => {
+    const route = new Route()
+    route.ws('/chat', jest.fn(), {})
+    const ws = Object.assign(new EventEmitter(), {close: jest.fn(), resume: jest.fn()})
+    const odac = {
+      Request: {_wsHeaders: {'sec-websocket-protocol': 'chat,odac-token-abc'}, ended: false},
+      token: jest.fn(value => value === 'abc')
+    }
+    await route.wsServer.getRoute('/chat').handler(ws, odac)
+    expect(odac.token).toHaveBeenCalledWith('abc')
+    expect(ws.close).not.toHaveBeenCalled()
+    expect(ws.resume).toHaveBeenCalled()
+  })
 })
 
 // Middleware is shared between HTTP and WebSocket routes. On a WebSocket the

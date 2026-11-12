@@ -68,6 +68,9 @@ const ws = Odac.ws('/path', options)
 | `maxPayload` | `10MB` | Max payload size in bytes |
 | `rateLimit` | `{max: 50, window: 1000}` | Incoming message rate limit |
 | `parseJson` | `true` | Auto-parse text messages as JSON |
+| `maxBuffered` | `max(16MB, 2 × maxPayload)` | Unsent bytes per client before it is dropped |
+| `protocols` | — | Subprotocols the route speaks (handshake answers with one) |
+| `origins` | same origin | Extra browser origins allowed, or `'*'` |
 
 ### Client Options
 

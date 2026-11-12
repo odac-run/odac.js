@@ -15,6 +15,13 @@ const DEFAULT_RATE_LIMIT_WINDOW = 1000
 // finish the TCP close before the socket is destroyed. HTTP server sockets are
 // half-open capable, so a peer that never sends FIN would otherwise pin the fd.
 const CLOSE_TIMEOUT = 1000
+// A connection that answers neither data nor a ping within two intervals is half-open
+// (peer vanished without a FIN) and is dropped, releasing its socket and request scope.
+const DEFAULT_HEARTBEAT = 30000
+// Bytes queued in the socket for a client that reads slower than it is sent to. Beyond this
+// the client is dropped instead of letting broadcasts grow worker memory without bound.
+const DEFAULT_MAX_BUFFERED = 16 * 1024 * 1024
+const utf8 = new TextDecoder('utf-8', {fatal: true})
 
 const OPCODE = {
   CONTINUATION: 0x0,
@@ -71,8 +78,10 @@ class WebSocketClient {
   #rateLimitMax
   #rateLimitWindow
   #messageCount = 0
-  #rateLimitTimer
+  #windowStart = 0
   #fragments = null
+  #maxBuffered
+  #alive = true
   #parseJson
   #onData
   #closeTimer = null
@@ -88,12 +97,7 @@ class WebSocketClient {
     this.#rateLimitMax = options.rateLimit?.max ?? DEFAULT_RATE_LIMIT_MAX
     this.#rateLimitWindow = options.rateLimit?.window ?? DEFAULT_RATE_LIMIT_WINDOW
     this.#parseJson = options.parseJson !== false
-
-    if (this.#rateLimitMax > 0) {
-      this.#rateLimitTimer = setInterval(() => {
-        this.#messageCount = 0
-      }, this.#rateLimitWindow)
-    }
+    this.#maxBuffered = options.maxBuffered ?? Math.max(DEFAULT_MAX_BUFFERED, this.#maxPayload * 2)
 
     this.#setupListeners()
   }
@@ -120,18 +124,93 @@ class WebSocketClient {
     return Array.from(this.#rooms)
   }
 
+  /** @returns {number} Bytes written but not yet flushed to the client. */
+  get bufferedAmount() {
+    return this.#socket.writableLength ?? 0
+  }
+
+  /**
+   * One heartbeat step, driven by the server's shared timer.
+   * Why: without pings a half-open connection (peer gone without a FIN) and its request scope
+   * live forever. Any frame from the peer counts as a sign of life.
+   */
+  heartbeat() {
+    if (this.#readyState !== READY_STATE.OPEN) return
+    if (!this.#alive) {
+      this.terminate()
+      return
+    }
+    this.#alive = false
+    this.#sendFrame(OPCODE.PING, Buffer.alloc(0))
+  }
+
+  /** Drops the connection without a closing handshake (dead or overloaded peer). */
+  terminate() {
+    clearTimeout(this.#closeTimer)
+    this.#socket.destroy()
+    this.#cleanup()
+  }
+
   #setupListeners() {
-    let buffer = Buffer.alloc(0)
+    // Incoming bytes are kept as a chunk list and joined once per frame. Concatenating the
+    // whole buffer on every chunk copied a 10 MB message over and over: O(n²).
+    const chunks = []
+    let buffered = 0
+    let header = null
+
+    const take = length => {
+      let result
+      if (chunks[0].length >= length) {
+        result = chunks[0].subarray(0, length)
+        chunks[0] = chunks[0].subarray(length)
+        if (chunks[0].length === 0) chunks.shift()
+      } else {
+        const parts = []
+        let remaining = length
+        while (remaining > 0) {
+          const chunk = chunks[0]
+          if (chunk.length <= remaining) {
+            parts.push(chunk)
+            remaining -= chunk.length
+            chunks.shift()
+          } else {
+            parts.push(chunk.subarray(0, remaining))
+            chunks[0] = chunk.subarray(remaining)
+            remaining = 0
+          }
+        }
+        result = Buffer.concat(parts, length)
+      }
+      buffered -= length
+      return result
+    }
+
+    // The header is at most 14 bytes; merging that much of the leading chunks is cheap.
+    const peek = length => {
+      if (chunks[0].length < length) {
+        chunks.unshift(take(length))
+        buffered += length
+      }
+      return chunks[0]
+    }
 
     this.#onData = chunk => {
-      buffer = Buffer.concat([buffer, chunk])
+      this.#alive = true
+      chunks.push(chunk)
+      buffered += chunk.length
 
-      while (buffer.length >= 2) {
-        const frame = this.#parseFrame(buffer)
-        if (!frame) break
-
-        buffer = buffer.slice(frame.totalLength)
-        this.#handleFrame(frame)
+      while (this.#readyState !== READY_STATE.CLOSED && this.#readyState !== READY_STATE.CLOSING) {
+        if (!header) {
+          if (buffered < 2) return
+          const parsed = this.#parseHeader(peek(Math.min(buffered, 14)))
+          if (!parsed) return
+          header = parsed
+        }
+        if (buffered < header.length) return
+        const frame = take(header.length)
+        const current = header
+        header = null
+        this.#handleFrame(this.#decodeFrame(current, frame))
       }
     }
 
@@ -145,9 +224,14 @@ class WebSocketClient {
     })
   }
 
-  #parseFrame(buffer) {
-    if (buffer.length < 2) return null
-
+  /**
+   * Reads a frame header. Returns null when more bytes are needed and when the frame is
+   * rejected (the connection is then closing).
+   * Why: RSV bits without a negotiated extension, unknown opcodes, and fragmented or
+   * oversized control frames are protocol errors (RFC 6455 §5.2, §5.5) and must not be
+   * interpreted as data.
+   */
+  #parseHeader(buffer) {
     const firstByte = buffer[0]
     const secondByte = buffer[1]
 
@@ -159,10 +243,22 @@ class WebSocketClient {
       this.close(1002, 'Protocol error: client-to-server frames must be masked.')
       return null
     }
+    if ((firstByte & 0x70) !== 0) {
+      this.close(1002, 'Protocol error: reserved bits set')
+      return null
+    }
+    if (!Object.values(OPCODE).includes(opcode)) {
+      this.close(1002, 'Protocol error: unknown opcode')
+      return null
+    }
 
     let payloadLength = secondByte & 0x7f
-
     let offset = 2
+
+    if (opcode >= OPCODE.CLOSE && (!fin || payloadLength > 125)) {
+      this.close(1002, 'Protocol error: invalid control frame')
+      return null
+    }
 
     if (payloadLength === 126) {
       if (buffer.length < 4) return null
@@ -184,30 +280,15 @@ class WebSocketClient {
       return null
     }
 
-    let maskKey = null
-    if (masked) {
-      if (buffer.length < offset + 4) return null
-      maskKey = buffer.slice(offset, offset + 4)
-      offset += 4
-    }
+    if (buffer.length < offset + 4) return null
+    return {fin, opcode, maskOffset: offset, length: offset + 4 + payloadLength}
+  }
 
-    if (buffer.length < offset + payloadLength) return null
-
-    let payload = buffer.slice(offset, offset + payloadLength)
-
-    if (masked && maskKey) {
-      payload = Buffer.from(payload)
-      for (let i = 0; i < payload.length; i++) {
-        payload[i] ^= maskKey[i % 4]
-      }
-    }
-
-    return {
-      fin,
-      opcode,
-      payload,
-      totalLength: offset + payloadLength
-    }
+  #decodeFrame(header, frame) {
+    const maskKey = frame.subarray(header.maskOffset, header.maskOffset + 4)
+    const payload = Buffer.from(frame.subarray(header.maskOffset + 4))
+    for (let i = 0; i < payload.length; i++) payload[i] ^= maskKey[i % 4]
+    return {fin: header.fin, opcode: header.opcode, payload}
   }
 
   // Appends a continuation payload while enforcing a cap on the *total*
@@ -226,6 +307,12 @@ class WebSocketClient {
 
   #handleFrame(frame) {
     if (this.#rateLimitMax > 0) {
+      // Fixed window measured on arrival; a per-connection setInterval did the same reset.
+      const now = Date.now()
+      if (now - this.#windowStart >= this.#rateLimitWindow) {
+        this.#windowStart = now
+        this.#messageCount = 0
+      }
       this.#messageCount++
       if (this.#messageCount > this.#rateLimitMax) {
         this.close(1008, 'Rate limit exceeded')
@@ -236,18 +323,13 @@ class WebSocketClient {
     switch (frame.opcode) {
       case OPCODE.TEXT:
       case OPCODE.BINARY:
+        if (this.#fragments) {
+          // A new data frame may not start while a fragmented message is still open.
+          this.close(1002, 'Protocol error: expected continuation frame')
+          return
+        }
         if (frame.fin) {
-          if (this.#fragments) {
-            // Final fragment of a fragmented sequence
-            if (!this.#appendFragment(frame.payload)) return
-            const merged = Buffer.concat(this.#fragments.buffers)
-            const opcode = this.#fragments.opcode
-            this.#fragments = null
-            this.#handleMessage(opcode === OPCODE.TEXT ? merged.toString('utf8') : merged)
-          } else {
-            // Single, unfragmented message
-            this.#handleMessage(frame.opcode === OPCODE.TEXT ? frame.payload.toString('utf8') : frame.payload)
-          }
+          this.#deliver(frame.opcode, frame.payload)
         } else {
           // First fragment — start accumulating
           this.#fragments = {opcode: frame.opcode, buffers: [frame.payload], length: frame.payload.length}
@@ -260,10 +342,10 @@ class WebSocketClient {
         }
         if (!this.#appendFragment(frame.payload)) return
         if (frame.fin) {
-          const merged = Buffer.concat(this.#fragments.buffers)
+          const merged = Buffer.concat(this.#fragments.buffers, this.#fragments.length)
           const opcode = this.#fragments.opcode
           this.#fragments = null
-          this.#handleMessage(opcode === OPCODE.TEXT ? merged.toString('utf8') : merged)
+          this.#deliver(opcode, merged)
         }
         break
       case OPCODE.PING:
@@ -277,6 +359,19 @@ class WebSocketClient {
         this.close()
         break
     }
+  }
+
+  // Text must be valid UTF-8 (RFC 6455 §8.1); toString() silently replaced bad bytes.
+  #deliver(opcode, payload) {
+    if (opcode !== OPCODE.TEXT) return this.#handleMessage(payload)
+    let text
+    try {
+      text = utf8.decode(payload)
+    } catch {
+      this.close(1007, 'Invalid UTF-8 in text message')
+      return
+    }
+    this.#handleMessage(text)
   }
 
   /**
@@ -306,7 +401,6 @@ class WebSocketClient {
     if (this.#readyState === READY_STATE.CLOSED) return
     this.#readyState = READY_STATE.CLOSED
 
-    if (this.#rateLimitTimer) clearInterval(this.#rateLimitTimer)
     this.#fragments = null
 
     // Only detach our own frame parser. removeAllListeners() would also strip
@@ -354,6 +448,12 @@ class WebSocketClient {
     }
 
     this.#socket.write(Buffer.concat([header, payload]))
+    // write() buffers without limit when the peer reads slowly; a fan-out to such a client
+    // would hold every message in worker memory.
+    if (opcode !== OPCODE.CLOSE && this.#socket.writableLength > this.#maxBuffered) {
+      reportHandlerError('send', new Error(`client ${this.#id} too slow; ${this.#socket.writableLength} bytes queued`))
+      this.terminate()
+    }
   }
 
   /**
@@ -458,20 +558,72 @@ class WebSocketClient {
   }
 }
 
+/**
+ * Picks the one subprotocol the handshake answers with (RFC 6455 §4.2.2).
+ * Why: echoing the client's whole offer is accepted only when it offered a single value;
+ * a client asking for its own protocol plus the ODAC token was refused by the browser.
+ * Prefers a protocol the route lists in `options.protocols`, then the ODAC token.
+ */
+function selectProtocol(header, supported) {
+  if (!header) return null
+  const offered = header
+    .split(',')
+    .map(protocol => protocol.trim())
+    .filter(Boolean)
+  if (Array.isArray(supported)) {
+    const match = offered.find(protocol => supported.includes(protocol))
+    if (match) return match
+  }
+  return offered.find(protocol => protocol.startsWith('odac-token-')) ?? offered[0] ?? null
+}
+
+/**
+ * Whether a browser page from `origin` may open this socket.
+ * Why: browsers attach cookies to cross-site WebSocket handshakes, so a route that relies on
+ * the session (e.g. `token: false`) could be driven by any website. Requests without an Origin
+ * (non-browser clients) are not affected; `options.origins` lists extra origins or '*'.
+ */
+function originAllowed(origin, host, allowed) {
+  if (!origin) return true
+  if (allowed === '*') return true
+  if (Array.isArray(allowed) && allowed.includes(origin)) return true
+  try {
+    return new URL(origin).host === host
+  } catch {
+    return false
+  }
+}
+
 class WebSocketServer {
   #clients = new Map()
   #rooms = new Map()
   #routes = new Map()
   #bridgeReady = false
+  #heartbeatTimer = null
 
-  route(path, handler, options = {}) {
-    this.#routes.set(path, {handler, options})
+  /**
+   * Registers a WebSocket route.
+   * @param {string} path
+   * @param {function} handler
+   * @param {object} [options]
+   * @param {string|null} [site] Route file (subdomain) the route belongs to, like HTTP routes;
+   *   null serves every host.
+   */
+  route(path, handler, options = {}, site = null) {
+    this.#routes.set(site === null ? path : `${site}\u0000${path}`, {handler, options, path, site})
   }
 
-  getRoute(path) {
-    if (this.#routes.has(path)) return this.#routes.get(path)
+  getRoute(path, site = null) {
+    return (site !== null && this.#match(path, site)) || this.#match(path, null)
+  }
 
-    for (const [pattern, config] of this.#routes) {
+  #match(path, site) {
+    const exact = this.#routes.get(site === null ? path : `${site}\u0000${path}`)
+    if (exact) return exact
+
+    for (const config of this.#routes.values()) {
+      if (config.site !== site) continue
+      const pattern = config.path
       if (!pattern.includes('{')) continue
       const regex = new RegExp('^' + pattern.replace(/\{[^}]+\}/g, '([^/]+)') + '$')
       const match = path.match(regex)
@@ -493,7 +645,7 @@ class WebSocketServer {
 
   handleUpgrade(req, socket, head, Odac) {
     const path = req.url.split('?')[0]
-    const routeInfo = this.getRoute(path)
+    const routeInfo = this.getRoute(path, Odac?.Request?.route ?? null)
 
     if (!routeInfo) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n')
@@ -502,6 +654,12 @@ class WebSocketServer {
     }
 
     const {handler, params = {}, options = {}} = routeInfo
+
+    if (!originAllowed(req.headers.origin, req.headers.host, options.origins)) {
+      socket.write('HTTP/1.1 403 Forbidden\r\n\r\n')
+      socket.destroy()
+      return
+    }
 
     const key = req.headers['sec-websocket-key']
     if (!key) {
@@ -522,9 +680,8 @@ class WebSocketServer {
       `Sec-WebSocket-Accept: ${acceptKey}`
     ]
 
-    if (req.headers['sec-websocket-protocol']) {
-      responseHeaders.push(`Sec-WebSocket-Protocol: ${req.headers['sec-websocket-protocol']}`)
-    }
+    const protocol = selectProtocol(req.headers['sec-websocket-protocol'], options.protocols)
+    if (protocol) responseHeaders.push(`Sec-WebSocket-Protocol: ${protocol}`)
 
     responseHeaders.push('', '')
 
@@ -535,6 +692,7 @@ class WebSocketServer {
     const clientId = nodeCrypto.randomUUID()
     const client = new WebSocketClient(socket, this, clientId, options)
     this.#clients.set(clientId, client)
+    this.#startHeartbeat()
     // A worker with local clients must listen for relays from its siblings, even
     // if it never itself broadcasts.
     this.#ensureBridge()
@@ -566,6 +724,24 @@ class WebSocketServer {
 
   removeClient(id) {
     this.#clients.delete(id)
+    if (this.#clients.size === 0) this.#stopHeartbeat()
+  }
+
+  // One timer per worker drives every client's heartbeat; it runs only while clients exist.
+  // `websocket.heartbeat` in odac.json sets the interval in ms; 0 disables it.
+  #startHeartbeat() {
+    if (this.#heartbeatTimer) return
+    const interval = global.Odac?.Config?.websocket?.heartbeat ?? DEFAULT_HEARTBEAT
+    if (!(interval > 0)) return
+    this.#heartbeatTimer = setInterval(() => {
+      for (const client of [...this.#clients.values()]) client.heartbeat()
+    }, interval)
+    this.#heartbeatTimer.unref?.()
+  }
+
+  #stopHeartbeat() {
+    clearInterval(this.#heartbeatTimer)
+    this.#heartbeatTimer = null
   }
 
   /**

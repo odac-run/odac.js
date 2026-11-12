@@ -1072,7 +1072,7 @@ class Route {
 
       if (token) {
         const wsToken = Odac.Request._wsHeaders ? Odac.Request._wsHeaders['sec-websocket-protocol'] : null
-        const tokens = wsToken ? wsToken.split(', ') : []
+        const tokens = wsToken ? wsToken.split(',').map(t => t.trim()) : []
         const odacToken = tokens.find(t => t.startsWith('odac-token-'))
 
         if (!odacToken) {
@@ -1125,7 +1125,11 @@ class Route {
       return res
     }
 
-    this.#wsServer.route(path, wrappedHandler, options)
+    // Scoped to the route file being loaded (its subdomain), like HTTP routes, so a socket
+    // defined for one site is not reachable through another host name.
+    const site = global.Odac?.Route?.buff ?? null
+    if (site !== null && !this.routes[site]) this.routes[site] = {}
+    this.#wsServer.route(path, wrappedHandler, options, site)
   }
 
   handleWebSocketUpgrade(req, socket, head, Odac) {

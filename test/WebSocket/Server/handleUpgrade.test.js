@@ -103,3 +103,55 @@ describe('WebSocketServer.handleUpgrade()', () => {
     expect(socket.destroy).toHaveBeenCalled()
   })
 })
+
+describe('WebSocketServer.handleUpgrade() handshake checks', () => {
+  let server
+
+  const upgrade = (headers = {}, route = 'www', url = '/chat') => {
+    const socket = createSocket()
+    const req = {url, headers: {'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==', host: 'example.com', ...headers}}
+    server.handleUpgrade(req, socket, Buffer.alloc(0), {Request: {route, data: {url: {}}}})
+    return socket
+  }
+  const response = socket => String(socket.write.mock.calls[0][0])
+
+  beforeEach(() => {
+    server = new WebSocketServer()
+  })
+
+  afterEach(() => server.closeAll())
+
+  it('answers with a single subprotocol when the client offers several', () => {
+    server.route('/chat', () => {})
+    const socket = upgrade({'sec-websocket-protocol': 'chat.v2, odac-token-abc'})
+    expect(response(socket)).toContain('Sec-WebSocket-Protocol: odac-token-abc\r\n')
+    expect(response(socket)).not.toContain('chat.v2')
+  })
+
+  it('prefers a protocol the route supports', () => {
+    server.route('/chat', () => {}, {protocols: ['chat.v2']})
+    const socket = upgrade({'sec-websocket-protocol': 'chat.v1,chat.v2,odac-token-abc'})
+    expect(response(socket)).toContain('Sec-WebSocket-Protocol: chat.v2\r\n')
+  })
+
+  it('refuses a cross-origin browser handshake', () => {
+    server.route('/chat', () => {})
+    const socket = upgrade({origin: 'https://evil.example'})
+    expect(response(socket)).toMatch(/^HTTP\/1\.1 403/)
+    expect(socket.destroy).toHaveBeenCalled()
+  })
+
+  it('accepts same-origin, origin-less and allowlisted handshakes', () => {
+    server.route('/chat', () => {})
+    server.route('/public', () => {}, {origins: ['https://partner.example']})
+    expect(response(upgrade({origin: 'https://example.com'}))).toMatch(/^HTTP\/1\.1 101/)
+    expect(response(upgrade({}))).toMatch(/^HTTP\/1\.1 101/)
+    expect(response(upgrade({origin: 'https://partner.example'}, 'www', '/public'))).toMatch(/^HTTP\/1\.1 101/)
+  })
+
+  it('keeps a site-scoped route off other hosts', () => {
+    server.route('/admin', () => {}, {}, 'api')
+    expect(response(upgrade({}, 'www', '/admin'))).toMatch(/^HTTP\/1\.1 404/)
+    expect(response(upgrade({}, 'api', '/admin'))).toMatch(/^HTTP\/1\.1 101/)
+  })
+})
