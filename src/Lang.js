@@ -4,6 +4,7 @@ const Catalog = require('./Lang/Catalog.js')
 const Files = require('./Lang/Files.js')
 const Ipc = require('./Ipc.js')
 const FrontendKeys = require('./Lang/Frontend.js')
+const Runtime = require('./Lang/Runtime.js')
 
 // How often a cached language file (and the list of language files) is checked on disk.
 const RECHECK_INTERVAL_MS = 2000
@@ -17,6 +18,8 @@ const WRITE_LOCK = 'odac:lang:write'
 const WRITE_LOCK_TTL = 10
 // Debug warnings for missing translations are logged once per entry, up to this many.
 const MAX_WARNED = 10000
+// Entries recorded as used at runtime per process; bounds memory when keys come from input.
+const MAX_SEEN = 50000
 
 // Browser translations per language: {entries, data, fallback, payload}, rebuilt only when
 // one of its inputs changes (see Lang#client).
@@ -47,6 +50,10 @@ class LanguageStore {
   #saveTimer = null
   #saving = Promise.resolve()
   #warned = new Set()
+  // Entries looked up while collecting: id -> day last recorded (see Lang/Runtime.js).
+  #seen = new Map()
+  // Entries whose day changed and is not written yet: id -> {key, context, seen}.
+  #seenPending = new Map()
 
   #dir() {
     return `${__dir}/storage/language/`
@@ -165,6 +172,23 @@ class LanguageStore {
     this.#schedule()
   }
 
+  /**
+   * Records that an entry was looked up, for the runtime record `odac lang:prune` consults.
+   * Why: keys built at runtime cannot be found in the source; this is how prune learns they
+   * are in use. An entry is written at most once a day, so lookups stay a Map check.
+   * @param {string} key
+   * @param {string} context
+   */
+  seen(key, context) {
+    const id = Catalog.entryId(key, context)
+    const day = Runtime.today()
+    const previous = this.#seen.get(id)
+    if (previous === day || (previous === undefined && this.#seen.size >= MAX_SEEN)) return
+    this.#seen.set(id, day)
+    this.#seenPending.set(id, {key, context, seen: day})
+    this.#schedule()
+  }
+
   #schedule() {
     if (this.#saveTimer) return
     this.#saveTimer = setTimeout(() => {
@@ -175,8 +199,7 @@ class LanguageStore {
   }
 
   async #save() {
-    const items = [...this.#pending.values()]
-    if (items.length === 0) return
+    if (this.#pending.size === 0 && this.#seenPending.size === 0) return
     let owner = null
     try {
       // Every language file is written, so the list of them must be known first.
@@ -190,7 +213,23 @@ class LanguageStore {
           return
         }
       }
-      for (const item of items) this.#pending.delete(Catalog.entryId(item.key, item.context))
+      // Taken after the lock: entries collected while waiting are written in this round.
+      const items = [...this.#pending.values()]
+      const seen = [...this.#seenPending.values()]
+      this.#pending.clear()
+      this.#seenPending.clear()
+      await Promise.all([this.#saveEntries(items), this.#saveSeen(seen)])
+    } catch (e) {
+      // Best-effort persistence of auto-collected keys; never crash a request.
+      warn('Could not save collected translation keys', {error: e?.message ?? String(e)})
+    } finally {
+      if (owner) await Ipc.unlock(WRITE_LOCK, owner).catch(() => {})
+    }
+  }
+
+  async #saveEntries(items) {
+    if (items.length === 0) return
+    try {
       const result = await Files.sync(this.#dir(), {
         languages: this.languages(this.#config),
         defaultLanguage: Catalog.defaultLanguage(this.#config),
@@ -198,10 +237,18 @@ class LanguageStore {
       })
       for (const code of result.invalid) warn('Language file is not valid JSON; collected keys were not added to it', {lang: code})
     } catch (e) {
-      // Best-effort persistence of auto-collected keys; never crash a request.
       warn('Could not save collected translation keys', {error: e?.message ?? String(e)})
-    } finally {
-      if (owner) await Ipc.unlock(WRITE_LOCK, owner).catch(() => {})
+    }
+  }
+
+  async #saveSeen(items) {
+    if (items.length === 0) return
+    try {
+      await Runtime.record(__dir, items)
+    } catch (e) {
+      // Forget them so the next lookup records them again.
+      for (const {key, context} of items) this.#seen.delete(Catalog.entryId(key, context))
+      warn('Could not save the runtime translation record', {error: e?.message ?? String(e)})
     }
   }
 
@@ -234,6 +281,8 @@ class LanguageStore {
     this.#entries.clear()
     this.#pending.clear()
     this.#warned.clear()
+    this.#seen.clear()
+    this.#seenPending.clear()
     this.#available = null
     this.#availableCheckedAt = 0
     this.#scanning = null
@@ -291,7 +340,8 @@ class Lang {
    * Translates a key, replacing `%s` (sequential) or `%s1`, `%s2` (numbered) placeholders.
    * Why: one lookup path for views, mails and validators. A key without a translation in the
    * active language falls back to the default language, then to the key itself. Untranslated
-   * keys are added to the language file when `lang.collect` is on (default: debug mode).
+   * keys are added to the language file when `lang.collect` is on (default: debug mode); every
+   * key looked up is then also recorded for `odac lang:prune` (see Lang/Runtime.js).
    * @returns {Promise<string>}
    */
   get(key, ...args) {
@@ -318,11 +368,13 @@ class Lang {
     if (typeof key !== 'string') return key
     const lang = await this.#resolved()
     const data = await store.load(lang)
+    const collect = this.#collect()
+    if (collect) store.seen(key, context)
 
     let str = Catalog.lookup(data, key, context)
     if (str === undefined) {
       const config = this.#odac.Config
-      if (this.#collect() && !Catalog.has(data, key, context)) store.collect(key, context, config)
+      if (collect && !Catalog.has(data, key, context)) store.collect(key, context, config)
       const fallback = Catalog.defaultLanguage(config)
       if (fallback !== lang) {
         str = Catalog.lookup(await store.load(fallback), key, context)

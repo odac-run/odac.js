@@ -53,7 +53,7 @@ A key used with contexts holds an object of context -> translation (`""` = no co
 ```
 
 ### 4. Browser Code
-`view/js/` code uses `Odac.__()` / `Odac.__x()`; only the keys it uses are sent to the browser. See `frontend/translations.md`.
+`view/js/` code uses `__()` / `__x()` (globals; `Odac.__()` / `Odac.__x()` also work); only the keys it uses are sent to the browser. See `frontend/translations.md`.
 
 ### 5. Managing Language Files (CLI)
 ```bash
@@ -61,10 +61,12 @@ npx odac lang:sync           # add keys used in code to every language file
 npx odac lang:check --strict # CI: fail on out-of-sync, unused or untranslated keys
 npx odac lang:prune --write  # remove keys no code uses (dry run without --write)
 ```
-Keys are read from views (compiled, so placeholders become `%s1`) and from `__()`, `__x()`, `Lang.get()`, `Lang.getx()` calls with string-literal arguments. A non-literal key (`Odac.__(`status.${s}`)`) is reported as dynamic; list such keys in `lang.keep` (`"status.*"` keeps a prefix) or they will be pruned.
+Keys are read from views (compiled, so placeholders become `%s1`) and from `__()`, `__x()`, `Lang.get()`, `Lang.getx()` calls with string-literal arguments. A non-literal key (`Odac.__(`status.${s}`)`) is reported as dynamic; list such keys in `lang.keep` (`"status.*"` keeps a prefix).
+
+While key collection is on (debug mode), every entry looked up is recorded with its last-used day in `storage/.cache/lang-runtime.json` (git-ignored, per developer). `lang:prune` keeps unused entries found there and lists them apart; `--include-runtime` removes them too. `lang:check` still fails on them (CI has no record), pointing to `lang.keep`. The record only covers code paths that ran, so `lang.keep` remains the durable fix.
 
 ## Best Practices
--   **Literal Keys**: Pass string literals to `__()` / `__x()` so `lang:check` and `lang:prune` can see them. For computed keys, add a `lang.keep` pattern.
+-   **Literal Keys**: Pass string literals to `__()` / `__x()` so `lang:check` and `lang:prune` can see them. For computed keys, add a `lang.keep` pattern; do not rely on the runtime record.
 -   **Removing Keys**: Remove keys with `odac lang:prune --write`, not by hand; a key deleted from one file is restored from the others on the next sync.
 -   **Descriptive Keys**: Use meaningful keys like `nav.home` or `form.error.required`.
 -   **Html Safety**: By default, translations are escaped. Use the `raw` attribute (`<odac translate raw>`) only for trusted HTML.

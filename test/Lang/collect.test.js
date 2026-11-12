@@ -3,6 +3,7 @@ const os = require('node:os')
 const path = require('node:path')
 const Ipc = require('../../src/Ipc')
 const Lang = require('../../src/Lang')
+const Runtime = require('../../src/Lang/Runtime')
 
 // Collected keys are written to every language file at once, in a fixed order, through a
 // cluster-wide lock, so files never drift apart.
@@ -150,5 +151,64 @@ describe('Lang key collection', () => {
 
     mockOdac.Config.debug = false
     expect(await lang.get('Hello', 'Emre')).toBe('Hello Emre')
+  })
+
+  describe('runtime record', () => {
+    const readRecord = () => JSON.parse(fs.readFileSync(Runtime.file(tmpDir), 'utf8'))
+
+    it('records every entry looked up, translated or not, with the day', async () => {
+      writeLang('en', {'status.ok': 'OK'})
+      await Lang.store.init()
+      const lang = new Lang(mockOdac)
+      await lang.get('status.ok')
+      await lang.getx('Gül', 'verb')
+      await lang.get('status.ok')
+      await Lang.store.flush()
+      const today = Runtime.today()
+      expect(readRecord()).toEqual({Gül: {verb: today}, 'status.ok': today})
+    })
+
+    it('records nothing when key collection is off', async () => {
+      writeLang('en', {Hello: 'Hello'})
+      mockOdac.Config.debug = false
+      await Lang.store.init()
+      await new Lang(mockOdac).get('Hello')
+      await Lang.store.flush()
+      expect(fs.existsSync(Runtime.file(tmpDir))).toBe(false)
+
+      mockOdac.Config.lang.collect = true
+      await new Lang(mockOdac).get('Hello')
+      await Lang.store.flush()
+      expect(readRecord()).toEqual({Hello: Runtime.today()})
+    })
+
+    it('writes an entry once a day and adds to what other workers recorded', async () => {
+      writeLang('en', {})
+      await Runtime.record(tmpDir, [{key: 'Other', context: '', seen: '2026-01-01'}])
+      await Lang.store.init()
+      const lang = new Lang(mockOdac)
+      await lang.get('a')
+      await Lang.store.flush()
+      expect(readRecord()).toEqual({Other: '2026-01-01', a: Runtime.today()})
+
+      const record = jest.spyOn(Runtime, 'record')
+      await lang.get('a')
+      await Lang.store.flush()
+      expect(record).not.toHaveBeenCalled()
+    })
+
+    it('retries an entry whose record could not be written', async () => {
+      writeLang('en', {a: 'a'})
+      await Lang.store.init()
+      const record = jest.spyOn(Runtime, 'record').mockRejectedValueOnce(new Error('disk full'))
+      const lang = new Lang(mockOdac)
+      await lang.get('a')
+      await Lang.store.flush()
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('disk full'))
+      await lang.get('a')
+      await Lang.store.flush()
+      expect(record).toHaveBeenCalledTimes(2)
+      expect(readRecord()).toEqual({a: Runtime.today()})
+    })
   })
 })

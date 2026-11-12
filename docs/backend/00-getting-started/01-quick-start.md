@@ -68,7 +68,7 @@ Follow the interactive prompt to sync the documentation and patterns directly in
 | `npx odac skills` | Sync/Update AI Agent knowledge files. |
 | `npx odac lang:sync` | Add every translation key used in code to every language file. |
 | `npx odac lang:check` | Report missing, unused and untranslated translation keys (`--strict` for CI). |
-| `npx odac lang:prune` | List unused translation keys; `--write` removes them. |
+| `npx odac lang:prune` | List unused translation keys; `--write` removes them (keys the app used at runtime only with `--include-runtime`). |
 
 ---
 

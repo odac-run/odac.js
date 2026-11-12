@@ -815,7 +815,7 @@ async function run() {
     console.log('  npx odac migrate:snapshot (Reverse-engineer DB to schema/)')
     console.log('  npx odac lang:sync       (Add the keys used in code to every language file)')
     console.log('  npx odac lang:check      (Report missing, unused and untranslated keys; --strict for CI)')
-    console.log('  npx odac lang:prune      (List unused keys; --write removes them)')
+    console.log('  npx odac lang:prune      (List unused keys; --write removes them, --include-runtime also those used only at runtime)')
   }
 
   rl.close()

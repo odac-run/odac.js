@@ -457,6 +457,7 @@ npx odac lang:check          # report what is out of sync; exit code 1 if anythi
 npx odac lang:check --strict # also fail on missing translations (for CI)
 npx odac lang:prune          # list keys no code uses (dry run)
 npx odac lang:prune --write  # remove them from every language file
+npx odac lang:prune --write --include-runtime  # also remove keys only seen at runtime (see below)
 ```
 
 The scan covers views and skeletons (`.html`, compiled the same way as at runtime, so `<odac translate>Hello <odac var="name" /></odac>` is found as `Hello %s1`) and JavaScript/TypeScript files (`Odac.__()`, `Odac.__x()`, `Odac.Lang.get()`, `Odac.Lang.getx()`). `node_modules/`, `storage/`, `public/`, dot directories and `*.min.*` files are skipped. Keys ODAC itself translates are always kept.
@@ -481,11 +482,21 @@ Odac.__(`status.${order.status}`)   // reported as a dynamic call
 }
 ```
 
+As a safety net, ODAC also remembers which keys the app actually looked up while it ran in development (whenever key collection is on), with the day each was last used, in `storage/.cache/lang-runtime.json`. That file is git-ignored and specific to your machine. `lang:prune` does not remove a key found there, even with `--write`; it lists it separately:
+
+```
+1 key(s) not found in code but used while the app ran (kept):
+    "status.shipped"  (last used 2026-11-10)
+    Add them to "lang.keep", or pass --include-runtime to remove them too.
+```
+
+`npx odac lang:prune --write --include-runtime` removes those keys as well. `lang:check` still reports them as a failure, because CI has no such record. The record only knows the code paths you ran, so add these keys to `lang.keep`; that is what protects them everywhere.
+
 Prefer literal keys where you can (e.g. a map from status to `Odac.__('Shipped')`), so the scan sees them.
 
 ### Translations in Browser Code
 
-`Odac.__()` and `Odac.__x()` also work in `view/js/`; only the keys that code uses are sent to the browser. See the frontend guide, *Translations in the Browser*.
+`__()` and `__x()` also work in `view/js/` (as globals, or as `Odac.__()` and `Odac.__x()`); only the keys that code uses are sent to the browser. See the frontend guide, *Translations in the Browser*.
 
 ### Best Practices
 

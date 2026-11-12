@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const CliLang = require('../../../src/Cli/Lang')
+const Runtime = require('../../../src/Lang/Runtime')
 
 describe('odac lang:* commands', () => {
   let root
@@ -126,6 +127,62 @@ describe('odac lang:* commands', () => {
       write('storage/language/tr.json', {})
       expect(await run('lang:prune')).toBe(0)
       expect(text()).toContain('No unused keys')
+    })
+  })
+
+  describe('keys the app used at runtime', () => {
+    // "Old" is in no source file, but the app looked it up (e.g. a key built at runtime).
+    beforeEach(async () => {
+      await Runtime.record(root, [{key: 'Old', context: '', seen: '2026-11-10'}])
+      write('storage/language/tr.json', {Hello: 'Merhaba', Old: 'Eski', Gone: 'Gitti'})
+    })
+
+    it('are kept by prune --write and listed apart', async () => {
+      expect(await run('lang:prune', '--write')).toBe(0)
+      expect(readLang('tr').Old).toBe('Eski')
+      expect(readLang('tr').Gone).toBeUndefined()
+      expect(text()).toMatch(/1 unused key\(s\):\n {4}"Gone"/)
+      expect(text()).toContain('used while the app ran (kept)')
+      expect(text()).toContain('"Old"  (last used 2026-11-10)')
+      expect(text()).toContain('--include-runtime')
+    })
+
+    it('are removed, along with their record, only with --include-runtime', async () => {
+      expect(await run('lang:prune', '--include-runtime')).toBe(0)
+      expect(readLang('tr').Old).toBe('Eski')
+      expect(text()).toContain('lang:prune --write --include-runtime')
+
+      expect(await run('lang:prune', '--write', '--include-runtime')).toBe(0)
+      expect(readLang('en').Old).toBeUndefined()
+      expect(readLang('tr').Old).toBeUndefined()
+      expect((await Runtime.read(root)).size).toBe(0)
+    })
+
+    it('leave nothing to remove when they are the only unused keys', async () => {
+      write('storage/language/tr.json', {Hello: 'Merhaba'})
+      write('storage/language/en.json', {Hello: 'Hello', Old: 'Old'})
+      expect(await run('lang:prune', '--write')).toBe(0)
+      expect(text()).toContain('Nothing to remove')
+      expect(readLang('en').Old).toBe('Old')
+    })
+
+    it('still fail lang:check, pointing to lang.keep', async () => {
+      await run('lang:sync')
+      await run('lang:prune', '--write')
+      output = []
+      expect(await run('lang:check')).toBe(1)
+      expect(text()).not.toContain('not used in code')
+      expect(text()).toMatch(/1 key\(s\) are not found in code but were used while the app ran[\s\S]*lang\.keep[\s\S]*"Old"/)
+
+      write('odac.json', {lang: {default: 'en', keep: ['status.*', 'Old']}})
+      output = []
+      expect(await run('lang:check')).toBe(0)
+    })
+
+    it('are mentioned by lang:sync', async () => {
+      await run('lang:sync')
+      expect(text()).toContain('1 unused key(s)')
+      expect(text()).toContain('1 key(s) are not found in code but were used while the app ran')
     })
   })
 

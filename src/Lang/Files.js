@@ -48,14 +48,12 @@ async function listLanguages(dir) {
 }
 
 /**
- * Writes a language file atomically: a reader or another worker never sees half a file.
- * @param {string} dir
- * @param {string} code
+ * Writes a file atomically: a reader or another worker never sees half a file.
+ * @param {string} target
  * @param {string} content
  * @returns {Promise<void>}
  */
-async function writeLanguage(dir, code, content) {
-  const target = path.join(dir, `${code}.json`)
+async function writeAtomic(target, content) {
   const tmp = `${target}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`
   try {
     await fsPromises.writeFile(tmp, content)
@@ -64,6 +62,17 @@ async function writeLanguage(dir, code, content) {
     await fsPromises.unlink(tmp).catch(() => {})
     throw e
   }
+}
+
+/**
+ * Writes a language file atomically.
+ * @param {string} dir
+ * @param {string} code
+ * @param {string} content
+ * @returns {Promise<void>}
+ */
+function writeLanguage(dir, code, content) {
+  return writeAtomic(path.join(dir, `${code}.json`), content)
 }
 
 /**
@@ -123,4 +132,4 @@ async function sync(dir, {languages, defaultLanguage, add = [], remove = []}) {
   return {written, invalid, added, removed}
 }
 
-module.exports = {listLanguages, readLanguage, sync, writeLanguage}
+module.exports = {listLanguages, readLanguage, sync, writeAtomic, writeLanguage}
