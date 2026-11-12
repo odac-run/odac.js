@@ -185,7 +185,9 @@ You can override the defaults in `odac.json`:
 4. The `<img>` tag in the HTML points to `/_odac/img/{name}-{dimension}-{hash}.{ext}` — an internal route that serves the cached file. The filename includes the original image name and dimension for easy debugging.
 5. All subsequent requests hit the cache directly, with `Cache-Control: immutable` headers for maximum browser caching.
 
-> **Cache Busting:** You don't need to rename files or add query strings. Simply replace the source image in `public/` and the next page render will produce a new URL with a different hash, forcing browsers and CDNs to fetch the updated version.
+> **Cache Busting:** You don't need to rename files or add query strings. Simply replace the source image in `public/` and the next page render will produce a new URL with a different hash, forcing browsers and CDNs to fetch the updated version. In development the change is seen on the next render; in production ODAC re-checks a source at most once a minute, so a replaced image shows up within 60 seconds without a restart.
+
+> **Cleanup:** When a new version of an image is processed, the variant it replaces is kept for 24 hours (pages cached by a proxy or browser may still point at it) and then removed from `storage/.cache/img/`. The bookkeeping lives in `storage/.cache/img/.index/`.
 
 ### Best Practices
 

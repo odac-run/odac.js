@@ -19,8 +19,23 @@ class Image {
   /** @type {Map<string, Promise>} In-flight processing promises to prevent duplicate work */
   static #inflight = new Map()
 
-  /** @type {Map<string, number>} Source file mtime cache — eliminates per-render stat() in production */
+  /** @type {Map<string, {mtime: number, at: number}>} Source mtimes — at most one stat() per source per MTIME_TTL in production */
   static #mtimeCache = new Map()
+
+  /** @type {number} How long production trusts a cached source mtime before re-checking it */
+  static MTIME_TTL = 60 * 1000
+
+  /**
+   * @type {number} How long a superseded variant stays on disk. Pages cached by a proxy or
+   * browser keep pointing at the old URL for a while; deleting it at once would 404 them.
+   */
+  static RETIRED_GRACE = 24 * 60 * 60 * 1000
+
+  /** @type {number} Minimum interval between sweeps of retired variants */
+  static #SWEEP_INTERVAL = 60 * 60 * 1000
+
+  /** @type {number} Last sweep time (0: never in this process) */
+  static #lastSweep = 0
 
   /** @type {number} Maximum entries in the in-memory cache to prevent unbounded growth */
   static #MAX_CACHE_SIZE = 1000
@@ -80,6 +95,24 @@ class Image {
    * @param {number} [mtime=0] - Source file modification time (ms) for cache busting
    * @returns {string} 8-character hex hash
    */
+  /**
+   * Hash of a variant without the source version: every rendition of the same source and
+   * options shares it, which is how a new version finds the one it replaces.
+   * @param {string} src
+   * @param {object} options
+   * @returns {string}
+   */
+  static #identity(src, options) {
+    const payload = JSON.stringify({
+      src,
+      w: options.width || null,
+      h: options.height || null,
+      f: options.format || null,
+      q: options.quality || null
+    })
+    return nodeCrypto.createHash('md5').update(payload).digest('hex')
+  }
+
   static hash(src, options = {}, mtime = 0) {
     const payload = JSON.stringify({
       src,
@@ -174,7 +207,7 @@ class Image {
     if (this.#inflight.has(cacheKey)) return this.#inflight.get(cacheKey)
 
     const format = this.#resolveFormat(src, options.format)
-    const promise = this.#processInternal(src, cacheKey, format, options, mtime > 0)
+    const promise = this.#processInternal(src, cacheKey, format, options, mtime)
     this.#inflight.set(cacheKey, promise)
 
     try {
@@ -194,7 +227,8 @@ class Image {
    * @param {boolean} sourceVerified - When true, skips the redundant access check (caller already stat'd the file)
    * @returns {Promise<{path: string, type: string}|null>}
    */
-  static async #processInternal(src, cacheKey, format, options, sourceVerified = false) {
+  static async #processInternal(src, cacheKey, format, options, mtime = 0) {
+    const sourceVerified = mtime > 0
     const cachePath = path.join(this.#cacheDir(), cacheKey)
 
     // Disk cache hit — populate in-memory index without reprocessing
@@ -202,6 +236,8 @@ class Image {
       await fsPromises.access(cachePath)
       const result = {path: cachePath, type: `image/${format}`, cacheKey}
       this.#setCacheEntry(cacheKey, result)
+      // Indexes variants written before the index existed, so their successor retires them.
+      if (mtime > 0) await this.#recordVariant(this.#identity(src, options), cacheKey, mtime)
       return result
     } catch {
       // Cache miss — proceed to process
@@ -252,13 +288,137 @@ class Image {
       pipeline = pipeline.toFormat(format, {quality})
 
       await fsPromises.mkdir(this.#cacheDir(), {recursive: true})
-      await pipeline.toFile(cachePath)
+      // Written under a temporary name and renamed, so another worker's access() check never
+      // finds (and serves) a half-written file.
+      const tmpPath = `${cachePath}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
+      try {
+        await pipeline.toFile(tmpPath)
+        await fsPromises.rename(tmpPath, cachePath)
+      } catch (e) {
+        await fsPromises.rm(tmpPath, {force: true})
+        throw e
+      }
 
       const result = {path: cachePath, type: `image/${format}`, cacheKey}
       this.#setCacheEntry(cacheKey, result)
+      await this.#recordVariant(this.#identity(src, options), cacheKey, mtime)
+      this.#sweepRetired()
       return result
     } catch (e) {
       console.error(`[ODAC Image] Processing failed for "${src}":`, e.message)
+      return null
+    }
+  }
+
+  static #indexDir() {
+    return path.join(this.#cacheDir(), '.index')
+  }
+
+  /**
+   * Records `cacheKey` as the current variant of `identity` and retires the variant it
+   * replaces. Why: every source change produced a new file and nothing ever removed the old
+   * ones, so the cache directory only grew. A variant is replaced only by a newer source
+   * version, so a worker still rendering an older mtime never retires the current file.
+   * Index failures are logged and never fail the image.
+   */
+  static async #recordVariant(identity, cacheKey, mtime) {
+    const indexPath = path.join(this.#indexDir(), `${identity}.json`)
+    try {
+      let entry = {file: null, mtime: 0, retired: []}
+      try {
+        entry = {...entry, ...JSON.parse(await fsPromises.readFile(indexPath, 'utf8'))}
+      } catch {
+        // No variant recorded yet
+      }
+      if (entry.file === cacheKey) return
+      if (entry.file && mtime < entry.mtime) return
+      const retired = (Array.isArray(entry.retired) ? entry.retired : []).filter(r => r.file !== cacheKey)
+      if (entry.file) retired.push({file: entry.file, at: Date.now()})
+      await fsPromises.mkdir(this.#indexDir(), {recursive: true})
+      const tmpPath = `${indexPath}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
+      await fsPromises.writeFile(tmpPath, JSON.stringify({file: cacheKey, mtime, retired}))
+      await fsPromises.rename(tmpPath, indexPath)
+    } catch (e) {
+      console.error('[ODAC Image] Failed to update the variant index:', e.message)
+    }
+  }
+
+  /**
+   * Deletes retired variants older than RETIRED_GRACE. Runs in the background after a new
+   * variant is written, at most once per #SWEEP_INTERVAL per process.
+   * @returns {Promise<void>|undefined} The running sweep, for tests.
+   */
+  static #sweepRetired() {
+    const now = Date.now()
+    if (now - this.#lastSweep < this.#SWEEP_INTERVAL) return
+    this.#lastSweep = now
+    return this.sweepRetired(now).catch(e => console.error('[ODAC Image] Cache sweep failed:', e.message))
+  }
+
+  /**
+   * Removes superseded variants whose grace period has passed.
+   * @param {number} [now=Date.now()]
+   * @returns {Promise<number>} Number of files deleted.
+   */
+  static async sweepRetired(now = Date.now()) {
+    let names
+    try {
+      names = await fsPromises.readdir(this.#indexDir())
+    } catch {
+      return 0
+    }
+    let deleted = 0
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue
+      const indexPath = path.join(this.#indexDir(), name)
+      let entry
+      try {
+        entry = JSON.parse(await fsPromises.readFile(indexPath, 'utf8'))
+      } catch {
+        continue
+      }
+      if (!Array.isArray(entry.retired) || entry.retired.length === 0) continue
+      const keep = []
+      for (const retired of entry.retired) {
+        // Only plain cache filenames; never follow a path out of the cache directory.
+        if (typeof retired?.file !== 'string' || retired.file !== path.basename(retired.file)) continue
+        if (retired.file === entry.file) continue
+        if (now - retired.at < this.RETIRED_GRACE) {
+          keep.push(retired)
+          continue
+        }
+        await fsPromises.rm(path.join(this.#cacheDir(), retired.file), {force: true})
+        deleted++
+      }
+      if (keep.length === entry.retired.length) continue
+      const tmpPath = `${indexPath}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
+      await fsPromises.writeFile(tmpPath, JSON.stringify({...entry, retired: keep}))
+      await fsPromises.rename(tmpPath, indexPath)
+    }
+    return deleted
+  }
+
+  /**
+   * Returns the source file's mtime, or null when it does not exist.
+   * Why: production avoids a stat() per render but re-checks every MTIME_TTL, so a replaced
+   * image is picked up without a restart (static files are never cached at all). The cache is
+   * bounded like the variant index, since url() may be called with arbitrary sources.
+   */
+  static async #sourceMtime(src, sourcePath) {
+    const isDebug = global.Odac?.Config?.debug !== false
+    const now = Date.now()
+    const cached = this.#mtimeCache.get(src)
+    if (!isDebug && cached && now - cached.at < this.MTIME_TTL) return cached.mtime
+    try {
+      const {mtimeMs} = await fsPromises.stat(sourcePath)
+      if (!isDebug) {
+        this.#mtimeCache.delete(src)
+        if (this.#mtimeCache.size >= this.#MAX_CACHE_SIZE) this.#mtimeCache.delete(this.#mtimeCache.keys().next().value)
+        this.#mtimeCache.set(src, {mtime: mtimeMs, at: now})
+      }
+      return mtimeMs
+    } catch {
+      this.#mtimeCache.delete(src)
       return null
     }
   }
@@ -342,24 +502,9 @@ class Image {
       quality
     }
 
-    // Production mtime cache: eliminates a stat() syscall per render when the
-    // source file hasn't changed. Development always stats for hot-reload.
-    const isDebug = global.Odac?.Config?.debug !== false
     const baseDir = global.__dir || process.cwd()
-    const sourcePath = path.join(baseDir, 'public', src)
-    let mtime = 0
-
-    if (!isDebug && this.#mtimeCache.has(src)) {
-      mtime = this.#mtimeCache.get(src)
-    } else {
-      try {
-        const stat = await fsPromises.stat(sourcePath)
-        mtime = stat.mtimeMs
-        if (!isDebug) this.#mtimeCache.set(src, mtime)
-      } catch {
-        // Source not found — process() will handle the error
-      }
-    }
+    // Source not found → 0; process() handles the error.
+    const mtime = (await this.#sourceMtime(src, path.join(baseDir, 'public', src))) ?? 0
 
     // Trigger processing — returns immediately on cache hit
     const result = await this.process(src, options, mtime)
@@ -393,22 +538,9 @@ class Image {
     const quality = options.quality || global.Odac?.Config?.image?.quality || null
     const opts = {width: options.width || null, height: options.height || null, format, quality}
 
-    const isDebug = global.Odac?.Config?.debug !== false
     const baseDir = global.__dir || process.cwd()
-    const sourcePath = path.join(baseDir, 'public', src)
-    let mtime = 0
-
-    if (!isDebug && this.#mtimeCache.has(src)) {
-      mtime = this.#mtimeCache.get(src)
-    } else {
-      try {
-        const stat = await fsPromises.stat(sourcePath)
-        mtime = stat.mtimeMs
-        if (!isDebug) this.#mtimeCache.set(src, mtime)
-      } catch {
-        return src
-      }
-    }
+    const mtime = await this.#sourceMtime(src, path.join(baseDir, 'public', src))
+    if (mtime === null) return src
 
     const result = await this.process(src, opts, mtime)
     if (!result) return src
