@@ -1421,6 +1421,18 @@ if (typeof window !== 'undefined') {
   }
 
   window.Odac = new _odac()
+  // __() and __x() as globals, the way views write them. A global another script already
+  // defined is left alone; Odac.__() and Odac.__x() always work.
+  for (const name of ['__', '__x']) {
+    const current = window[name]
+    if (current !== undefined && !current.odac) {
+      console.warn(`Odac: window.${name} is already defined; use Odac.${name}() instead.`)
+      continue
+    }
+    const alias = (...args) => window.Odac[name](...args)
+    alias.odac = true
+    window[name] = alias
+  }
   ;(function initAutoNavigate() {
     const init = () => {
       const navigateElements = document.querySelectorAll('[data-odac-navigate]')

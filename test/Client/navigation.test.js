@@ -151,6 +151,35 @@ describe('odac.js navigation and tokens', () => {
       expect(window.Odac.__('Gül')).toBe('Gül')
     })
 
+    it('provides __() and __x() as globals', () => {
+      serve({lang: 'tr', t: {Hello: 'Merhaba %s', Gül: {verb: 'Gülümse'}}})
+      expect(window.__('Hello', 'Emre')).toBe('Merhaba Emre')
+      expect(window.__x('Gül', 'verb')).toBe('Gülümse')
+    })
+
+    it('keeps a __ another script defined and warns', () => {
+      jest.resetModules()
+      const other = jest.fn()
+      window.__ = other
+      delete window.__x
+      jest.spyOn(console, 'warn').mockImplementation(() => {})
+      require('../../client/odac.js')
+      expect(window.__).toBe(other)
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('window.__ is already defined'))
+      expect(window.__x('Plain')).toBe('Plain')
+      console.warn.mockRestore()
+    })
+
+    it('replaces its own globals when loaded again, without warning', () => {
+      jest.resetModules()
+      jest.spyOn(console, 'warn').mockImplementation(() => {})
+      require('../../client/odac.js')
+      expect(console.warn).not.toHaveBeenCalled()
+      serve({lang: 'tr', t: {Hello: 'Merhaba'}})
+      expect(window.__('Hello')).toBe('Merhaba')
+      console.warn.mockRestore()
+    })
+
     it('returns the key for anything it has no translation for', () => {
       serve({lang: 'tr', t: {Gül: {verb: 'Gülümse'}, Plain: 'Düz'}})
       expect(window.Odac.__('Missing %s', 'x')).toBe('Missing x')

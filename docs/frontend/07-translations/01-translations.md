@@ -1,22 +1,24 @@
 ## 🌍 Translations in the Browser
 
-Browser code in `view/js/` can use the same language files as your views with `Odac.__()` and `Odac.__x()`:
+Browser code in `view/js/` can use the same language files as your views with `__()` and `__x()`:
 
 ```javascript
 // view/js/app.js
 Odac.action({
   load() {
     const button = document.querySelector('#save')
-    button.textContent = Odac.__('Save')
+    button.textContent = __('Save')
 
     const status = document.querySelector('#status')
-    status.textContent = Odac.__('%s1 items selected', selected.length)
+    status.textContent = __('%s1 items selected', selected.length)
 
     // Same text, different meaning: see "Context" in the backend translation guide
-    document.querySelector('#smile').textContent = Odac.__x('Gül', 'verb')
+    document.querySelector('#smile').textContent = __x('Gül', 'verb')
   }
 })
 ```
+
+`__()` and `__x()` are globals, written the same way as in views. They are shorthands for `Odac.__()` and `Odac.__x()`, which always work: if another script on the page has already defined a global `__` (some i18n libraries do), ODAC leaves it alone, logs a console warning, and you use `Odac.__()` instead.
 
 Placeholders work as on the server: `%s` is replaced in order, `%s1`, `%s2` by position. `Odac.lang()` returns the language the page is served in (e.g. `'tr'`), useful for `Intl.DateTimeFormat` and similar APIs.
 
@@ -34,14 +36,14 @@ ODAC reads the translation keys your `view/js/` code uses straight from its sour
 The keys are found by reading the source, so pass string literals:
 
 ```javascript
-Odac.__('Order shipped')            // ✅ found
-Odac.__(`status.${order.status}`)   // ❌ cannot be found, returned untranslated
+__('Order shipped')            // ✅ found
+__(`status.${order.status}`)   // ❌ cannot be found, returned untranslated
 ```
 
 For a key built at runtime, map values to literal keys instead:
 
 ```javascript
-const labels = {shipped: Odac.__('Shipped'), pending: Odac.__('Pending')}
+const labels = {shipped: __('Shipped'), pending: __('Pending')}
 element.textContent = labels[order.status]
 ```
 
@@ -49,9 +51,9 @@ element.textContent = labels[order.status]
 
 ### Security
 
-`Odac.__()` returns plain text. Insert it with `textContent` (or as an attribute value), **not** with `innerHTML`: placeholder values often come from user input, and a translation inserted as HTML would execute any markup they contain.
+`__()` returns plain text. Insert it with `textContent` (or as an attribute value), **not** with `innerHTML`: placeholder values often come from user input, and a translation inserted as HTML would execute any markup they contain.
 
 ```javascript
-element.textContent = Odac.__('Hello %s1', user.name)   // ✅
-element.innerHTML = Odac.__('Hello %s1', user.name)     // ❌ XSS if the name contains HTML
+element.textContent = __('Hello %s1', user.name)   // ✅
+element.innerHTML = __('Hello %s1', user.name)     // ❌ XSS if the name contains HTML
 ```
