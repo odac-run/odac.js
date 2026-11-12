@@ -263,11 +263,11 @@ describe('Auth hooks (hook/auth.js)', () => {
   })
 
   describe('magic link', () => {
-    const addLink = (email, raw = 'raw_token') =>
+    const addLink = (email, raw = 'raw_token', expiresIn = 60000) =>
       magic.push({
         email,
         token_hash: '$sha256$' + nodeCrypto.createHash('sha256').update(raw).digest('hex'),
-        expires_at: new Date(Date.now() + 60000)
+        expires_at: new Date(Date.now() + expiresIn)
       })
 
     it('reports an existing user signing in as "magic"', async () => {
@@ -293,12 +293,14 @@ describe('Auth hooks (hook/auth.js)', () => {
       addLink('a@example.com')
       await expect(new Auth(makeRequest()).verifyMagicLink('raw_token', 'a@example.com')).resolves.toEqual({
         success: false,
+        code: 'denied',
         error: 'Login failed'
       })
 
       addLink('new@example.com')
       await expect(new Auth(makeRequest()).verifyMagicLink('raw_token', 'new@example.com')).resolves.toEqual({
         success: false,
+        code: 'denied',
         error: 'Login failed'
       })
 
@@ -315,6 +317,12 @@ describe('Auth hooks (hook/auth.js)', () => {
         {identity: {email: 'a@example.com'}, method: 'magic', reason: 'invalid'},
         {identity: {email: 'b@example.com'}, method: 'magic', reason: 'invalid'}
       ])
+    })
+
+    it('reports an expired link as expired', async () => {
+      addLink('a@example.com', 'raw_token', -1000)
+      await new Auth(makeRequest()).verifyMagicLink('raw_token', 'a@example.com')
+      expect(event('loginFailed')[0].payload).toEqual({identity: {email: 'a@example.com'}, method: 'magic', reason: 'expired'})
     })
   })
 })

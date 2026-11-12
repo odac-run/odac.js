@@ -140,3 +140,112 @@ describe('Internal.magicVerify() prefetch protection', () => {
     expect(Odac._captured.redirect).toBe('/dashboard')
   })
 })
+
+// A link that does not sign the person in sends them back to the page it was requested from
+// (error_url), or to auth.magicLinkErrorRedirect, with the failure in the session for
+// Odac.Auth.magicError(). Without either, a standalone page explains it.
+describe('Internal.magicVerify() failures', () => {
+  function makeFailing({result = {success: false, code: 'expired'}, values = {}, config = {}, signedIn = null} = {}) {
+    const requestValues = {token: 'tok', email: 'a@b.c', ...values}
+    const captured = {redirect: null, body: null, status: null, session: {}}
+    return {
+      _captured: captured,
+      request: jest.fn(async key => requestValues[key]),
+      Config: {auth: config},
+      Auth: {
+        verifyMagicLink: jest.fn(async () => result),
+        check: jest.fn(async () => !!signedIn),
+        user: jest.fn(col => (signedIn ? signedIn[col] : false))
+      },
+      Request: {
+        header: jest.fn(name => HUMAN_HEADERS[name.toLowerCase()]),
+        redirect: jest.fn(url => (captured.redirect = url)),
+        end: jest.fn(body => (captured.body = body)),
+        status: jest.fn(code => (captured.status = code)),
+        session: jest.fn((key, value) => (captured.session[key] = value))
+      }
+    }
+  }
+
+  it('returns to the page in the link with the failure in the session', async () => {
+    const Odac = makeFailing({values: {error_url: '/login'}})
+    await Internal.magicVerify(Odac)
+
+    expect(Odac._captured.redirect).toBe('/login')
+    expect(Odac._captured.session._odac_magic_error).toEqual({code: 'expired', message: expect.stringContaining('expired')})
+  })
+
+  it('prefers the page in the link over auth.magicLinkErrorRedirect', async () => {
+    const Odac = makeFailing({values: {error_url: '/signin'}, config: {magicLinkErrorRedirect: '/auth/link-error'}})
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/signin')
+  })
+
+  it('falls back to auth.magicLinkErrorRedirect', async () => {
+    const Odac = makeFailing({config: {magicLinkErrorRedirect: '/auth/link-error'}})
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/auth/link-error')
+  })
+
+  it.each(['//evil.example', '/\\evil.example', 'https://evil.example/login'])('never leaves the site for error_url %p', async target => {
+    const Odac = makeFailing({values: {error_url: target}})
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/')
+  })
+
+  it('shows a standalone page when there is nowhere to return to', async () => {
+    const Odac = makeFailing({result: {success: false, code: 'invalid'}})
+    await Internal.magicVerify(Odac)
+
+    expect(Odac._captured.redirect).toBeNull()
+    expect(Odac._captured.status).toBe(400)
+    expect(Odac._captured.body).toMatch(/^<!doctype html>/)
+    expect(Odac._captured.body).toContain('already been used')
+    expect(Odac._captured.session).toEqual({})
+  })
+
+  it('treats a link without token or email as invalid without verifying it', async () => {
+    const Odac = makeFailing({values: {token: undefined, error_url: '/login'}})
+    await Internal.magicVerify(Odac)
+
+    expect(Odac.Auth.verifyMagicLink).not.toHaveBeenCalled()
+    expect(Odac._captured.session._odac_magic_error.code).toBe('invalid')
+    expect(Odac._captured.redirect).toBe('/login')
+  })
+
+  it.each([
+    ['denied', 'not allowed'],
+    ['failed', 'could not be completed'],
+    ['something-new', 'could not be completed']
+  ])('explains a %p failure', async (code, text) => {
+    const Odac = makeFailing({result: {success: false, code}, values: {error_url: '/login'}})
+    await Internal.magicVerify(Odac)
+
+    expect(Odac._captured.session._odac_magic_error.code).toBe(code === 'something-new' ? 'failed' : code)
+    expect(Odac._captured.session._odac_magic_error.message).toContain(text)
+  })
+
+  it('sends a person already signed in with that address to the success page on a second tap', async () => {
+    const Odac = makeFailing({
+      result: {success: false, code: 'invalid'},
+      values: {redirect_url: '/dashboard', error_url: '/login'},
+      signedIn: {email: 'a@b.c'}
+    })
+    await Internal.magicVerify(Odac)
+
+    expect(Odac._captured.redirect).toBe('/dashboard')
+    expect(Odac._captured.session).toEqual({})
+  })
+
+  it('still reports the failure to someone signed in with another address', async () => {
+    const Odac = makeFailing({values: {error_url: '/login'}, signedIn: {email: 'other@b.c'}})
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/login')
+  })
+
+  it('does not treat a refused sign-in as a second tap', async () => {
+    const Odac = makeFailing({result: {success: false, code: 'denied'}, values: {error_url: '/login'}, signedIn: {email: 'a@b.c'}})
+    await Internal.magicVerify(Odac)
+    expect(Odac._captured.redirect).toBe('/login')
+  })
+})

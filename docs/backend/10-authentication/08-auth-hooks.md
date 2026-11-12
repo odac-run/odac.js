@@ -54,7 +54,8 @@ Every handler gets the request's `Odac` instance first, the same one controllers
 
 | Value | Meaning |
 |-------|---------|
-| `invalid` | Wrong credentials, an unknown account, or an invalid or expired magic link |
+| `invalid` | Wrong credentials, an unknown account, or an invalid or already used magic link |
+| `expired` | A magic link whose token is correct but past its expiry |
 | `throttled` | The attempt was blocked by login throttling before the credentials were checked |
 | `denied` | `beforeLogin` refused the sign-in |
 
@@ -70,7 +71,7 @@ Every handler gets the request's `Odac` instance first, the same one controllers
 
 ### What the user sees when `beforeLogin` refuses
 
-`Odac.Auth.login()` returns `false`, as it does for wrong credentials, so the built-in login form shows "Invalid credentials". A refused magic link fails verification. A refused `register()` still creates the account and returns `{success: true, autoLogin: false}`. If you want to show a specific message (for example "Your account is suspended"), check for that state in your own login controller before calling `Odac.Auth.login()`.
+`Odac.Auth.login()` returns `false`, as it does for wrong credentials, so the built-in login form shows "Invalid credentials". A refused magic link returns the person to the form with the `denied` error (see Magic Links → When a link fails). A refused `register()` still creates the account and returns `{success: true, autoLogin: false}`. If you want to show a specific message (for example "Your account is suspended"), check for that state in your own login controller before calling `Odac.Auth.login()`.
 
 ### Only `auth.js`
 

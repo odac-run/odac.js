@@ -19,6 +19,7 @@ Use the `<odac:magic-login>` tag in your view. If you provide no inner content, 
 | Attribute | Description | Default |
 |-----------|-------------|---------|
 | `redirect` | URL to redirect to after successful login (Required) | `null` |
+| `error-redirect` | Page a link that fails to sign in returns to (see [When a link fails](#when-a-link-fails)) | The page the form is on |
 | `email-label` | Label text for the default email field | `"Email Address"` |
 | `submit-text` | Text for the submit button | `"Send Magic Link"` |
 
@@ -61,6 +62,7 @@ async sendLink(req, res) {
     // Returns { success: boolean, message: string, error?: string }
     const result = await Odac.Auth.magic(email, {
         redirect: '/dashboard',       // Redirect after verification
+        errorRedirect: '/login',      // Page a failed link returns to (optional)
         subject: 'Log in to MyApp',   // Email subject
         template: 'auth/magic-link'   // View path for the email template
     });
@@ -75,7 +77,42 @@ async sendLink(req, res) {
 
 ### Verification Logic
 
-Odac handles the verification route automatically at `/_odac/magic-verify`. However, if you are building a custom flow, you might interact with the underlying data model directly using `Odac.DB`.
+Odac handles the verification route automatically at `/_odac/magic-verify`. For a custom flow, `Odac.Auth.verifyMagicLink(token, email)` returns `{success: true, user}` or `{success: false, code, error}`, with `code` as listed below.
+
+## When a link fails
+
+A link can fail to sign the person in: it expired, it was already used, or your `beforeLogin` hook refused the account. Instead of an error screen, ODAC sends the person back to a page where they can act on it:
+
+1. **The page the form is on (default).** A link requested through `<odac:magic-login>` returns to the page that form was on, and the form shows the error above its fields, in the same element and style as its other errors. Nothing to configure.
+2. **A page of your own.** Set `error-redirect` on the form, `errorRedirect` in `Odac.Auth.magic()`, or `auth.magicLinkErrorRedirect` in `odac.json` for every link. The link's own page wins over the config value.
+3. **A standalone page.** When neither is known (a link sent from a controller without `errorRedirect`, and no `auth.magicLinkErrorRedirect`), ODAC answers with a simple page that explains the failure and links to `/`.
+
+Error pages must be same-site paths (`/login`); anything else redirects to `/`.
+
+On your own page, read the failure with `Odac.Auth.magicError()`. It returns `{code, message}` or `null`, and the failure is removed from the session once read, so reloading the page does not show it again. Within the same request it keeps returning the same value.
+
+```javascript
+// controller/page/link-error.js
+module.exports = async function (Odac) {
+  const error = Odac.Auth.magicError()
+  if (!error) return Odac.direct('/login')
+
+  Odac.set('expired', error.code === 'expired')
+  Odac.set('message', error.message)
+  Odac.View.set({skeleton: 'main', content: 'auth.link-error'})
+}
+```
+
+| `code` | Meaning | Default message |
+|--------|---------|-----------------|
+| `invalid` | Malformed link, already used, or never issued | This sign-in link is invalid or has already been used. Please request a new one. |
+| `expired` | The token is correct but past its 15 minutes | This sign-in link has expired. Please request a new one. |
+| `denied` | The `beforeLogin` hook refused the account (see Login Hooks) | Sign-in is not allowed for this account. |
+| `failed` | Registering or signing in could not complete | Sign-in could not be completed. Please try again. |
+
+Use `code` to show your own (or translated) text; `message` is the English default.
+
+A person who taps an old link again while already signed in with that address is not shown an error: they go to the link's success page as if it had worked.
 
 ## Configuration
 
@@ -86,6 +123,8 @@ Magic links usage is configured in your `odac.json` file under the `auth` object
   "url": "https://example.com",         // Public address used in the emailed link (recommended)
   "auth": {
     "magicLinkUrl": "https://example.com", // Optional: overrides "url" for magic links only
+    "magicLinkRedirect": "/dashboard",  // Success page when the link names none (Default: /)
+    "magicLinkErrorRedirect": "/login", // Page failed links return to when the link names none
     "table": "users",                   // Table where users are stored
     "magicTable": "magic_links",        // Table to store tokens (auto-created)
     "magicLinkRateLimit": 3600000,      // Rate limit window in ms (Default: 1 hour)

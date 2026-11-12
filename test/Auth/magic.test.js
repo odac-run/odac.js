@@ -86,6 +86,21 @@ describe('Auth.magic()', () => {
     expect(link.startsWith('https://app.example.com/_odac/magic-verify?')).toBe(true)
   })
 
+  it('carries the success and error pages in the link', async () => {
+    global.Odac.Config.url = 'https://www.example.com'
+    const {link} = await linkFor(makeRequest(), {redirect: '/dashboard', errorRedirect: '/login?tab=magic'})
+    const params = new URL(link).searchParams
+
+    expect(params.get('redirect_url')).toBe('/dashboard')
+    expect(params.get('error_url')).toBe('/login?tab=magic')
+  })
+
+  it('leaves the error page out of the link when none is given', async () => {
+    global.Odac.Config.url = 'https://www.example.com'
+    const {link} = await linkFor(makeRequest())
+    expect(new URL(link).searchParams.has('error_url')).toBe(false)
+  })
+
   it('refuses to build a link from the Host of a direct, untrusted connection', async () => {
     const {result} = await linkFor(makeRequest({fromTrustedProxy: false, host: 'evil.example'}))
 

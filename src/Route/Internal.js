@@ -23,6 +23,32 @@ function sameSitePath(target) {
   return url.pathname + url.search + url.hash
 }
 
+// What a person is told when their magic link does not sign them in, by verifyMagicLink() code.
+const MAGIC_LINK_ERRORS = {
+  invalid: 'This sign-in link is invalid or has already been used. Please request a new one.',
+  expired: 'This sign-in link has expired. Please request a new one.',
+  denied: 'Sign-in is not allowed for this account.',
+  failed: 'Sign-in could not be completed. Please try again.'
+}
+
+/**
+ * Standalone page for a failed magic link that has no page to return to.
+ * Why: links sent by custom controllers without `errorRedirect` (and no
+ * `auth.magicLinkErrorRedirect`) used to end on a bare text response.
+ */
+function magicLinkErrorPage(message) {
+  const text = String(message).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`)
+  return (
+    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>Sign-in link</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+    'font-family:system-ui,-apple-system,sans-serif;background:#f6f7f9;color:#1f2328}main{max-width:26rem;margin:1rem;padding:2rem;' +
+    'background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1.25rem;' +
+    'line-height:1.5;color:#59636e}a{color:#0969da}@media (prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}' +
+    'main{background:#161b22}p{color:#9198a1}a{color:#4493f8}}</style></head><body><main><h1>Sign-in link</h1>' +
+    `<p>${text}</p><a href="/">Go to the home page</a></main></body></html>`
+  )
+}
+
 class Internal {
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
@@ -375,7 +401,9 @@ class Internal {
 
     const result = await Odac.Auth.magic(email, {
       autoRegister: false, // config.autoRegister
-      redirect: config.redirect
+      redirect: config.redirect,
+      // The form's error-redirect, or the page the form is on (see Form.openForm).
+      errorRedirect: config.errorRedirect
     })
 
     if (!result.success) {
@@ -430,13 +458,17 @@ class Internal {
     )
   }
 
+  /**
+   * Handles a followed magic link: signs the owner in, or returns them to a page that
+   * explains the failure.
+   * Why: a failed link used to end on a bare text response with nowhere to go. It now goes
+   * back to the page the link was requested from (the form shows the error), a page chosen by
+   * the app, or a standalone page; the error itself travels in the session, read once through
+   * Odac.Auth.magicError().
+   */
   static async magicVerify(Odac) {
     const token = await Odac.request('token')
     const email = await Odac.request('email')
-
-    if (!token || !email) {
-      return Odac.Request.end('Invalid verification link.')
-    }
 
     // 200, not an error: scanners flag failing links, and the recipient's own
     // tap arrives later on this same URL.
@@ -446,16 +478,33 @@ class Internal {
       )
     }
 
-    const result = await Odac.Auth.verifyMagicLink(token, email)
+    const result = token && email ? await Odac.Auth.verifyMagicLink(token, email) : {success: false, code: 'invalid'}
+    const successTarget = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
 
-    if (!result.success) {
-      return Odac.Request.end(`Verification failed: ${result.error}`)
+    if (result.success) {
+      Odac.Request.redirect(sameSitePath(successTarget))
+      return Odac.Request.end('')
     }
 
-    // Redirect to a specific URL if provided, otherwise default to home or a configured dashboard page.
-    let redirectUrl = (await Odac.request('redirect_url')) || Odac.Config.auth?.magicLinkRedirect || '/'
+    // A second tap on a link that already signed this person in is not an error for them.
+    if ((result.code === 'invalid' || result.code === 'expired') && (await Odac.Auth.check()) && Odac.Auth.user('email') === email) {
+      Odac.Request.redirect(sameSitePath(successTarget))
+      return Odac.Request.end('')
+    }
 
-    Odac.Request.redirect(sameSitePath(redirectUrl))
+    const code = MAGIC_LINK_ERRORS[result.code] ? result.code : 'failed'
+    const message = MAGIC_LINK_ERRORS[code]
+    const errorTarget = (await Odac.request('error_url')) || Odac.Config.auth?.magicLinkErrorRedirect
+
+    if (typeof errorTarget !== 'string' || !errorTarget) {
+      Odac.Request.status(400)
+      Odac.Request.header('Content-Type', 'text/html; charset=utf-8')
+      return Odac.Request.end(magicLinkErrorPage(message))
+    }
+
+    // Read once by Odac.Auth.magicError() on the page the visitor lands on.
+    Odac.Request.session('_odac_magic_error', {code, message})
+    Odac.Request.redirect(sameSitePath(errorTarget))
     Odac.Request.end('')
   }
 

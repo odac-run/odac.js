@@ -58,13 +58,13 @@ module.exports = {
     await Odac.DB.users.where('id', user.id).update({last_login_at: new Date(), last_login_ip: Odac.Request.ip})
   },
 
-  // reason: 'invalid' | 'throttled' | 'denied'. identity never contains the password.
+  // reason: 'invalid' | 'expired' (magic link) | 'throttled' | 'denied'. identity never contains the password.
   async loginFailed(Odac, {identity, method, reason}) {}
 }
 ```
 - `method`: `'password'`, `'magic'` (existing user or sign-up via link), `'register'` (auto-login), `'direct'` (identity-only `login()`).
 - `user` is a copy without the `auth.passwordField` hash(es); use it instead of `Odac.Auth.user()` inside hooks.
-- A refusal makes `login()` return `false` (form shows "Invalid credentials"), fails `verifyMagicLink()` with `{success: false, error: 'Login failed'}`, and makes `register()` return `{success: true, autoLogin: false}`. For a custom message, check the account state in your controller before calling `login()`.
+- A refusal makes `login()` return `false` (form shows "Invalid credentials"), fails `verifyMagicLink()` with `{success: false, code: 'denied', error: 'Login failed'}`, and makes `register()` return `{success: true, autoLogin: false}`. For a custom message, check the account state in your controller before calling `login()`.
 - Only `auth.js` and these three exports are recognized; anything else is logged as unknown at load time.
 
 ### 3. Magic Links (Passwordless)
@@ -79,6 +79,10 @@ if (result.success) {
   return { message: 'Link sent!' };
 }
 ```
+- **Failed links never end on an error screen.** `/_odac/magic-verify` redirects a failed link to, in order: the link's `errorRedirect` (`<odac:magic-login error-redirect="...">` or `magic(email, {errorRedirect})`), `auth.magicLinkErrorRedirect`, else a standalone 400 page. `<odac:magic-login>` defaults `error-redirect` to the page it is rendered on and shows the error itself — do not build a separate error page unless the design needs one.
+- **Custom error page**: read `Odac.Auth.magicError()` → `{code, message}` or `null` (read once per session, stable within the request). Branch on `code`, not on `message` (English default text).
+- **Codes** (also on `verifyMagicLink()` results): `invalid` (malformed, used, unknown), `expired`, `denied` (beforeLogin hook), `failed` (registration/sign-in error).
+- Error pages must be same-site paths; others become `/`. A second tap by a person already signed in with that email goes to the success page.
 
 ### 4. Session Management
 ```javascript

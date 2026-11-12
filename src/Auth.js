@@ -33,6 +33,7 @@ function toMillis(value) {
 }
 
 class Auth {
+  #magicError = undefined
   #odac = null
   #request = null
   #table = null
@@ -465,9 +466,11 @@ class Auth {
    * @returns {Promise<boolean>}
    */
   async login(where) {
-    return this.#login(where, null)
+    return (await this.#login(where, null)).success
   }
 
+  // Resolves to {success: true} or {success: false, reason}; reason is the loginFailed one
+  // ('invalid', 'throttled', 'denied') or 'failed' when the token could not be stored.
   async #login(where, method) {
     this.#user = null
     where = await Auth.#resolveCriteria(where)
@@ -475,20 +478,20 @@ class Auth {
     const throttle = this.#loginThrottleKeys(where)
     if (throttle && (await this.#isThrottled(throttle))) {
       await this.#loginFailed(where, method, 'throttled')
-      return false
+      return {success: false, reason: 'throttled'}
     }
 
     let user = await this.check(where)
     if (!user) {
       if (throttle) await this.#recordLoginFailure(throttle)
       await this.#loginFailed(where, method, 'invalid')
-      return false
+      return {success: false, reason: 'invalid'}
     }
     if (throttle) await Odac.Ipc.del(throttle.account).catch(() => {})
 
     if (!(await this.#allowLogin(user, method))) {
       await this.#loginFailed(where, method, 'denied')
-      return false
+      return {success: false, reason: 'denied'}
     }
 
     // A session identifier chosen before sign-in (possibly planted) must not carry over.
@@ -540,10 +543,10 @@ class Auth {
 
     // Knex insert returns ids on some dbs, promise resolves to result
     const result = await Odac.DB[token].insert(cookie)
-    if (!result) return false
+    if (!result) return {success: false, reason: 'failed'}
 
     if (Hook.has('auth', 'login')) await Hook.run('auth', 'login', this.#hookContext(), {user: Auth.#publicUser(user), method})
-    return true
+    return {success: true}
   }
 
   // --- LOGIN HOOKS (hook/auth.js) ---
@@ -603,10 +606,6 @@ class Auth {
    * @returns {Promise<{success: boolean, user?: object, autoLogin?: boolean, error?: string}>}
    */
   async register(data, options = {}) {
-    return this.#register(data, options, 'register')
-  }
-
-  async #register(data, options, loginMethod) {
     if (!Odac.Config.auth) {
       Odac.Config.auth = {}
     }
@@ -702,9 +701,9 @@ class Auth {
       if (options.autoLogin !== false) {
         const loginData = {}
         loginData[primaryKey] = userId
-        const loginSuccess = await this.#login(loginData, loginMethod)
+        const login = await this.#login(loginData, 'register')
 
-        if (!loginSuccess) {
+        if (!login.success) {
           return {success: true, user: newUser, autoLogin: false, message: 'User created but auto-login failed'}
         }
       }
@@ -911,6 +910,8 @@ class Auth {
     // 4. Send Email
     let link = `${baseUrl}/_odac/magic-verify?token=${tokenRaw}&email=${encodeURIComponent(email)}`
     if (options.redirect) link += `&redirect_url=${encodeURIComponent(options.redirect)}`
+    // Where a failed link sends the visitor; checked against same-site paths when followed.
+    if (options.errorRedirect) link += `&error_url=${encodeURIComponent(options.errorRedirect)}`
 
     try {
       let mail = Odac.Mail(options.template || 'auth/magic-link')
@@ -944,22 +945,28 @@ class Auth {
     return {success: true, message: 'Magic link sent!'}
   }
 
+  /**
+   * Verifies a magic link and signs its owner in, registering a new user when needed.
+   * Why: a failed link must tell the person what to do next, so every failure carries a
+   * stable `code` besides the `error` text: 'invalid' (malformed, already used or unknown),
+   * 'expired', 'denied' (refused by the beforeLogin hook) or 'failed' (registration or
+   * sign-in could not complete).
+   * @param {string} tokenRaw Token from the link.
+   * @param {string} email Address from the link.
+   * @returns {Promise<{success: boolean, user?: object, code?: string, error?: string}>}
+   */
   async verifyMagicLink(tokenRaw, email) {
     if (!tokenRaw || !email) {
-      return {success: false, error: 'Invalid link'}
+      return {success: false, code: 'invalid', error: 'Invalid link'}
     }
 
     const magicTable = Odac.Config.auth?.magicTable || 'odac_magic'
     this.#table = Odac.Config.auth?.table || 'users'
     const primaryKey = Odac.Config.auth?.key || 'id'
 
-    // 1. Find potential tokens for this email
-    const records = await Odac.DB[magicTable].where('email', email).where('expires_at', '>', new Date())
-
-    if (!records || records.length === 0) {
-      await this.#loginFailed({email}, 'magic', 'invalid')
-      return {success: false, error: 'Link expired or invalid'}
-    }
+    // 1. Find the tokens of this email, expired ones included, so an expired link can be told
+    // apart from a wrong one. The magic-link rate limit keeps this a handful of rows.
+    const records = (await Odac.DB[magicTable].where('email', email)) || []
 
     // 2. Find the matching token (verify hash)
     let validRecord = null
@@ -972,7 +979,12 @@ class Auth {
 
     if (!validRecord) {
       await this.#loginFailed({email}, 'magic', 'invalid')
-      return {success: false, error: 'Invalid token'}
+      return {success: false, code: 'invalid', error: records.length === 0 ? 'Link expired or invalid' : 'Invalid token'}
+    }
+
+    if (!(toMillis(validRecord.expires_at) > Date.now())) {
+      await this.#loginFailed({email}, 'magic', 'expired')
+      return {success: false, code: 'expired', error: 'Link expired or invalid'}
     }
 
     // 3. Consume all tokens for this email to prevent reuse of other valid links.
@@ -995,22 +1007,36 @@ class Auth {
         registerData[Auth.#secretFields()[0]] = nodeCrypto.randomBytes(32).toString('hex')
       }
 
-      const regResult = await this.#register(registerData, {}, 'magic')
+      // Signed in below, once, so the hooks see a single 'magic' attempt.
+      const regResult = await this.register(registerData, {autoLogin: false})
 
       if (!regResult.success) {
-        return {success: false, error: 'Registration failed'}
+        return {success: false, code: 'failed', error: 'Registration failed'}
       }
 
-      // register() already signed the new user in. A failure there (a beforeLogin veto) is
-      // final: retrying would run the hooks a second time for the same attempt.
-      if (regResult.autoLogin === false) return {success: false, error: 'Login failed'}
-      return {success: true, user: regResult.user}
+      user = regResult.user
     }
 
-    // A failed sign-in (a beforeLogin veto) must not be reported as success.
-    if (!(await this.#login({[primaryKey]: user[primaryKey]}, 'magic'))) return {success: false, error: 'Login failed'}
+    const login = await this.#login({[primaryKey]: user[primaryKey]}, 'magic')
+    if (!login.success) return {success: false, code: login.reason === 'denied' ? 'denied' : 'failed', error: 'Login failed'}
 
     return {success: true, user: user}
+  }
+
+  /**
+   * The magic-link failure that sent the visitor to this page, read once.
+   * Why: a failed link redirects to the page it was requested from (or a configured page)
+   * instead of a bare error screen; this lets that page explain what went wrong. The value is
+   * kept for the rest of the request, so several forms on one page all see it.
+   * @returns {{code: string, message: string}|null}
+   */
+  magicError() {
+    if (this.#magicError !== undefined) return this.#magicError
+    // Written by the /_odac/magic-verify route (Internal.magicVerify) before it redirects.
+    const flash = this.#request.session('_odac_magic_error')
+    if (flash) this.#request.session('_odac_magic_error', null)
+    this.#magicError = flash && typeof flash.code === 'string' ? {code: flash.code, message: String(flash.message ?? '')} : null
+    return this.#magicError
   }
 
   async #needsGeneratedPassword() {
