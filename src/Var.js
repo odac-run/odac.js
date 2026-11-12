@@ -1,5 +1,27 @@
 const fs = require('fs')
+const net = require('net')
 const nodeCrypto = require('crypto')
+
+// Hostname labels of 1-63 characters without a leading/trailing hyphen, at most 253 in total,
+// ending in an alphabetic TLD of any length or an IDN (punycode) TLD.
+const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/i
+// Pictographic characters, flag halves and keycaps (1️⃣). A literal range such as
+// [\u1F000-\u1F6FF] is parsed as '\u1F00', '0'-'\u1F6F', 'F' and matched almost every letter.
+const EMOJI_PATTERN = /\p{Extended_Pictographic}|\p{Regional_Indicator}|[0-9#*]\uFE0F?\u20E3/u
+const URL_SCHEMES = new Set(['http:', 'https:', 'ftp:', 'ftps:', 'ws:', 'wss:'])
+
+// Absolute URL with an authority. The scheme allowlist keeps javascript:/data: out, and the
+// explicit '//' check stops the WHATWG parser from accepting 'http:example.com'.
+function isUrl(value) {
+  const text = String(value)
+  if (/\s/.test(text) || !/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return false
+  try {
+    const url = new URL(text)
+    return URL_SCHEMES.has(url.protocol) && url.hostname !== ''
+  } catch {
+    return false
+  }
+}
 
 const DEFAULT_ENCRYPT_KEY = 'odac'
 // Config.init() replaces the configured key with its SHA-256 digest, so the default key
@@ -195,12 +217,12 @@ class Var {
     if (args.includes('alphanumericspace')) result = (result || any) && ((any && result) || /^[A-Za-z0-9\s]+$/.test(this.#value))
     if (args.includes('hash')) result = (result || any) && ((any && result) || /^\$scrypt\$[a-f0-9]+\$[a-f0-9]+$/.test(this.#value))
     if (args.includes('date')) result = (result || any) && ((any && result) || !isNaN(Date.parse(this.#value)))
-    if (args.includes('domain')) result = (result || any) && ((any && result) || /^([a-z0-9-]+\.){1,2}[a-z]{2,6}$/i.test(this.#value))
+    if (args.includes('domain')) result = (result || any) && ((any && result) || DOMAIN_PATTERN.test(this.#value))
     if (args.includes('email'))
       result = (result || any) && ((any && result) || /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(this.#value))
     if (args.includes('float')) result = (result || any) && ((any && result) || !isNaN(parseFloat(this.#value)))
-    if (args.includes('host')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
-    if (args.includes('ip')) result = (result || any) && ((any && result) || /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(this.#value))
+    if (args.includes('host')) result = (result || any) && ((any && result) || net.isIPv4(String(this.#value)))
+    if (args.includes('ip')) result = (result || any) && ((any && result) || net.isIP(String(this.#value)) !== 0)
     if (args.includes('json')) {
       // Never let a malformed value throw out of a validity check; also fixes the
       // old `.length >= 0` test that wrongly rejected valid JSON objects.
@@ -216,14 +238,8 @@ class Var {
     if (args.includes('mac')) result = (result || any) && ((any && result) || /^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/.test(this.#value))
     if (args.includes('md5')) result = (result || any) && ((any && result) || /^[a-f0-9A-F]{32}$/.test(this.#value))
     if (args.includes('numeric')) result = (result || any) && ((any && result) || !isNaN(this.#value))
-    if (args.includes('url')) result = (result || any) && ((any && result) || /^[a-z0-9]+:\/\/[a-z0-9]+\.[a-z]{2,6}/i.test(this.#value))
-    if (args.includes('emoji'))
-      result =
-        (result || any) &&
-        ((any && result) ||
-          /([0-9#][\u20E3])|[\u00ae\u00a9\u203C\u2047\u2048\u2049\u3030\u303D\u2139\u2122\u3297\u3299][\uFE00-\uFEFF]?|[\u2190-\u21FF][\uFE00-\uFEFF]?|[\u2300-\u23FF][\uFE00-\uFEFF]?|[\u2460-\u24FF][\uFE00-\uFEFF]?|[\u25A0-\u25FF][\uFE00-\uFEFF]?|[\u2600-\u27BF][\uFE00-\uFEFF]?|[\u2900-\u297F][\uFE00-\uFEFF]?|[\u2B00-\u2BF0][\uFE00-\uFEFF]?|[\u1F000-\u1F6FF][\uFE00-\uFEFF]?/u.test(
-            this.#value
-          ))
+    if (args.includes('url')) result = (result || any) && ((any && result) || isUrl(this.#value))
+    if (args.includes('emoji')) result = (result || any) && ((any && result) || EMOJI_PATTERN.test(this.#value))
     if (args.includes('username')) result = (result || any) && ((any && result) || /^[a-zA-Z0-9]+$/.test(this.#value))
     if (args.includes('xss')) result = (result || any) && ((any && result) || this.#value == this.#value.replace(/<[^>]*>/g, ''))
     return result

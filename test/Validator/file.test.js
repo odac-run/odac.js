@@ -147,6 +147,48 @@ describe('Validator file rules', () => {
       v.file('avatar').check('accept:image/*').message('Bad type')
       expect(await v.error()).toBe(false)
     })
+
+    const check = async (file, rule) => {
+      const v = new Validator(mockRequest({upload: [file]}), odacStub)
+      v.file('upload').check(rule).message('Bad type')
+      return v.error()
+    }
+
+    it('ignores the client-declared type: evil.html sent as image/png fails image/*', async () => {
+      const p = writeTmp('evil.html', Buffer.from('<script>alert(1)</script>'))
+      expect(await check(fileObj({name: 'evil.html', ext: 'html', mimetype: 'image/png', path: p}), 'mimetype:image/*')).toBe(true)
+      expect(await check(fileObj({name: 'evil.html', ext: 'html', mimetype: 'image/png', path: p}), 'mimetype:image/png')).toBe(true)
+    })
+
+    it('keeps SVG out of image/* but allows it when listed explicitly', async () => {
+      const p = writeTmp('logo.svg', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))
+      const file = () => fileObj({name: 'logo.svg', ext: 'svg', mimetype: 'image/svg+xml', path: p})
+      expect(await check(file(), 'mimetype:image/*')).toBe(true)
+      expect(await check(file(), 'mimetype:image/svg+xml')).toBe(false)
+    })
+
+    it('keeps HTML out of text/*', async () => {
+      const p = writeTmp('page.html', Buffer.from('<p>x</p>'))
+      expect(await check(fileObj({ext: 'html', mimetype: 'text/plain', path: p}), 'mimetype:text/*')).toBe(true)
+      const txt = writeTmp('notes.txt', Buffer.from('plain'))
+      expect(await check(fileObj({ext: 'txt', mimetype: 'text/plain', path: txt}), 'mimetype:text/*')).toBe(false)
+    })
+
+    it('checks PDF and Office signatures', async () => {
+      const pdf = writeTmp('real.pdf', Buffer.from('%PDF-1.7\n'))
+      const fakePdf = writeTmp('fake.pdf', Buffer.from('<html></html>'))
+      const docx = writeTmp('real.docx', Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0, 0, 0]))
+      expect(await check(fileObj({ext: 'pdf', path: pdf}), 'mimetype:application/pdf')).toBe(false)
+      expect(await check(fileObj({ext: 'pdf', path: fakePdf}), 'mimetype:application/pdf')).toBe(true)
+      expect(
+        await check(fileObj({ext: 'docx', path: docx}), 'mimetype:application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+      ).toBe(false)
+    })
+
+    it('accepts extensions known to the framework MIME table', async () => {
+      const p = writeTmp('photo.avif', Buffer.from('....ftypavif'))
+      expect(await check(fileObj({ext: 'avif', mimetype: 'application/octet-stream', path: p}), 'mimetype:image/avif')).toBe(false)
+    })
   })
 
   describe('truncated files', () => {

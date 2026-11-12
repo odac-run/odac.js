@@ -3,87 +3,149 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
 
-let disposableDomains = null
+const MIME_TYPES = require('./Route/MimeTypes.js')
+
 const CACHE_FILE = path.join(global.__dir || process.cwd(), 'storage', '.cache', 'odac_disposable_domains.conf')
 const SOURCE_URL = 'https://hub.odac.run/blocklist/disposable-emails'
+const LIST_MAX_AGE = 24 * 60 * 60 * 1000
+const LIST_RETRY_AFTER = 5 * 60 * 1000
+const FETCH_TIMEOUT = 5000
+
+// Types a browser executes when the file is opened from the site. A wildcard such as image/*
+// must not admit them; an allowlist that wants them names them explicitly.
+const ACTIVE_TYPES = new Set(['image/svg+xml', 'text/html', 'text/javascript', 'application/xhtml+xml', 'application/xml'])
+
+const startsWith = bytes => buf => buf.subarray(0, bytes.length).equals(Buffer.from(bytes))
+const zip = startsWith([0x50, 0x4b, 0x03, 0x04])
+const SIGNATURES = {
+  jpg: startsWith([0xff, 0xd8, 0xff]),
+  jpeg: startsWith([0xff, 0xd8, 0xff]),
+  png: startsWith([0x89, 0x50, 0x4e, 0x47]),
+  gif: startsWith([0x47, 0x49, 0x46, 0x38]),
+  // RIFF container + "WEBP" fourCC at offset 8 (distinguishes it from AVI/WAV).
+  webp: buf => buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP',
+  pdf: startsWith([0x25, 0x50, 0x44, 0x46, 0x2d]),
+  zip,
+  docx: zip,
+  xlsx: zip,
+  pptx: zip
+}
+
+function extensionMime(ext) {
+  const type = (ext && Object.hasOwn(MIME_TYPES, ext) && MIME_TYPES[ext]) || 'application/octet-stream'
+  return type.split(';')[0].trim()
+}
+
+// The list in use, when it was loaded, and the load in flight. Callers share one load: the
+// set used to be published empty before loading finished, so every check made meanwhile
+// treated disposable addresses as allowed.
+let disposableDomains = null
+let disposableLoadedAt = 0
+let disposableLoading = null
+
+async function readCachedList() {
+  const handle = await fsPromises.open(CACHE_FILE, 'r')
+  try {
+    const stats = await handle.stat()
+    return {content: await handle.readFile('utf8'), fresh: Date.now() - stats.mtimeMs < LIST_MAX_AGE}
+  } finally {
+    await handle.close()
+  }
+}
+
+function fetchList() {
+  return new Promise((resolve, reject) => {
+    const req = https.get(SOURCE_URL, {timeout: FETCH_TIMEOUT}, res => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        reject(new Error(`Failed to fetch: ${res.statusCode}`))
+        return
+      }
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+      res.on('error', reject)
+    })
+    req.on('timeout', () => req.destroy(new Error('Timed out fetching the disposable domain list')))
+    req.on('error', reject)
+  })
+}
+
+async function writeCachedList(content) {
+  const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+  await fsPromises.mkdir(path.dirname(CACHE_FILE), {recursive: true})
+  const handle = await fsPromises.open(tempFile, 'wx', 0o600)
+  try {
+    await handle.write(content)
+  } finally {
+    await handle.close()
+  }
+  await fsPromises.rename(tempFile, CACHE_FILE)
+}
+
+function parseList(content) {
+  const domains = new Set()
+  for (const line of content.split('\n')) {
+    const domain = line.trim().toLowerCase()
+    if (domain && !domain.startsWith('#')) domains.add(domain)
+  }
+  return domains
+}
 
 async function loadDisposableDomains() {
-  if (disposableDomains instanceof Set) return
-
-  disposableDomains = new Set()
-  let content = ''
-  let shouldUpdate = true
+  let cached = null
+  try {
+    cached = await readCachedList()
+  } catch {
+    // No cache yet.
+  }
+  if (cached?.fresh) return {domains: parseList(cached.content), complete: true}
 
   try {
-    try {
-      const handle = await fsPromises.open(CACHE_FILE, 'r')
-      try {
-        const stats = await handle.stat()
-        const ageInHours = (new Date() - stats.mtime) / (1000 * 60 * 60)
-        if (ageInHours < 24) {
-          content = await handle.readFile('utf8')
-          shouldUpdate = false
-        }
-      } finally {
-        await handle.close()
-      }
-    } catch {
-      // Cache error check failed, proceed to validation update
-    }
-
-    if (shouldUpdate) {
-      try {
-        content = await new Promise((resolve, reject) => {
-          const req = https.get(SOURCE_URL, res => {
-            if (res.statusCode !== 200) {
-              res.resume()
-              reject(new Error(`Failed to fetch: ${res.statusCode}`))
-              return
-            }
-            let data = ''
-            res.on('data', chunk => (data += chunk))
-            res.on('end', () => resolve(data))
-          })
-          req.on('error', reject)
-          req.end()
-        })
-        const tempFile = `${CACHE_FILE}_${Date.now()}_${Math.random().toString(36).slice(2)}`
-        await fsPromises.mkdir(path.dirname(CACHE_FILE), {recursive: true})
-        const handle = await fsPromises.open(tempFile, 'wx', 0o600)
-        try {
-          // SECURITY NOTE: Supply Chain Attack Mitigation
-          // We strictly sanitize the content fetched from the remote source before writing it to the local file system.
-          // The regex whitelist /[^a-zA-Z0-9.\-\n\r]/g restricts the content to only alphanumeric characters, dots, hyphens, and newlines.
-          // This aggressively neutralizes any potential malicious payloads (e.g., specific code injection, shell commands, or scrips)
-          // even if the remote source (hub.odac.run) is compromised.
-          const sanitizedContent = content.replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
-          await handle.write(sanitizedContent)
-        } finally {
-          await handle.close()
-        }
-        await fsPromises.rename(tempFile, CACHE_FILE)
-      } catch {
-        try {
-          content = await fsPromises.readFile(CACHE_FILE, 'utf8')
-        } catch {
-          // No cache file available
-        }
-      }
-    }
-
-    if (content) {
-      content.split('\n').forEach(line => {
-        const domain = line.trim().toLowerCase()
-        if (domain && !domain.startsWith('#')) {
-          disposableDomains.add(domain)
-        }
-      })
-    }
+    // SECURITY NOTE: Supply Chain Attack Mitigation
+    // The fetched list is restricted to alphanumerics, dots, hyphens and newlines before it
+    // is written to disk, neutralising any payload even if hub.odac.run is compromised.
+    const content = (await fetchList()).replace(/[^a-zA-Z0-9.\-\n\r]/g, '')
+    await writeCachedList(content).catch(() => {})
+    return {domains: parseList(content), complete: true}
   } catch (error) {
-    console.error(
-      JSON.stringify({level: 'error', tag: 'ODAC Validator', message: 'Could not load disposable domains.', error: error.message})
-    )
+    // A stale cache beats no list; retry the download soon either way.
+    if (cached) return {domains: parseList(cached.content), complete: false}
+    throw error
   }
+}
+
+/**
+ * Returns the disposable-domain list, loading or refreshing it as needed.
+ *
+ * Why: the first check waits for the list instead of passing every address; afterwards a
+ * stale list keeps serving while one shared refresh runs, so the list follows the daily
+ * upstream updates without blocking requests.
+ *
+ * @returns {Promise<Set<string>>}
+ */
+async function getDisposableDomains() {
+  const age = Date.now() - disposableLoadedAt
+  if (disposableDomains && age < LIST_MAX_AGE) return disposableDomains
+  if (!disposableLoading) {
+    disposableLoading = loadDisposableDomains()
+      .then(({domains, complete}) => {
+        disposableDomains = domains
+        disposableLoadedAt = complete ? Date.now() : Date.now() - LIST_MAX_AGE + LIST_RETRY_AFTER
+      })
+      .catch(error => {
+        console.error(
+          JSON.stringify({level: 'error', tag: 'ODAC Validator', message: 'Could not load disposable domains.', error: error.message})
+        )
+        disposableDomains ??= new Set()
+        disposableLoadedAt = Date.now() - LIST_MAX_AGE + LIST_RETRY_AFTER
+      })
+      .finally(() => {
+        disposableLoading = null
+      })
+  }
+  if (!disposableDomains) await disposableLoading
+  return disposableDomains
 }
 
 class Validator {
@@ -189,6 +251,15 @@ class Validator {
             }
           }
 
+          // Format rules apply to present values only, and only to scalars: `value && ...`
+          // skipped 0 and false (`{"qty": 0}` passed `min:1`), and an array or object coerces to
+          // a string that can match (`["a@b.co"]` passed `email`) and then reach the database.
+          const empty = value === undefined || value === null || value === ''
+          const scalar = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
+          const text = scalar ? String(value) : ''
+          const invalid = test => !empty && (!scalar || !test(text))
+          const number = scalar ? parseFloat(text) : NaN
+
           if (typeof rules === 'boolean') {
             error = rules === false
           } else {
@@ -196,7 +267,9 @@ class Validator {
               let vars = rule.split(/:(.+)/)
               let ruleName = vars[0].trim()
               let inverse = ruleName.startsWith('!')
-              if (inverse) ruleName = ruleName.substr(1)
+              if (inverse) ruleName = ruleName.slice(1)
+              const arg = vars[1]
+              const hasArg = arg !== undefined && arg !== ''
 
               if (!error) {
                 switch (ruleName) {
@@ -204,113 +277,92 @@ class Validator {
                     if (method === 'FILES') {
                       error = files.length === 0
                     } else {
-                      error = value === undefined || value === '' || value === null
+                      error = empty
                     }
                     break
                   case 'accepted':
                     error = !value || (value !== 1 && value !== '1' && value !== 'on' && value !== 'yes' && value !== true)
                     break
                   case 'numeric':
-                    error = value && value !== '' && !this.#odac.Var(value).is('numeric')
-                    break
                   case 'alpha':
-                    error = value && value !== '' && !this.#odac.Var(value).is('alpha')
-                    break
                   case 'alphaspace':
-                    error = value && value !== '' && !this.#odac.Var(value).is('alphaspace')
-                    break
                   case 'alphanumeric':
-                    error = value && value !== '' && !this.#odac.Var(value).is('alphanumeric')
-                    break
                   case 'alphanumericspace':
-                    error = value && value !== '' && !this.#odac.Var(value).is('alphanumericspace')
-                    break
                   case 'email':
-                    error = value && value !== '' && !this.#odac.Var(value).is('email')
-                    break
                   case 'ip':
-                    error = value && value !== '' && !this.#odac.Var(value).is('ip')
-                    break
                   case 'float':
-                    error = value && value !== '' && !this.#odac.Var(value).is('float')
-                    break
                   case 'mac':
-                    error = value && value !== '' && !this.#odac.Var(value).is('mac')
-                    break
                   case 'domain':
-                    error = value && value !== '' && !this.#odac.Var(value).is('domain')
-                    break
                   case 'url':
-                    error = value && value !== '' && !this.#odac.Var(value).is('url')
-                    break
                   case 'username':
-                    error = value && value !== '' && !this.#odac.Var(value).is('username')
+                    error = invalid(v => this.#odac.Var(v).is(ruleName))
                     break
                   case 'xss':
-                    error = value && value !== '' && /<[^>]*>/g.test(value)
+                    error = invalid(v => !/<[^>]*>/.test(v))
                     break
                   case 'usercheck':
                     error = !(await this.#odac.Auth.check())
                     break
                   case 'array':
-                    error = value && !Array.isArray(value)
+                    error = !empty && !Array.isArray(value)
                     break
                   case 'date':
-                    error = value && value !== '' && isNaN(Date.parse(value))
+                    error = invalid(v => !isNaN(Date.parse(v)))
                     break
                   case 'min':
-                    error = value && value !== '' && vars[1] && parseFloat(value) < parseFloat(vars[1])
+                    // A value that is not a number cannot be at least X.
+                    error = hasArg && !empty && (!Number.isFinite(number) || number < parseFloat(arg))
                     break
                   case 'max':
-                    error = value && value !== '' && vars[1] && parseFloat(value) > parseFloat(vars[1])
+                    error = hasArg && !empty && (!Number.isFinite(number) || number > parseFloat(arg))
                     break
                   case 'len':
-                    error = value && value !== '' && vars[1] && String(value).length !== parseInt(vars[1])
+                    error = hasArg && invalid(v => v.length === parseInt(arg))
                     break
                   case 'minlen':
-                    error = value && value !== '' && vars[1] && String(value).length < parseInt(vars[1])
+                    error = hasArg && invalid(v => v.length >= parseInt(arg))
                     break
                   case 'maxlen':
-                    error = value && value !== '' && vars[1] && String(value).length > parseInt(vars[1])
+                    error = hasArg && invalid(v => v.length <= parseInt(arg))
                     break
                   case 'mindate':
-                    error = value && value !== '' && vars[1] && new Date(value).getTime() < new Date(vars[1]).getTime()
+                    error = hasArg && invalid(v => !(new Date(v).getTime() < new Date(arg).getTime()))
                     break
                   case 'maxdate':
-                    error = value && value !== '' && vars[1] && new Date(value).getTime() > new Date(vars[1]).getTime()
+                    error = hasArg && invalid(v => !(new Date(v).getTime() > new Date(arg).getTime()))
                     break
                   case 'same': {
-                    const otherValue = await this.#request.request(vars[1], method)
+                    const otherValue = await this.#request.request(arg, method)
                     error = value !== otherValue
                     break
                   }
                   case 'different': {
-                    const otherValue = await this.#request.request(vars[1], method)
+                    const otherValue = await this.#request.request(arg, method)
                     error = value === otherValue
                     break
                   }
                   case 'equal':
-                    error = value && vars[1] && value !== vars[1]
+                    error = hasArg && invalid(v => v === arg)
                     break
                   case 'notin':
-                    error = value && value !== '' && vars[1] && String(value).includes(vars[1])
+                    error = hasArg && invalid(v => !v.includes(arg))
                     break
                   case 'in':
-                    error = value && value !== '' && vars[1] && !String(value).includes(vars[1])
+                    error = hasArg && invalid(v => v.includes(arg))
                     break
                   case 'not':
-                    error = value && vars[1] && value === vars[1]
+                    error = hasArg && !empty && scalar && text === arg
                     break
                   case 'regex':
-                    error = value && value !== '' && vars[1] && !new RegExp(vars[1]).test(value)
+                    error = hasArg && invalid(v => new RegExp(arg).test(v))
                     break
                   case 'user': {
                     if (!(await this.#odac.Auth.check())) {
                       error = true
                     } else {
-                      const userData = this.#odac.Auth.user(vars[1])
+                      const userData = this.#odac.Auth.user(arg)
                       if (this.#odac.Var(userData).is('hash')) {
-                        error = !this.#odac.Var(userData).hashCheck(value)
+                        error = !scalar || !this.#odac.Var(userData).hashCheck(text)
                       } else {
                         error = value !== userData
                       }
@@ -318,35 +370,35 @@ class Validator {
                     break
                   }
                   case 'disposable':
-                    error = value && value !== '' && !(await Validator.isDisposable(value))
+                    error = !empty && (!scalar || !(await Validator.isDisposable(text)))
                     break
                   case 'maxsize':
-                    if (method === 'FILES' && vars[1]) {
-                      const maxBytes = this.#parseSize(vars[1])
+                    if (method === 'FILES' && hasArg) {
+                      const maxBytes = this.#parseSize(arg)
                       error = files.some(f => f.size > maxBytes)
                     }
                     break
                   case 'minsize':
-                    if (method === 'FILES' && vars[1]) {
-                      const minBytes = this.#parseSize(vars[1])
+                    if (method === 'FILES' && hasArg) {
+                      const minBytes = this.#parseSize(arg)
                       error = files.some(f => f.size < minBytes)
                     }
                     break
                   case 'mimetype':
                   case 'accept':
-                    if (method === 'FILES' && vars[1] && files.length > 0) {
-                      error = !(await this.#validateMimetype(files, vars[1]))
+                    if (method === 'FILES' && hasArg && files.length > 0) {
+                      error = !(await this.#validateMimetype(files, arg))
                     }
                     break
                   case 'ext':
-                    if (method === 'FILES' && vars[1] && files.length > 0) {
-                      const allowedExts = vars[1].split(',').map(e => e.trim().toLowerCase())
+                    if (method === 'FILES' && hasArg && files.length > 0) {
+                      const allowedExts = arg.split(',').map(e => e.trim().toLowerCase())
                       error = !files.every(f => allowedExts.includes(f.ext))
                     }
                     break
                   case 'maxfiles':
-                    if (method === 'FILES' && vars[1]) {
-                      error = files.length > parseInt(vars[1])
+                    if (method === 'FILES' && hasArg) {
+                      error = files.length > parseInt(arg)
                     }
                     break
                 }
@@ -374,94 +426,65 @@ class Validator {
     return Math.floor(bytes * (multipliers[unit] || 1))
   }
 
+  /**
+   * Checks uploaded files against a MIME allowlist.
+   *
+   * Why: the type is derived from the file extension, which decides how the file is stored
+   * and later served. The client-declared MIME type is ignored: accepting either the declared
+   * type or the extension let `evil.html` sent as `image/png` pass `image/*`. Wildcards never
+   * match script-capable types (SVG, HTML, XML, JavaScript); list them explicitly to allow
+   * them. Formats with a known signature must also match it byte for byte.
+   *
+   * @param {object[]} files Uploaded file objects.
+   * @param {string} mimeStr Comma-separated allowlist, e.g. `image/png,image/*`.
+   * @returns {Promise<boolean>}
+   */
   async #validateMimetype(files, mimeStr) {
     const allowedTypes = mimeStr.split(',').map(m => m.trim().toLowerCase())
-    const extToMimeMap = {
-      jpg: 'image/jpeg',
-      jpeg: 'image/jpeg',
-      png: 'image/png',
-      gif: 'image/gif',
-      webp: 'image/webp',
-      svg: 'image/svg+xml',
-      pdf: 'application/pdf',
-      txt: 'text/plain',
-      csv: 'text/csv',
-      zip: 'application/zip',
-      mp4: 'video/mp4',
-      mp3: 'audio/mpeg',
-      doc: 'application/msword',
-      docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      xls: 'application/vnd.ms-excel',
-      xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }
     for (const file of files) {
-      const claimed = (file.mimetype || '').toLowerCase()
-      const extMime = extToMimeMap[file.ext] || 'application/octet-stream'
-      let allowed = false
-      for (const type of allowedTypes) {
-        if (type === claimed || type === extMime) {
-          allowed = true
-          break
-        }
-        if (type.endsWith('/*')) {
-          const prefix = type.slice(0, -2)
-          if (claimed.startsWith(prefix) || extMime.startsWith(prefix)) {
-            allowed = true
-            break
-          }
-        }
-      }
+      const mime = extensionMime(file.ext)
+      const allowed = allowedTypes.some(type => {
+        if (type === mime) return true
+        if (!type.endsWith('/*') || ACTIVE_TYPES.has(mime)) return false
+        return mime.startsWith(type.slice(0, -1))
+      })
       if (!allowed) return false
-
-      // Content sniffing: if the file's own extension is a raster format we have
-      // a signature for, verify the bytes match to catch a renamed/spoofed file
-      // (e.g. a script uploaded as photo.png). Formats without a known signature
-      // (svg, pdf, office docs, ...) fall back to extension + claimed MIME.
-      if (file.path) {
-        const sniff = await this.#sniffImage(file.path, file.ext)
-        if (sniff === false) return false
-      }
+      if (file.path && (await this.#matchesSignature(file.path, file.ext)) === false) return false
     }
     return true
   }
 
-  // Returns true if the file's leading bytes match the expected signature for
-  // its extension, false if it's a known raster type but the bytes don't match,
-  // and null if the extension has no signature we sniff (caller should skip).
-  async #sniffImage(filePath, ext) {
-    const format = ext === 'jpg' ? 'jpeg' : ext
-    if (!['jpeg', 'png', 'gif', 'webp'].includes(format)) return null
+  // true when the leading bytes match the extension's signature, false when they do not,
+  // null when the extension has no signature (the extension check alone applies).
+  async #matchesSignature(filePath, ext) {
+    const signature = SIGNATURES[ext]
+    if (!signature) return null
 
-    let buf
-    let fd
+    const buf = Buffer.alloc(12)
+    let handle
     try {
-      fd = await require('fs').promises.open(filePath, 'r')
-      buf = Buffer.alloc(12)
-      await fd.read(buf, 0, 12, 0)
+      handle = await fsPromises.open(filePath, 'r')
+      await handle.read(buf, 0, buf.length, 0)
     } catch {
       return null // unreadable: don't fail validation on a sniff error
     } finally {
-      if (fd) await fd.close().catch(() => {})
+      if (handle) await handle.close().catch(() => {})
     }
-
-    switch (format) {
-      case 'jpeg':
-        return buf.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
-      case 'png':
-        return buf.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47]))
-      case 'gif':
-        return buf.subarray(0, 4).equals(Buffer.from([0x47, 0x49, 0x46, 0x38]))
-      case 'webp':
-        // RIFF container + "WEBP" fourCC at offset 8 (distinguishes from AVI/WAV)
-        return buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP'
-    }
+    return signature(buf)
   }
 
+  /**
+   * Whether an email address belongs to a disposable-mail provider.
+   *
+   * Why: backs the `disposable` rule; exposed for checks outside a form.
+   *
+   * @param {string} email
+   * @returns {Promise<boolean>}
+   */
   static async isDisposable(email) {
     if (!email || typeof email !== 'string') return false
-    await loadDisposableDomains()
-    const domain = email.split('@').pop().toLowerCase()
-    return disposableDomains && disposableDomains.has(domain)
+    const domains = await getDisposableDomains()
+    return domains.has(email.split('@').pop().toLowerCase())
   }
 
   var(name, value = null) {

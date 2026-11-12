@@ -31,6 +31,8 @@ if (await validator.error()) {
 
 #### Validation Rules
 
+Rules other than `required` skip a field that is absent, `null` or `''`; `0` and `false` are validated like any other value. Format, length and value rules accept only strings, numbers and booleans, so an array or object sent in a JSON body fails them (use `array` for lists).
+
 **Type Validation:**
 - `required` - Field cannot be empty
 - `accepted` - Must be 1, 'on', 'yes', or true
@@ -41,11 +43,11 @@ if (await validator.error()) {
 - `alphanumericspace` - Alphanumeric characters and spaces
 - `username` - Alphanumeric username (no spaces or special chars)
 - `email` - Valid email address
-- `ip` - Valid IP address
+- `ip` - Valid IPv4 or IPv6 address
 - `float` - Floating point number
 - `mac` - Valid MAC address
 - `domain` - Valid domain name
-- `url` - Valid URL
+- `url` - Absolute `http`, `https`, `ftp`, `ftps`, `ws` or `wss` URL with a host (e.g. `http://localhost:3000`)
 - `array` - Must be an array
 - `date` - Valid date format
 
@@ -55,8 +57,8 @@ if (await validator.error()) {
 - `maxlen:X` - Maximum length of X characters
 
 **Value Validation:**
-- `min:X` - Minimum value of X
-- `max:X` - Maximum value of X
+- `min:X` - Minimum value of X (non-numeric values fail)
+- `max:X` - Maximum value of X (non-numeric values fail)
 - `equal:value` - Must equal specific value
 - `not:value` - Must not equal specific value
 - `same:field` - Must match another field
@@ -76,7 +78,7 @@ if (await validator.error()) {
 - `required` - File must be uploaded
 - `maxsize:2MB` - Maximum file size (B, KB, MB, GB)
 - `minsize:10KB` - Minimum file size
-- `mimetype:image/png,image/jpeg` - Allowed MIME types (comma-separated; wildcards like `image/*` supported)
+- `mimetype:image/png,image/jpeg` - Allowed MIME types (comma-separated; wildcards like `image/*` supported). The type comes from the file extension, never from the type the browser declares; JPEG, PNG, GIF, WebP, PDF and ZIP/Office files must also match their byte signature. Wildcards never admit script-capable types (SVG, HTML, XML, JavaScript): list `image/svg+xml` explicitly to allow SVG.
 - `accept:...` - Alias for `mimetype:`
 - `ext:jpg,png` - Allowed file extensions (case-insensitive)
 - `maxfiles:5` - Max files for multi-upload
