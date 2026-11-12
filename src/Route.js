@@ -10,7 +10,7 @@ const MiddlewareChain = require('./Route/Middleware.js')
 const {WebSocketServer} = require('./WebSocket.js')
 
 let routes2 = {}
-const mime = require('./Route/MimeTypes.js')
+const StaticFile = require('./Route/StaticFile.js')
 
 // HTTP status set by abort()/redirect() on a WebSocket request → close frame.
 const WS_REJECT = {401: [4001, 'Unauthorized'], 403: [4003, 'Forbidden']}
@@ -36,7 +36,6 @@ class Route {
   #configCache = {}
   #paramIndex = {}
   #paramIndexDirty = false
-  #publicCache = {}
   auth = {
     page: (path, authFile, file) => this.authPage(path, authFile, file),
     post: (path, authFile, file) => this.authPost(path, authFile, file),
@@ -189,37 +188,32 @@ class Route {
     }
     if (Odac.Config?.route?.[url]) {
       // PROD CACHE HIT
-      if (!Odac.Config.debug && this.#configCache[url]) {
-        const cached = this.#configCache[url]
-        return this.#asset(Odac, cached.type, cached.size, () => cached.content)
-      }
+      const cached = !Odac.Config.debug && this.#configCache[url]
+      if (cached) return this.#asset(Odac, cached, range => this.#slice(cached.content, range))
 
       const filePath = Odac.Config.route[url]
       try {
-        let type = 'text/html'
-        if (filePath.includes('.')) {
-          let arr = filePath.split('.')
-          type = mime[arr[arr.length - 1]]
-        }
-
-        // HEAD needs only the size. The prod cache holds file content, so it is
-        // left for the next GET to fill.
-        if (Odac.Request.method === 'head') {
-          const stat = await fsPromises.stat(filePath)
-          if (stat.isFile()) return this.#asset(Odac, type, stat.size)
-        } else {
-          const content = await fsPromises.readFile(filePath)
-
-          // PROD CACHE SET
-          if (!Odac.Config.debug) {
-            this.#configCache[url] = {
-              content,
-              type,
-              size: content.length
-            }
+        // One descriptor for stat and read, so the validators describe the bytes served.
+        const handle = await fsPromises.open(filePath, 'r')
+        let meta
+        let content
+        try {
+          const stat = await handle.stat()
+          if (stat.isFile()) {
+            meta = {type: StaticFile.contentType(filePath), size: stat.size, etag: StaticFile.etag(stat), mtimeMs: stat.mtimeMs}
+            // HEAD needs only the size. The prod cache holds file content, so it is
+            // left for the next GET to fill.
+            if (Odac.Request.method !== 'head') content = await handle.readFile()
           }
-
-          return this.#asset(Odac, type, content.length, () => content)
+        } finally {
+          await handle.close()
+        }
+        if (meta && !content) return this.#asset(Odac, meta)
+        if (meta) {
+          meta.size = content.length
+          // PROD CACHE SET
+          if (!Odac.Config.debug) this.#configCache[url] = {...meta, content}
+          return this.#asset(Odac, meta, range => this.#slice(content, range))
         }
       } catch {
         // File not found or error, continue routing
@@ -281,38 +275,29 @@ class Route {
       const publicPath = path.normalize(path.join(publicDir, safeUrl))
       const relativePath = path.relative(publicDir, publicPath)
 
-      if (relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))) {
-        // The prod metadata cache can outlive the file. A failed read evicts
-        // the entry so the next request re-stats and 404s instead of failing again.
-        const openPublic = () =>
-          fs.createReadStream(publicPath).once('error', () => {
-            delete this.#publicCache[publicPath]
-          })
-
-        // PROD CACHE HIT (Metadata)
-        if (!Odac.Config.debug && this.#publicCache[publicPath]) {
-          const cached = this.#publicCache[publicPath]
-          return this.#asset(Odac, cached.type, cached.size, openPublic)
-        }
-
+      if (!relativePath.startsWith('..') && !path.isAbsolute(relativePath) && !StaticFile.isHidden(relativePath)) {
+        // The response is built from the opened descriptor: its fstat gives the size and
+        // validators of exactly the bytes streamed, even if the file is replaced meanwhile.
+        let handle = null
         try {
-          const stat = await fsPromises.stat(publicPath)
+          handle = await fsPromises.open(publicPath, 'r')
+          const stat = await handle.stat()
           if (stat.isFile()) {
-            const extension = path.extname(publicPath).slice(1)
-            const type = mime[extension] || 'text/html'
-
-            // PROD CACHE SET (Metadata Only)
-            if (!Odac.Config.debug) {
-              this.#publicCache[publicPath] = {
-                type,
-                size: stat.size
-              }
-            }
-
-            return this.#asset(Odac, type, stat.size, openPublic)
+            const file = handle
+            handle = null
+            const meta = {type: StaticFile.contentType(publicPath), size: stat.size, etag: StaticFile.etag(stat), mtimeMs: stat.mtimeMs}
+            // autoClose (the default) releases the descriptor when the stream ends or is destroyed.
+            return this.#asset(
+              Odac,
+              meta,
+              range => file.createReadStream(range ?? {}),
+              () => file.close().catch(() => {})
+            )
           }
         } catch {
           // File not found in public
+        } finally {
+          handle?.close().catch(() => {})
         }
       }
     }
@@ -324,15 +309,58 @@ class Route {
     return Odac.Request.abort(404)
   }
 
-  // Shared response for config-route and public files. HEAD gets the headers
-  // only: the body is never produced, so no file is read or stream opened just
-  // for Node to discard it.
-  #asset(Odac, type, size, body) {
-    Odac.Request.header('Content-Type', type)
-    Odac.Request.header('Cache-Control', 'public, max-age=31536000')
-    Odac.Request.header('Content-Length', size)
-    if (Odac.Request.method === 'head') return Odac.Request.end()
-    return body()
+  /**
+   * Shared response for config-route and public files.
+   *
+   * Why: one place applies the validators (ETag/Last-Modified → 304), byte ranges (206/416)
+   * and the cache policy. HEAD, 304 and 416 never produce the body, so no stream is opened
+   * just for Node to discard it; `release` frees whatever `body` would have consumed.
+   *
+   * @param {object} Odac Request-scoped instance.
+   * @param {{type: string, size: number, etag: string, mtimeMs: number}} meta
+   * @param {(range: {start: number, end: number}|null) => *} [body] Produces the response body.
+   * @param {() => void} [release] Called when the body is not produced.
+   */
+  #asset(Odac, meta, body, release = () => {}) {
+    const request = Odac.Request
+    const lastModified = new Date(meta.mtimeMs).toUTCString()
+    const readHeader = name => request.header(name)
+    request.header('Cache-Control', StaticFile.cacheControl(request.url))
+    request.header('ETag', meta.etag)
+    request.header('Last-Modified', lastModified)
+    request.header('Accept-Ranges', 'bytes')
+
+    if (StaticFile.isFresh(readHeader, meta.etag, meta.mtimeMs)) {
+      release()
+      request.status(304)
+      return request.end()
+    }
+
+    // If-Range carries a date here: weak ETags never satisfy it (RFC 9110 §13.1.5).
+    const ifRange = readHeader('if-range')
+    const range = !ifRange || ifRange === lastModified ? StaticFile.parseRange(readHeader('range'), meta.size) : null
+    if (range === false) {
+      release()
+      request.header('Content-Range', `bytes */${meta.size}`)
+      request.status(416)
+      return request.end()
+    }
+
+    request.header('Content-Type', meta.type)
+    if (range) {
+      request.status(206)
+      request.header('Content-Range', `bytes ${range.start}-${range.end}/${meta.size}`)
+    }
+    request.header('Content-Length', range ? range.end - range.start + 1 : meta.size)
+    if (request.method === 'head' || !body) {
+      release()
+      return request.end()
+    }
+    return body(range)
+  }
+
+  #slice(content, range) {
+    return range ? content.subarray(range.start, range.end + 1) : content
   }
 
   /**
