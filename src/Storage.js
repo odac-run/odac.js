@@ -32,6 +32,8 @@ function sessionExpired(db, key, created, now, expirationMs) {
 }
 
 const SESSION_LIFETIME = 7 * 24 * 60 * 60 * 1000
+// Keys the session GC reads before yielding to the event loop.
+const GC_BATCH_SIZE = 1000
 
 // Marks a queued remove in the pending-writes map.
 const REMOVED = Symbol('removed')
@@ -40,6 +42,7 @@ class OdacStorage {
   // Writes queued with LMDB but not yet committed: key -> {value}. get() serves them so a
   // request reads its own writes; once committed, LMDB is the source for every process.
   #pending = new Map()
+  #gcRunning = false
 
   constructor() {
     this.db = null
@@ -199,27 +202,8 @@ class OdacStorage {
       clearInterval(this.gcInterval)
     }
 
-    const BATCH_THRESHOLD = 10000
-    const BATCH_SIZE = 1000
-
     this.gcInterval = setInterval(() => {
-      try {
-        // Count sessions to decide mode
-        let sessionCount = 0
-        // eslint-disable-next-line
-        for (const _ of this.db.getKeys({start: 'sess:', end: 'sess:~', limit: BATCH_THRESHOLD + 1})) {
-          sessionCount++
-          if (sessionCount > BATCH_THRESHOLD) break
-        }
-
-        if (sessionCount > BATCH_THRESHOLD) {
-          this._cleanSessionsBatch(expirationMs, BATCH_SIZE)
-        } else {
-          this._cleanSessionsSimple(expirationMs)
-        }
-      } catch (error) {
-        console.error('\x1b[31m[Storage GC Error]\x1b[0m', error.message)
-      }
+      this.cleanSessions(expirationMs).catch(error => console.error('\x1b[31m[Storage GC Error]\x1b[0m', error.message))
     }, intervalMs)
 
     return this.gcInterval
@@ -232,63 +216,47 @@ class OdacStorage {
     }
   }
 
-  // Simple mode: Load all sessions at once (fast for small datasets)
-  _cleanSessionsSimple(expirationMs) {
-    const now = Date.now()
-    let count = 0
+  /**
+   * Removes expired sessions, form records and CSRF tokens.
+   * Why: the GC runs on the primary, which also serves the memory IPC driver for every
+   * worker. Keys are scanned in batches and the event loop is released between batches, so
+   * a store with millions of keys never stalls IPC for the length of the scan. Overlapping
+   * runs are skipped.
+   * @param {number} [expirationMs] Session lifetime after the last activity.
+   * @param {number} [batchSize=1000] Keys read per batch.
+   * @returns {Promise<number>} Number of sessions removed.
+   */
+  async cleanSessions(expirationMs = this.sessionLifetime, batchSize = GC_BATCH_SIZE) {
+    if (!this.ready || this.#gcRunning) return 0
+    this.#gcRunning = true
+    try {
+      const now = Date.now()
+      let count = 0
+      let cursor = 'sess:'
 
-    for (const {key, value} of this.db.getRange({start: 'sess:', end: 'sess:~', snapshot: false})) {
-      if (key.endsWith(':_created') && sessionExpired(this.db, key, value, now, expirationMs)) {
-        const prefix = key.replace(':_created', '')
-        for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
-          this.db.remove(subKey)
-        }
-        count++
-      } else if (isExpiredFormRecord(key, value, now) || isExpiredToken(key, value, now)) {
-        this.db.remove(key)
-      }
-    }
-
-    if (count > 0) {
-      console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions.`)
-    }
-  }
-
-  // Batch mode: Process sessions in chunks (memory-safe for large datasets)
-  _cleanSessionsBatch(expirationMs, batchSize) {
-    const now = Date.now()
-    let count = 0
-    let cursor = 'sess:'
-    let hasMore = true
-
-    console.log('\x1b[36m[Storage GC]\x1b[0m Running in batch mode...')
-
-    while (hasMore) {
-      hasMore = false
-      let lastKey = null
-
-      for (const {key, value} of this.db.getRange({start: cursor, end: 'sess:~', limit: batchSize, snapshot: false})) {
-        lastKey = key
-        hasMore = true
-
-        if (key.endsWith(':_created') && sessionExpired(this.db, key, value, now, expirationMs)) {
-          const prefix = key.replace(':_created', '')
-          for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) {
-            this.db.remove(subKey)
+      while (this.ready) {
+        let lastKey = null
+        let seen = 0
+        for (const {key, value} of this.db.getRange({start: cursor, end: 'sess:~', limit: batchSize, snapshot: false})) {
+          lastKey = key
+          seen++
+          if (key.endsWith(':_created') && sessionExpired(this.db, key, value, now, expirationMs)) {
+            const prefix = key.slice(0, -':_created'.length)
+            for (const subKey of this.db.getKeys({start: prefix, end: prefix + '~'})) this.db.remove(subKey)
+            count++
+          } else if (isExpiredFormRecord(key, value, now) || isExpiredToken(key, value, now)) {
+            this.db.remove(key)
           }
-          count++
-        } else if (isExpiredFormRecord(key, value, now) || isExpiredToken(key, value, now)) {
-          this.db.remove(key)
         }
-      }
-
-      if (lastKey) {
+        if (lastKey === null || seen < batchSize) break
         cursor = lastKey + '\0'
+        await new Promise(resolve => setImmediate(resolve))
       }
-    }
 
-    if (count > 0) {
-      console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions (batch mode).`)
+      if (count > 0) console.log(`\x1b[36m[Storage GC]\x1b[0m Cleaned ${count} expired sessions.`)
+      return count
+    } finally {
+      this.#gcRunning = false
     }
   }
 
