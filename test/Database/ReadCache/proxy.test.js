@@ -1,5 +1,10 @@
 'use strict'
 
+const servedFromCache = require('./servedFromCache')
+
+// Whether the active-posts query used throughout these tests is answered from the cache.
+const activeCached = () => servedFromCache('posts', () => db('posts').where({active: true}).select('id', 'title'))
+
 const cluster = require('node:cluster')
 
 /**
@@ -86,9 +91,7 @@ describe('Database.js Proxy - cache(ttl).where().select()', () => {
     const result = await DB.posts.cache().where({id: 1}).first()
     expect(result.title).toBe('First Post')
 
-    // Verify cached
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await servedFromCache('posts', () => db('posts').where({id: 1}).first())).toBe(true)
   })
 })
 
@@ -98,13 +101,11 @@ describe('Database.js Proxy - cache.clear()', () => {
 
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
 
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.posts.cache.clear()
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 })
 
@@ -114,14 +115,12 @@ describe('Database.js Proxy - automatic invalidation on write', () => {
 
     // Cache a query
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     // Update via proxy — should auto-invalidate
     await DB.posts.where({id: 1}).update({title: 'Updated'})
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
 
     // Next cache() call should fetch fresh data
     const result = await DB.posts.cache(60).where({id: 1}).first()
@@ -132,39 +131,33 @@ describe('Database.js Proxy - automatic invalidation on write', () => {
     const DB = require('../../../src/Database')
 
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.posts.insert({id: 4, title: 'New Post', views: 0, active: true})
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 
   it('should invalidate cache after delete()', async () => {
     const DB = require('../../../src/Database')
 
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.posts.where({id: 3}).delete()
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 
   it('should invalidate cache after del() (alias)', async () => {
     const DB = require('../../../src/Database')
 
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.posts.where({id: 3}).del()
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 })
 
@@ -176,8 +169,7 @@ describe('Database.js Proxy - cache() via DB.table()', () => {
 
     expect(result).toHaveLength(2)
 
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
   })
 
   it('should expose buffer on DB.table(name) just like DB.name', async () => {
@@ -190,11 +182,11 @@ describe('Database.js Proxy - cache() via DB.table()', () => {
     const DB = require('../../../src/Database')
 
     await DB.table('posts').cache(60).where({active: true}).select('id', 'title')
-    expect(await Odac.Ipc.smembers('rc:idx:default:posts')).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.table('posts').where({id: 1}).update({title: 'Updated'})
 
-    expect(await Odac.Ipc.smembers('rc:idx:default:posts')).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 })
 
@@ -218,7 +210,7 @@ describe('Database.js Proxy - clauses chained before cache()', () => {
     expect(active).toHaveLength(2)
     expect(drafts).toHaveLength(1)
 
-    const keys = await Odac.Ipc.smembers('rc:idx:default:posts')
+    const keys = [...Odac.Ipc._memoryStore.keys()].filter(key => key.startsWith('rc:default:posts:'))
     expect(keys).toHaveLength(2)
   })
 })
@@ -241,12 +233,10 @@ describe('Database.js Proxy - global cache.clear()', () => {
     const DB = require('../../../src/Database')
 
     await DB.posts.cache(60).where({active: true}).select('id', 'title')
-    let keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(1)
+    expect(await activeCached()).toBe(true)
 
     await DB.cache.clear('default', 'posts')
 
-    keys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(keys).toHaveLength(0)
+    expect(await activeCached()).toBe(false)
   })
 })

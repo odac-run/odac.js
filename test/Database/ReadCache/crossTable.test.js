@@ -1,5 +1,7 @@
 'use strict'
 
+const servedFromCache = require('./servedFromCache')
+
 const cluster = require('node:cluster')
 
 /**
@@ -82,20 +84,19 @@ afterEach(async () => {
 })
 
 describe('Cross-table cache invalidation (JOIN queries)', () => {
-  it('should register cache key in joined table index', async () => {
+  it('should supersede a joined query when either table is invalidated', async () => {
     const readCache = require('../../../src/Database/ReadCache')
+    const build = () => db('posts').join('users', 'posts.user_id', '=', 'users.id').select('posts.title', 'users.name')
 
-    const qb = db('posts').join('users', 'posts.user_id', '=', 'users.id').select('posts.title', 'users.name')
-    const executeFn = () => qb.then(r => r)
-    await readCache.get('default', 'posts', qb, executeFn, 60)
+    expect(await servedFromCache('posts', build)).toBe(false)
+    expect(await servedFromCache('posts', build)).toBe(true)
 
-    // Cache key should be in BOTH posts and users indexes
-    const postKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    const userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
+    await readCache.invalidate('default', 'users')
+    expect(await servedFromCache('posts', build)).toBe(false)
+    expect(await servedFromCache('posts', build)).toBe(true)
 
-    expect(postKeys).toHaveLength(1)
-    expect(userKeys).toHaveLength(1)
-    expect(postKeys[0]).toBe(userKeys[0])
+    await readCache.invalidate('default', 'posts')
+    expect(await servedFromCache('posts', build)).toBe(false)
   })
 
   it('should invalidate joined query when joined table is written to', async () => {
@@ -106,19 +107,10 @@ describe('Cross-table cache invalidation (JOIN queries)', () => {
 
     expect(result1).toHaveLength(2)
 
-    // Verify cache exists in both indexes
-    let postKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    let userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
-    expect(postKeys).toHaveLength(1)
-    expect(userKeys).toHaveLength(1)
-
     // Write to the JOINED table (users) — should invalidate the cached join query
     await DB.users.where({id: 1}).update({name: 'Alice Updated'})
 
-    userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
-    expect(userKeys).toHaveLength(0)
-
-    // The cache entry itself should be deleted — next read should hit DB
+    // Next read should hit DB
     const result2 = await DB.posts.cache(60).join('users', 'posts.user_id', '=', 'users.id').select('posts.title', 'users.name')
 
     expect(result2[0].name).toBe('Alice Updated')
@@ -131,9 +123,6 @@ describe('Cross-table cache invalidation (JOIN queries)', () => {
 
     // Write to the PRIMARY table (posts)
     await DB.posts.where({id: 1}).update({title: 'Updated Post'})
-
-    const postKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    expect(postKeys).toHaveLength(0)
 
     // Fresh read should reflect the update
     const result = await DB.posts.cache(60).join('users', 'posts.user_id', '=', 'users.id').select('posts.title', 'users.name')
@@ -151,17 +140,18 @@ describe('Cross-table cache invalidation (JOIN queries)', () => {
 
     const executeFn = () => qb.then(r => r)
     await readCache.get('default', 'posts', qb, executeFn, 60)
+    const build = () =>
+      db('posts')
+        .join('users', 'posts.user_id', '=', 'users.id')
+        .leftJoin('categories', 'posts.id', '=', 'categories.id')
+        .select('posts.title', 'users.name', 'categories.label')
 
-    // Cache key should be in ALL three table indexes
-    const postKeys = await Odac.Ipc.smembers('rc:idx:default:posts')
-    const userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
-    const catKeys = await Odac.Ipc.smembers('rc:idx:default:categories')
-
-    expect(postKeys).toHaveLength(1)
-    expect(userKeys).toHaveLength(1)
-    expect(catKeys).toHaveLength(1)
-    expect(postKeys[0]).toBe(userKeys[0])
-    expect(postKeys[0]).toBe(catKeys[0])
+    // A write to ANY of the three tables supersedes the query
+    for (const table of ['categories', 'users', 'posts']) {
+      expect(await servedFromCache('posts', build)).toBe(true)
+      await readCache.invalidate('default', table)
+      expect(await servedFromCache('posts', build)).toBe(false)
+    }
   })
 
   it('should handle aliased table names in joins', async () => {
@@ -172,8 +162,10 @@ describe('Cross-table cache invalidation (JOIN queries)', () => {
     const executeFn = () => qb.then(r => r)
     await readCache.get('default', 'posts', qb, executeFn, 60)
 
-    // Should register under 'users', not 'users as u'
-    const userKeys = await Odac.Ipc.smembers('rc:idx:default:users')
-    expect(userKeys).toHaveLength(1)
+    // Tracked under 'users', not 'users as u'
+    const build = () => db('posts').join('users as u', 'posts.user_id', '=', 'u.id').select('posts.title', 'u.name')
+    expect(await servedFromCache('posts', build)).toBe(true)
+    await readCache.invalidate('default', 'users')
+    expect(await servedFromCache('posts', build)).toBe(false)
   })
 })
