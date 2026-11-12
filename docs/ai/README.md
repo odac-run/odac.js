@@ -44,6 +44,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `frontend/forms.md`: AJAX form handling and API requests.
 - `frontend/navigation.md`: AJAX Navigation (SPA) behavior.
 - `frontend/realtime.md`: WebSocket Hubs and EventSource usage.
+- `frontend/translations.md`: Translations in browser code (`Odac.__()`, `Odac.__x()`).
 
 ---
 

@@ -116,6 +116,7 @@ if (typeof window !== 'undefined') {
   class _odac {
     actions = {}
     #data = null
+    #lang = null
     fn = {}
     #page = null
     #token = {hash: [], data: false, pending: null}
@@ -380,6 +381,75 @@ if (typeof window !== 'undefined') {
     client() {
       if (!document.cookie.includes('odac_client=')) return null
       return document.cookie.split('odac_client=')[1].split(';')[0]
+    }
+
+    /**
+     * Translates a key with the translations the server sent for this page.
+     * Why: only keys used in view/js are sent, already resolved for the active language; a
+     * key without a translation is returned as is. The result is plain text: insert it with
+     * textContent, never innerHTML, since placeholder values may come from user input.
+     * @param {string} key
+     * @param {...*} args Values for %s / %s1, %s2 placeholders.
+     * @returns {string}
+     */
+    __(key, ...args) {
+      return this.#translate(key, '', args)
+    }
+
+    /**
+     * Translates a key within a context (e.g. __x('Gül', 'verb')), like Odac.__x on the server.
+     * @param {string} key
+     * @param {string} context
+     * @param {...*} args
+     * @returns {string}
+     */
+    __x(key, context, ...args) {
+      return this.#translate(key, context == null ? '' : String(context).trim().slice(0, 100), args)
+    }
+
+    /**
+     * Returns the language the page is served in, or null when no translations were sent.
+     * @returns {string|null}
+     */
+    lang() {
+      return this.#translations().lang
+    }
+
+    #translations() {
+      if (this.#lang) return this.#lang
+      let parsed = null
+      const script = document.getElementById('odac-lang')
+      if (script) {
+        try {
+          parsed = JSON.parse(script.textContent)
+        } catch (e) {
+          console.error('Odac: Failed to parse odac-lang', e)
+        }
+      }
+      this.#lang = this.#validTranslations(parsed) ? parsed : {lang: null, t: {}}
+      return this.#lang
+    }
+
+    #validTranslations(value) {
+      return !!value && typeof value === 'object' && typeof value.lang === 'string' && !!value.t && typeof value.t === 'object'
+    }
+
+    #translate(key, context, args) {
+      if (typeof key !== 'string') return key
+      const {t} = this.#translations()
+      const has = (object, name) => Object.prototype.hasOwnProperty.call(object, name)
+      let str
+      if (has(t, key)) {
+        const value = t[key]
+        if (typeof value === 'string') str = context === '' ? value : undefined
+        else if (value && typeof value === 'object' && has(value, context)) str = value[context]
+      }
+      if (typeof str !== 'string' || str === '') str = key
+      if (args.length === 0) return str
+      // Single pass, so placeholder-like text inside a value is inserted literally.
+      if (/%s\d/.test(str)) return str.replace(/%s(\d+)/g, (match, i) => (i > 0 && i <= args.length ? String(args[i - 1]) : match))
+      let next = 0
+      return str.replace(/%s/g, match => (next < args.length ? String(args[next++]) : match))
     }
 
     data(key) {
@@ -963,7 +1033,8 @@ if (typeof window !== 'undefined') {
       const headers = {
         'X-Odac': 'ajaxload',
         'X-Odac-Load': loadKeys.join(','),
-        'X-Odac-Skeleton': currentSkeleton || ''
+        'X-Odac-Skeleton': currentSkeleton || '',
+        'X-Odac-Lang': this.lang() || ''
       }
       if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
@@ -999,6 +1070,7 @@ if (typeof window !== 'undefined') {
             }
 
             if (data.data) this.#data = data.data
+            if (this.#validTranslations(data.lang)) this.#lang = data.lang
             if (data.title) document.title = this.#decodeHtmlEntities(data.title)
 
             // Update only parts that have new content from server
@@ -1041,7 +1113,8 @@ if (typeof window !== 'undefined') {
       const headers = {
         'X-Odac': 'ajaxload',
         'X-Odac-Load': loadKeys.join(','),
-        'X-Odac-Skeleton': currentSkeleton || ''
+        'X-Odac-Skeleton': currentSkeleton || '',
+        'X-Odac-Lang': this.lang() || ''
       }
       if (partsHeader) headers['X-Odac-Parts'] = partsHeader
 
@@ -1065,6 +1138,7 @@ if (typeof window !== 'undefined') {
           }
 
           if (data.data) this.#data = data.data
+          if (this.#validTranslations(data.lang)) this.#lang = data.lang
           if (data.title) document.title = this.#decodeHtmlEntities(data.title)
           if (data.parts) this.#loader.parts = data.parts
 

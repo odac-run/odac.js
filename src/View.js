@@ -35,6 +35,15 @@ function serializeForScript(value) {
   return JSON.stringify(value).replace(SCRIPT_UNSAFE_CHARS, char => SCRIPT_ESCAPES[char])
 }
 
+// The browser translations are the same object until a language file or view/js changes,
+// so their serialized form is computed once per version.
+const translationScripts = new WeakMap()
+function translationScript(translations) {
+  let script = translationScripts.get(translations)
+  if (script === undefined) translationScripts.set(translations, (script = serializeForScript(translations)))
+  return script
+}
+
 // A view threw while rendering (or its compiled code did not load). Already logged.
 class RenderError extends Error {}
 
@@ -187,16 +196,20 @@ class View {
 
       this.#odac.Request.header('Content-Type', 'application/json')
       this.#odac.Request.header('X-Odac-Page', this.#odac.Request.page || '')
-      this.#odac.Request.header('Vary', 'X-Odac')
+      this.#odac.Request.header('Vary', 'X-Odac, X-Odac-Lang')
 
-      this.#odac.Request.end({
+      const response = {
         output: output,
         parts: currentParts,
         variables: variables,
         data: this.#odac.Request.sharedData,
         title: title,
         skeletonChanged: skeletonChanged
-      })
+      }
+      // The browser already holds the translations of the language it reports.
+      const translations = await this.#translations()
+      if (translations && this.#odac.Request.header('X-Odac-Lang') !== translations.lang) response.lang = translations
+      this.#odac.Request.end(response)
       return
     }
 
@@ -219,8 +232,10 @@ class View {
         this.#earlyHints.cacheHints(hintKey, detectedResources ?? [])
       }
 
-      // Inject Shared Data
-      const sharedScript = `<script type="application/json" id="odac-data">${serializeForScript(this.#odac.Request.sharedData || {})}</script>`
+      // Inject Shared Data (and the translations used by view/js, if any)
+      let sharedScript = `<script type="application/json" id="odac-data">${serializeForScript(this.#odac.Request.sharedData || {})}</script>`
+      const translations = await this.#translations()
+      if (translations) sharedScript += `<script type="application/json" id="odac-lang">${translationScript(translations)}</script>`
       if (result.includes('</body>')) {
         // Function replacer: the payload may contain `$&`/`$'` sequences that a string replacement would expand.
         result = result.replace('</body>', () => `${sharedScript}</body>`)
@@ -280,6 +295,15 @@ class View {
       else if (firstIndex.get(segments[i]) === i) html += rendered.get(segments[i]) ?? ''
     }
     return html
+  }
+
+  // Translations for Odac.__() in the browser; never fails a page render.
+  async #translations() {
+    try {
+      return (await this.#odac.Lang?.client?.()) ?? null
+    } catch {
+      return null
+    }
   }
 
   // Runs a compiled view. A throw inside the template is logged with its view line and

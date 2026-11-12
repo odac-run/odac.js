@@ -3,6 +3,7 @@ const {randomUUID} = require('node:crypto')
 const Catalog = require('./Lang/Catalog.js')
 const Files = require('./Lang/Files.js')
 const Ipc = require('./Ipc.js')
+const FrontendKeys = require('./Lang/Frontend.js')
 
 // How often a cached language file (and the list of language files) is checked on disk.
 const RECHECK_INTERVAL_MS = 2000
@@ -16,6 +17,10 @@ const WRITE_LOCK = 'odac:lang:write'
 const WRITE_LOCK_TTL = 10
 // Debug warnings for missing translations are logged once per entry, up to this many.
 const MAX_WARNED = 10000
+
+// Browser translations per language: {entries, data, fallback, payload}, rebuilt only when
+// one of its inputs changes (see Lang#client).
+const clientCache = new Map()
 
 function warn(message, fields) {
   console.error(JSON.stringify({level: 'WARN', message, ...fields}))
@@ -223,6 +228,7 @@ class LanguageStore {
 
   /** Drops cached data and pending timers. Used by tests. */
   reset() {
+    clientCache.clear()
     clearTimeout(this.#saveTimer)
     this.#saveTimer = null
     this.#entries.clear()
@@ -236,6 +242,7 @@ class LanguageStore {
 }
 
 const store = new LanguageStore()
+const frontendKeys = new FrontendKeys()
 
 /**
  * Parses an Accept-Language header into two-letter codes, most preferred first.
@@ -272,6 +279,8 @@ class Lang {
 
   /** Shared language cache; exposed so tests can reset it. */
   static store = store
+  /** Frontend key scan; exposed so tests can reset it. */
+  static frontendKeys = frontendKeys
 
   constructor(Odac) {
     this.#odac = Odac
@@ -326,6 +335,42 @@ class Lang {
       if (str === undefined) str = key
     }
     return Catalog.format(str, args)
+  }
+
+  /**
+   * Returns the translations the browser code needs, for `Odac.__()` in `view/js/`.
+   * Why: only entries used under `view/js/` are included, already resolved for the active
+   * language (with the default-language fallback), so the browser gets neither the rest of
+   * the dictionary nor a way to write to it. In debug mode, frontend entries missing from
+   * the language files are collected like server-side ones.
+   * @returns {Promise<{lang: string, t: object}|null>} null when the frontend uses no keys.
+   */
+  async client() {
+    const config = this.#odac.Config
+    const entries = await frontendKeys.entries(__dir, !!config?.debug)
+    if (entries.length === 0) return null
+    const lang = await this.#resolved()
+    const data = await store.load(lang)
+    const def = Catalog.defaultLanguage(config)
+    const fallback = def === lang ? null : await store.load(def)
+
+    if (this.#collect()) for (const {key, context} of entries) if (!Catalog.has(data, key, context)) store.collect(key, context, config)
+
+    const cached = clientCache.get(lang)
+    if (cached && cached.entries === entries && cached.data === data && cached.fallback === fallback) return cached.payload
+
+    const translated = []
+    const values = new Map()
+    for (const entry of entries) {
+      const value = Catalog.lookup(data, entry.key, entry.context) ?? (fallback && Catalog.lookup(fallback, entry.key, entry.context))
+      if (!value) continue
+      translated.push(entry)
+      values.set(Catalog.entryId(entry.key, entry.context), value)
+    }
+    const t = Catalog.build(translated, (key, context) => values.get(Catalog.entryId(key, context)))
+    const payload = Object.freeze({lang, t})
+    clientCache.set(lang, {entries, data, fallback, payload})
+    return payload
   }
 
   #collect() {

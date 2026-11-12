@@ -427,6 +427,10 @@ Odac.__(`status.${order.status}`)   // reported as a dynamic call
 
 Prefer literal keys where you can (e.g. a map from status to `Odac.__('Shipped')`), so the scan sees them.
 
+### Translations in Browser Code
+
+`Odac.__()` and `Odac.__x()` also work in `view/js/`; only the keys that code uses are sent to the browser. See the frontend guide, *Translations in the Browser*.
+
 ### Best Practices
 
 1. **Use descriptive keys**: Make translation keys meaningful and context-aware

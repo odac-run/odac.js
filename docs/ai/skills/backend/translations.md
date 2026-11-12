@@ -52,7 +52,10 @@ A key used with contexts holds an object of context -> translation (`""` = no co
 }
 ```
 
-### 4. Managing Language Files (CLI)
+### 4. Browser Code
+`view/js/` code uses `Odac.__()` / `Odac.__x()`; only the keys it uses are sent to the browser. See `frontend/translations.md`.
+
+### 5. Managing Language Files (CLI)
 ```bash
 npx odac lang:sync           # add keys used in code to every language file
 npx odac lang:check --strict # CI: fail on out-of-sync, unused or untranslated keys

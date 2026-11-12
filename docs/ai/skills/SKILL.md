@@ -41,3 +41,4 @@ Read the specific rule files based on whether you are working on the Backend or 
 - [frontend/navigation.md](frontend/navigation.md) - AJAX Navigation (SPA) behavior
 - [frontend/realtime.md](frontend/realtime.md) - WebSocket Hubs and EventSource usage
 - [frontend/scripts.md](frontend/scripts.md) - esbuild-powered JS/TS frontend pipeline
+- [frontend/translations.md](frontend/translations.md) - Translations in browser code (Odac.__ / Odac.__x)

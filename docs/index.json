@@ -403,6 +403,16 @@
           "title": "Shared WebSocket (Cross-Tab)"
         }
       ]
+    },
+    {
+      "file": "07-translations",
+      "title": "Translations",
+      "children": [
+        {
+          "file": "01-translations.md",
+          "title": "Translations in the Browser"
+        }
+      ]
     }
   ]
 }

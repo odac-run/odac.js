@@ -36,7 +36,7 @@ trigger: always_on
 | `src/Validator.js` | `backend/validation.md`, `backend/forms.md` |
 | `src/Config.js`, `src/Env.js` | `backend/config.md` |
 | `src/Mail.js` | `backend/mail.md` |
-| `src/Lang.js` | `backend/translations.md` |
+| `src/Lang.js`, `src/Lang/*`, `src/Cli/Lang.js` | `backend/translations.md`, `frontend/translations.md` |
 | `src/Var.js` | `backend/odac-var.md` |
 | `src/Server.js`, `src/Odac.js` | `backend/structure.md`, `backend/streaming.md` (timers) |
 | `client/odac.js` | `frontend/*.md` |

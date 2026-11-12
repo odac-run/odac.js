@@ -138,4 +138,65 @@ describe('odac.js navigation and tokens', () => {
     })
     expect(() => window.Odac.token()).not.toThrow()
   })
+
+  describe('translations', () => {
+    const serve = payload => (elementsById['odac-lang'] = {textContent: JSON.stringify(payload)})
+
+    it('translates with the translations sent for the page', () => {
+      serve({lang: 'tr', t: {Hello: 'Merhaba %s1', Items: '%s öğe', Gül: {'': 'Gül', verb: 'Gülümse'}}})
+      expect(window.Odac.lang()).toBe('tr')
+      expect(window.Odac.__('Hello', 'Emre')).toBe('Merhaba Emre')
+      expect(window.Odac.__('Items', 3)).toBe('3 öğe')
+      expect(window.Odac.__x('Gül', ' verb ')).toBe('Gülümse')
+      expect(window.Odac.__('Gül')).toBe('Gül')
+    })
+
+    it('returns the key for anything it has no translation for', () => {
+      serve({lang: 'tr', t: {Gül: {verb: 'Gülümse'}, Plain: 'Düz'}})
+      expect(window.Odac.__('Missing %s', 'x')).toBe('Missing x')
+      expect(window.Odac.__x('Gül', 'flower')).toBe('Gül')
+      expect(window.Odac.__x('Plain', 'verb')).toBe('Plain')
+      expect(window.Odac.__('constructor')).toBe('constructor')
+      expect(window.Odac.__('toString')).toBe('toString')
+      expect(window.Odac.__(42)).toBe(42)
+    })
+
+    it('inserts placeholder values literally', () => {
+      serve({lang: 'en', t: {Pair: '%s1 / %s2'}})
+      expect(window.Odac.__('Pair', '%s2', '$&')).toBe('%s2 / $&')
+    })
+
+    it('works without translations and ignores a malformed payload', () => {
+      expect(window.Odac.lang()).toBeNull()
+      expect(window.Odac.__('Hello')).toBe('Hello')
+      jest.resetModules()
+      jest.spyOn(console, 'error').mockImplementation(() => {})
+      elementsById['odac-lang'] = {textContent: '{nope'}
+      require('../../client/odac.js')
+      expect(window.Odac.__('Hello')).toBe('Hello')
+      console.error.mockRestore()
+    })
+
+    it('reports its language on navigation and takes the translations of a new one', () => {
+      serve({lang: 'en', t: {Hello: 'Hello'}})
+      click('/about')
+      const xhr = ajaxLoads()[0]
+      expect(xhr.setRequestHeader).toHaveBeenCalledWith('X-Odac-Lang', 'en')
+      xhr.responseText = JSON.stringify({output: {}, parts: {}, lang: {lang: 'tr', t: {Hello: 'Merhaba'}}})
+      xhr.responseURL = 'https://site.com/about'
+      xhr.onload()
+      expect(window.Odac.lang()).toBe('tr')
+      expect(window.Odac.__('Hello')).toBe('Merhaba')
+    })
+
+    it('keeps its translations when a navigation response carries none', () => {
+      serve({lang: 'en', t: {Hello: 'Hi'}})
+      click('/about')
+      const xhr = ajaxLoads()[0]
+      xhr.responseText = JSON.stringify({output: {}, parts: {}, lang: 'bogus'})
+      xhr.responseURL = 'https://site.com/about'
+      xhr.onload()
+      expect(window.Odac.__('Hello')).toBe('Hi')
+    })
+  })
 })

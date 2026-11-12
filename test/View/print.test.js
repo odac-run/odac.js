@@ -69,6 +69,55 @@ describe('View.print()', () => {
       expect(payload.title).toBe('Dynamic Title')
     })
   })
+  describe('browser translations', () => {
+    const payload = {lang: 'tr', t: {Hello: 'Merhaba </script><script>alert(1)</script>'}}
+
+    const renderAjax = async header => {
+      await fs.mkdir(path.join(global.__dir, 'view/content'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'view/content/ajax.html'), '<p>x</p>')
+      mockOdac.Lang.client = jest.fn(async () => payload)
+      mockOdac.Request.isAjaxLoad = true
+      mockOdac.Request.ajaxLoad = ['content']
+      mockOdac.Request.header = jest.fn(name => (name === 'X-Odac-Lang' ? header : undefined))
+      view.set({content: 'ajax'})
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    it('embeds them in the page so they cannot break out of the script element', async () => {
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'skeleton', 'langpage.html'), '<html><body></body></html>')
+      mockOdac.Lang.client = jest.fn(async () => payload)
+      view.set({skeleton: 'langpage'})
+      await view.print()
+      const html = mockOdac.Request.end.mock.calls[0][0]
+      const match = html.match(/<script type="application\/json" id="odac-lang">([^<]*)<\/script><\/body>/)
+      expect(match).not.toBeNull()
+      expect(JSON.parse(match[1])).toEqual(payload)
+      expect(html.match(/<\/script>/g)).toHaveLength(2)
+    })
+
+    it('omits them when the frontend uses no translations, and survives a failing lookup', async () => {
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'skeleton', 'nolang.html'), '<html><body></body></html>')
+      mockOdac.Lang.client = jest.fn(async () => {
+        throw new Error('boom')
+      })
+      view.set({skeleton: 'nolang'})
+      await view.print()
+      const html = mockOdac.Request.end.mock.calls[0][0]
+      expect(html).toContain('id="odac-data"')
+      expect(html).not.toContain('odac-lang')
+    })
+
+    it('sends them on navigation only when the browser holds another language', async () => {
+      expect((await renderAjax('en')).lang).toEqual(payload)
+      mockOdac.Request.end.mockClear()
+      view = new View(mockOdac)
+      expect((await renderAjax('tr')).lang).toBeUndefined()
+    })
+  })
+
   it('declares UTF-8 for full HTML pages', async () => {
     const skeletonDir = path.join(global.__dir, 'skeleton')
     await fs.mkdir(skeletonDir, {recursive: true})
