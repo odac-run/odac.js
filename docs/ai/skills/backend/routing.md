@@ -19,7 +19,7 @@ Routes are defined in the `route/` directory. ODAC uses a two-phase routing stra
     -   `Odac.Route.post(url, controller)`: Sensitive POST requests (CSRF enabled by default).
     -   `Odac.Route.ws(url, controller)`: Bidirectional and persistent WebSocket connections.
     -   `Odac.Route.authWs(url, controller)`: Authenticated WebSocket connections.
-2.  **Parameters**: Use `{id}` syntax for dynamic segments. Accessed via `Odac.request('id')`.
+2.  **Parameters**: Use `{id}` syntax for dynamic segments. Accessed via `Odac.request('id')`. Values arrive percent-decoded (`%2F` becomes `/` inside the value), so validate them before file-system use.
 3.  **Middlewares**: Chain logic using `.use('name')`. Global middlewares reside in `middleware/`.
 4.  **Error Handling**: Use `Odac.Route.error(code, controller)` for custom 404/500 pages.
 5.  **Auth Guard**: `Odac.Route.auth` automatically checks authentication before running the route.

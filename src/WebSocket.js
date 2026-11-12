@@ -62,6 +62,16 @@ const toPayload = data => {
   return Buffer.from(data)
 }
 
+// Route parameters are matched on the raw path and decoded once, like HTTP routes.
+function decodeParam(segment) {
+  if (!segment.includes('%')) return segment
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 class WebSocketClient {
   static CONNECTING = READY_STATE.CONNECTING
   static OPEN = READY_STATE.OPEN
@@ -656,7 +666,7 @@ class WebSocketServer {
         const params = {}
         const paramNames = pattern.match(/\{([^}]+)\}/g) || []
         paramNames.forEach((name, i) => {
-          params[name.slice(1, -1)] = match[i + 1]
+          params[name.slice(1, -1)] = decodeParam(match[i + 1])
         })
         return {
           handler: config.handler,

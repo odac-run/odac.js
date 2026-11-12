@@ -34,4 +34,10 @@ describe('WebSocketServer Route Management', () => {
     const result = server.getRoute('/chat/general/user/42')
     expect(result.params).toEqual({room: 'general', userId: '42'})
   })
+
+  it('percent-decodes parameter values', () => {
+    server.route('/room/{id}', jest.fn())
+    expect(server.getRoute('/room/caf%C3%A9%20bar').params).toEqual({id: 'café bar'})
+    expect(server.getRoute('/room/50%').params).toEqual({id: '50%'})
+  })
 })

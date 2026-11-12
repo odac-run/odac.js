@@ -30,6 +30,8 @@ Defines a route that responds to `GET` requests. This is ideal for API endpoints
 Odac.Route.get('/api/users/{id}', 'api/users.get', { token: false });
 ```
 
+Parameter values are percent-decoded before the controller sees them: `/api/users/John%20Doe` gives `Odac.request('id') === 'John Doe'`. An encoded slash (`%2F`) stays inside one parameter and decodes to `/`, so validate a parameter before using it in a file path.
+
 #### `post(path, controller, options)`
 Defines a route that responds to `POST` requests, typically used for form submissions. The `{ token: false }` option works here as well, but should be used with caution as POST routes are primary targets for CSRF attacks.
 

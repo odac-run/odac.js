@@ -12,6 +12,20 @@ const {WebSocketServer} = require('./WebSocket.js')
 let routes2 = {}
 const StaticFile = require('./Route/StaticFile.js')
 
+/**
+ * Percent-decodes one URL segment for a route parameter (`/user/John%20Doe` → `John Doe`).
+ * Why: matching runs on the raw path so an encoded `/` (`%2F`) never splits a segment; the
+ * value handed to the controller is decoded once. Malformed escapes are kept as sent.
+ */
+function decodeParam(segment) {
+  if (!segment.includes('%')) return segment
+  try {
+    return decodeURIComponent(segment)
+  } catch {
+    return segment
+  }
+}
+
 // HTTP status set by abort()/redirect() on a WebSocket request → close frame.
 const WS_REJECT = {401: [4001, 'Unauthorized'], 403: [4003, 'Forbidden']}
 
@@ -411,7 +425,7 @@ class Route {
 
       const params = {}
       for (const {index, name} of paramMap) {
-        params[name] = urlSegments[index]
+        params[name] = decodeParam(urlSegments[index])
       }
 
       return {

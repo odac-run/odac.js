@@ -286,6 +286,28 @@ describe('Route.check()', () => {
       expect(mockOdac.Request.data.url.postId).toBe('99')
     })
 
+    it('percent-decodes parameter values', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/user/{name}/{slug}', handler)
+
+      const mockOdac = createMockOdac('/user/John%20Doe/a%2Fb%C3%BC')
+      await route.check(mockOdac)
+
+      expect(handler).toHaveBeenCalled()
+      expect(mockOdac.Request.data.url.name).toBe('John Doe')
+      expect(mockOdac.Request.data.url.slug).toBe('a/bü')
+    })
+
+    it('keeps a malformed escape as sent', async () => {
+      const handler = jest.fn().mockReturnValue({ok: true})
+      await setupParamRoute(route, '/user/{name}', handler)
+
+      const mockOdac = createMockOdac('/user/100%')
+      await route.check(mockOdac)
+
+      expect(mockOdac.Request.data.url.name).toBe('100%')
+    })
+
     it('should not match when static segments differ', async () => {
       const handler = jest.fn().mockReturnValue({ok: true})
       await setupParamRoute(route, '/users/{id}', handler)
