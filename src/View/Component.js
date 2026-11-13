@@ -172,8 +172,8 @@ function split(attributes, declared) {
   return {props, attrs: passed.size > 0 ? new Attributes(passed) : EMPTY_ATTRIBUTES}
 }
 
-// Runs the caller's children: the loose content becomes the default slot and each
-// `<odac:slot name>` registers a named slot that renders when the component prints it.
+// Runs the caller's children: the loose content becomes the default slot and each named
+// `<odac:slot name>` registers a slot that renders when the component prints it.
 async function slots(scope, children) {
   if (!children) return EMPTY_SLOTS
   const collected = Object.create(null)
@@ -192,7 +192,7 @@ async function slots(scope, children) {
       collected[name] = guard(renderSlot)
     })
   ).trim()
-  if (content && !collected.default) collected.default = async () => content
+  if (content) collected.default = async () => content
   return collected
 }
 
@@ -222,7 +222,7 @@ async function render(scope, name, line, attributes, children) {
   try {
     return await component.fn(scope.odac, ...scope.helpers, nested, props, attrs, collected)
   } catch (e) {
-    throw Template.failure(e, {file, module: component.name, chain})
+    throw Template.failure(e, {file, module: component.name, headerLine: component.headerLine, chain})
   }
 }
 

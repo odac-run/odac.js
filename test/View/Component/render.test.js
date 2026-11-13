@@ -52,6 +52,27 @@ describe('View components', () => {
       expect(await page('<c:raw data-id="7" title="t" />')).toBe('7 t')
     })
 
+    it('lets a default await, and use the props declared before it', async () => {
+      await app.write(
+        'view/components/total.html',
+        `<odac:props price="await Promise.resolve(10)" total="price * 2" />\n<b>{{ price }}/{{ total }}</b>`
+      )
+      expect(await page('<c:total /> <c:total :price="3" />')).toBe('<b>10/20</b> <b>3/6</b>')
+    })
+
+    it('reports a failing default at the <odac:props> line', async () => {
+      await app.write('view/components/broken.html', `<p>first</p>\n<odac:props label="missing.value" />\n<span>{{ label }}</span>`)
+      expect(await page('<c:broken label="ok" />')).toBe('<p>first</p>\n\n<span>ok</span>')
+      expect(await page('<c:broken />')).toBeUndefined()
+      expect(app.logged()).toContain('ReferenceError: missing is not defined\n  in line 2\n  of "./view/components/broken.html"')
+    })
+
+    it('reports a default that does not parse at the <odac:props> line', async () => {
+      await app.write('view/components/unparsed.html', `<p>first</p>\n<p>second</p>\n<odac:props label="1 +" />`)
+      expect(await page('<c:unparsed />')).toBeUndefined()
+      expect(app.logged()).toContain('\n  in line 3\n  of "./view/components/unparsed.html"\n  used in "./view/content/page1.html"')
+    })
+
     it('answers 500 when a required prop is missing, naming the caller', async () => {
       await app.write('view/components/needs.html', '<odac:props :user />\n{{ user.name }}')
       expect(await page('<p>x</p>\n<c:needs />')).toBeUndefined()
@@ -131,6 +152,16 @@ describe('View components', () => {
         variables: {show: false}
       })
       expect(html).toContain('<footer>Default footer</footer>')
+    })
+
+    // A paired default `<odac:slot>` inside a component tag prints the wrapper's own slot; it is
+    // not a slot provided to the inner component, which would drop what the wrapper was given.
+    it('prints its own default slot, with a fallback, inside another component', async () => {
+      await app.write('view/components/box.html', '<c:card title="Box"><div class="box"><odac:slot>Empty box</odac:slot></div></c:card>')
+      expect(await page('<c:box>Given</c:box>')).toContain('<div class="box">Given</div>')
+      expect(await page('<c:box />')).toContain('<div class="box">Empty box</div>')
+      // In a page there is no slot to print: the fallback is the content of the component.
+      expect(await page('<c:card><odac:slot>Loose</odac:slot></c:card>')).toContain('</h3>\nLoose\n<footer>')
     })
 
     it('forwards slots through a wrapping component', async () => {

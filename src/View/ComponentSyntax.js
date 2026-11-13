@@ -12,8 +12,11 @@ const {isLocalName} = require('./Identifiers')
  *   `:is="expr"` for a name chosen at render time) call the `__r` runtime (see Component.js).
  *   Children compile into a closure in the caller's scope, so loop variables and locals of the
  *   page stay available inside slot content.
- * - `<odac:slot name="x">` directly inside a component tag provides a named slot; anywhere else
- *   it outputs the current component's slot, with its children as fallback content.
+ * - `<odac:slot name="x">` with content, inside a component tag, provides that named slot.
+ *   Everywhere else, and always for the default slot, `<odac:slot>` outputs the current
+ *   component's slot, with its children as fallback content. The default slot is never provided
+ *   with a tag (loose content is the default slot), so a wrapping component can write
+ *   `<c:card><odac:slot>fallback</odac:slot></c:card>` without swallowing what it was given.
  * - `<odac:props a="default" b />` declares a component's props (b is required).
  * - `<odac:once>`, `<style once>` and `<script once>` render once per response, however often
  *   the template containing them renders.
@@ -168,15 +171,16 @@ function checkedName(name, line) {
  * @param {object} [options]
  * @param {boolean} [options.component] The template is a component: `<odac:props>` is allowed.
  * @param {string} [options.file] Template path; identifies its `once` blocks within a response.
- * @returns {{content: string, props: Array<{name: string, value: (string|undefined)}>}}
- *   `value` is the default expression; undefined marks a required prop.
+ * @returns {{content: string, props: Array<{name: string, value: (string|undefined)}>, propsLine: (number|undefined)}}
+ *   `value` is the default expression; undefined marks a required prop. `propsLine` is the line
+ *   of `<odac:props>`, where a failing default is reported.
  * @throws {TemplateError} On malformed or mismatched component markup.
  */
 function transform(source, {component = false, file = ''} = {}) {
   const token = new RegExp(TOKEN.source, 'g')
   const stack = []
   const props = []
-  let declaredProps = false
+  let propsLine
   let onceBlocks = 0
   const onceId = () => literal(`${file}#${onceBlocks++}`)
   let output = ''
@@ -228,7 +232,7 @@ function transform(source, {component = false, file = ''} = {}) {
       if (!SLOT_NAME.test(name)) throw new TemplateError(`Invalid slot name "${name}"`, at)
       const slot = `slots[${literal(name)}]`
       if (selfClosing) return `html += ${slot} ? await ${slot}() : '';`
-      if (stack.at(-1)?.kind === 'component') {
+      if (name !== 'default' && stack.at(-1)?.kind === 'component') {
         if (stack.at(-1).mode) {
           throw new TemplateError('A lazy component takes no slots: its content is the placeholder shown while it loads', at)
         }
@@ -242,8 +246,8 @@ function transform(source, {component = false, file = ''} = {}) {
     // odac:props
     if (!component) throw new TemplateError('<odac:props> is only allowed in components (view/components/)', at)
     if (!selfClosing) throw new TemplateError('<odac:props> must be self-closing: <odac:props ... />', at)
-    if (stack.length > 0 || declaredProps) throw new TemplateError('<odac:props> must appear once, outside other tags', at)
-    declaredProps = true
+    if (stack.length > 0 || propsLine !== undefined) throw new TemplateError('<odac:props> must appear once, outside other tags', at)
+    propsLine = at
     for (const {name, value} of attributes) {
       const prop = name.startsWith(':') ? name.slice(1) : name
       if (!isLocalName(prop)) throw new TemplateError(`Invalid prop name "${prop}"`, at)
@@ -322,7 +326,7 @@ function transform(source, {component = false, file = ''} = {}) {
 
   const unclosed = stack.pop()
   if (unclosed) throw new TemplateError(`<${unclosed.tag}> is never closed`, unclosed.line)
-  return {content: output + source.slice(last), props}
+  return {content: output + source.slice(last), props, propsLine}
 }
 
 module.exports = {TemplateError, transform}

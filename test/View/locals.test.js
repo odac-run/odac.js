@@ -50,6 +50,49 @@ describe('View locals from Odac.set()', () => {
     expect(cacheFiles()).toHaveLength(files)
   })
 
+  // Keys taken from input (`Odac.set(Odac.Request.data.post)`) that match words of the template
+  // must not compile a module per combination: past 32 sets one scoped module serves the rest.
+  it('stops compiling variants after 32 key sets and renders the rest from one scoped module', async () => {
+    const words = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta']
+    await app.write(
+      'view/content/words.html',
+      `<p>alpha beta gamma delta epsilon zeta eta</p>{{ typeof alpha }} {{ typeof eta }} {{ typeof html }}<script:odac>const beta = 'local'</script:odac> {{ beta }}`
+    )
+    const render = mask => {
+      const variables = {html: 'hijack', props: 'hijack'}
+      words.forEach((word, i) => {
+        if (mask & (1 << i)) variables[word] = i
+      })
+      return app.render('words', {variables, debug: false})
+    }
+    const expected = mask =>
+      `<p>alpha beta gamma delta epsilon zeta eta</p>${mask & 1 ? 'number' : 'undefined'} ${mask & 64 ? 'number' : 'undefined'} string local`
+
+    for (let mask = 0; mask < 100; mask++) expect(await render(mask)).toBe(expected(mask))
+    expect(cacheFiles()).toHaveLength(33)
+    // A set that compiled its own module keeps using it.
+    expect(await render(5)).toBe(expected(5))
+    expect(cacheFiles()).toHaveLength(33)
+  })
+
+  it('reports a failure in the scoped module at its template line', async () => {
+    await app.write('view/content/scoped.html', '<p>a0 a1 a2 a3 a4 a5</p>\n{{ a0 }}\n{{ missing.value }}')
+    const render = mask => {
+      const variables = {}
+      for (let i = 0; i < 6; i++) if (mask & (1 << i)) variables[`a${i}`] = i
+      return app.render('scoped', {variables, debug: false})
+    }
+    for (let mask = 0; mask < 32; mask++) await render(mask)
+    app.errors.mockClear()
+
+    // Key sets 32 and 33 are new: both render from the scoped module.
+    expect(await render(32)).toBeUndefined()
+    expect(app.logged()).toBe('ReferenceError: a0 is not defined\n  in line 2\n  of "./view/content/scoped.html"')
+    app.errors.mockClear()
+    expect(await render(33)).toBeUndefined()
+    expect(app.logged()).toBe('ReferenceError: missing is not defined\n  in line 3\n  of "./view/content/scoped.html"')
+  })
+
   it('renders set values from the production cache', async () => {
     await app.write('view/content/prod.html', '<p>{{ name }}</p>')
     expect(await app.render('prod', {variables: {name: 'one'}})).toBe('<p>one</p>')

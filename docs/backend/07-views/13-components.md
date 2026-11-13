@@ -44,7 +44,7 @@ The `c:` prefix cannot clash with real HTML or Web Components: custom element na
 <odac:props title="'Untitled'" size="'md'" count="0" :user />
 ```
 
-- Each value is a **JavaScript expression** used as the default: `'Untitled'` is a string, `0` a number.
+- Each value is a **JavaScript expression** used as the default: `'Untitled'` is a string, `0` a number. A default may use the props declared before it (`total="price * 2"`) and `await`.
 - A prop **without a value** (`:user` or `user`) is **required**. Using the component without it answers 500 and logs which view forgot it.
 - Declared props are variables inside the component: `{{ title }}`, `<odac:if condition="user.isAdmin">`.
 - Every value the caller passed is also on `props`, with kebab-case names in camelCase: `max-items="5"` → `props.maxItems`.
@@ -119,7 +119,8 @@ The content between the opening and closing tag is the **default slot**. `<odac:
 - `slots.footer` tells whether the caller provided a slot, so wrapping markup can be skipped.
 - Slot content renders in the **caller's** scope: loop variables and the page's variables work inside it.
 - A slot can be provided conditionally: `<odac:if condition="canEdit"><odac:slot name="actions">...</odac:slot></odac:if>`.
-- A wrapping component forwards its own slots by printing them inside another component: `<c:card><odac:slot /></c:card>`.
+- A wrapping component forwards its own slots by printing them inside another component: `<c:card><odac:slot /></c:card>`, or `<c:card><odac:slot>Fallback</odac:slot></c:card>` with a fallback.
+- Inside a component tag, `<odac:slot name="...">` **with content** always provides that slot to the component, however deep it sits in the tag's markup. To print your own named slot with a fallback there, wrap it in the slot you provide: `<odac:slot name="footer"><odac:slot name="footer">Fallback</odac:slot></odac:slot>`.
 
 ### Components Inside Components
 

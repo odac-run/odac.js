@@ -350,8 +350,9 @@ function compile(content, {file = ''} = {}) {
  */
 function compileTemplate(content, {file = '', components = false, component = false} = {}) {
   let props = []
-  if (components) ({content, props} = transform(content, {component, file}))
-  return {code: compile(content, {file}), props}
+  let propsLine
+  if (components) ({content, props, propsLine} = transform(content, {component, file}))
+  return {code: compile(content, {file}), props, propsLine}
 }
 
 /** Stable cache file name for a compiled template. */
