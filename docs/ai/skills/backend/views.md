@@ -154,7 +154,10 @@ Reusable markup in `view/components/`. File name = tag name: `view/components/ca
 - **Nesting and recursion** are supported (trees: a component rendering itself). Depth limit 50 → 500.
 - **Errors** (missing component, missing required prop, throw inside, mismatched `</c:x>`) answer 500 and log the file, line and the chain of views that used it.
 - A leading `:` on a component attribute is an ODAC expression; for Alpine/Vue bindings on a component tag use the long form (`x-bind:class`).
-- Components render in views and parts, not in skeleton files or mail templates.
+- **Dynamic**: `<odac:component :is="'widgets.' + w.type" :w="w" />`. The name is validated (no `../`), but map user input to allowed names instead of passing it through.
+- **Once per response**: `<style once>`, `<script once>`, `<odac:once>...</odac:once>`. Use them for a component's CSS/JS instead of repeating it per instance. Plain `<script>`/`<style>` content is not scanned for component tags.
+- **Push / stack**: `<odac:push to="head">...</odac:push>` sends content to `<odac:stack name="head" />` (usually in the skeleton `<head>`, and a `scripts` stack before `</body>`). Identical pushes print once; AJAX navigation sends them as `stacks` and the client inserts missing ones (scripts run after the content swap). Put component stylesheets/scripts in pushes, not inline per instance.
+- Components render in views, parts and mail templates (mail uses `view/mail/components/`). Skeletons do not render components; they hold `<odac:stack>` markers.
 - **From a controller**: `return Odac.View.component('cart.item', {item, class: 'highlight'})` renders the same markup as a string (AJAX/WebSocket partial updates).
 
 ### Reference Pattern

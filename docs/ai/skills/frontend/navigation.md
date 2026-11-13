@@ -83,6 +83,11 @@ The client automatically handles these scenarios without any configuration:
 
 The fade animation only runs on elements that actually receive new content. Unchanged parts stay fully visible throughout the navigation.
 
+### Component assets (`<odac:push>` stacks)
+- The response carries the next page's `<odac:push>` content as `stacks`. The client inserts the items the page does not have yet at the matching `<template data-odac-stack>` marker (rendered from `<odac:stack name>`), deduplicated by key.
+- Stylesheets and other items are inserted before the new content is shown. Pushed scripts run after the content is in place, once per page load.
+- Inline `<script>` inside a part's own HTML still does **not** run after AJAX navigation. Push the script, or use an `Odac.action({load: ...})` handler, when it must run on pages that use the component.
+
 ## View Transitions (Native Browser API)
 
 Elements with the `odac-transition` attribute automatically use the browser's View Transition API instead of the legacy fade animation. The attribute value becomes the `view-transition-name`, enabling per-element morphing between pages.

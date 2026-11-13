@@ -8,12 +8,19 @@ const {isLocalName} = require('./Identifiers')
  * walks the tags with a stack instead, so every `</c:card>` closes its own `<c:card>`, and emits
  * each tag as an `<odac:js>` block the compiler then treats like hand-written backend code.
  *
- * - `<c:name attr="..." :prop="expr">children</c:name>` / `<odac:component name="...">` call the
- *   `__c` runtime (see Component.js). Children compile into a closure in the caller's scope, so
- *   loop variables and locals of the page stay available inside slot content.
+ * - `<c:name attr="..." :prop="expr">children</c:name>` / `<odac:component name="...">` (or
+ *   `:is="expr"` for a name chosen at render time) call the `__r` runtime (see Component.js).
+ *   Children compile into a closure in the caller's scope, so loop variables and locals of the
+ *   page stay available inside slot content.
  * - `<odac:slot name="x">` directly inside a component tag provides a named slot; anywhere else
  *   it outputs the current component's slot, with its children as fallback content.
  * - `<odac:props a="default" b />` declares a component's props (b is required).
+ * - `<odac:once>`, `<style once>` and `<script once>` render once per response, however often
+ *   the template containing them renders.
+ * - `<odac:push to="head">` adds its content to the `<odac:stack name="head" />` of the page.
+ *
+ * The content of plain `<script>` and `<style>` elements is browser code, not markup: component
+ * tags inside it are left alone.
  *
  * Generated code is kept on one line and followed by the newlines the tag spanned, so compiled
  * lines stay aligned with the template for error reporting.
@@ -28,12 +35,17 @@ class TemplateError extends Error {
 }
 
 const COMPONENT_NAME = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/
+// Slot and stack names.
 const SLOT_NAME = /^[A-Za-z_][\w-]*$/
 // Group 1: a region whose content is not markup (backend JS and backend comments) and is skipped.
-// Group 2: `/` of a closing tag. Group 3: `c:` component name. Group 4: `odac:` tag name.
+// Group 2: a `<script>` or `<style>` element. Group 3: `/` of a closing tag.
+// Group 4: `c:` component name. Group 5: `odac:` tag name.
 const TOKEN =
-  /(<script:odac[^>]*>[\s\S]*?<\/script:odac>|<odac:js>[\s\S]*?<\/odac:js>|<!--odac[\s\S]*?(?:odac-->|-->)|\{\{--[\s\S]*?--\}\})|<(\/?)(?:c:([\w.-]+)|odac:(component|slot|props))(?=[\s/>])/g
+  /(<script:odac[^>]*>[\s\S]*?<\/script:odac>|<odac:js>[\s\S]*?<\/odac:js>|<!--odac[\s\S]*?(?:odac-->|-->)|\{\{--[\s\S]*?--\}\})|<(script|style)(?=[\s>])|<(\/?)(?:c:([\w.-]+)|odac:(component|slot|props|once|push))(?=[\s/>])/g
+// Tags that wrap content and cannot be self-closing.
+const CONTAINERS = new Set(['odac:once', 'odac:push'])
 const ATTRIBUTE = /([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
+const SPACED_ATTRIBUTE = new RegExp(`(\\s*)${ATTRIBUTE.source}`, 'g')
 const INTERPOLATION = /\{\{([\s\S]*?)\}\}|\{!!([\s\S]*?)!!\}/g
 
 // A JavaScript string literal that cannot end the surrounding <odac:js> block.
@@ -109,12 +121,31 @@ function attributeList(attributes, line) {
   return `[${pairs.join(', ')}]`
 }
 
-function staticName(attributes, tag, line) {
-  const index = attributes.findIndex(attribute => attribute.name === 'name')
-  if (index === -1) return {name: null, rest: attributes}
+// The static value of attribute `key` (e.g. name="..."), removed from the attribute list.
+function staticAttribute(attributes, key, tag, line) {
+  const index = attributes.findIndex(attribute => attribute.name === key)
+  if (index === -1) return {value: null, rest: attributes}
   const {value} = attributes[index]
-  if (value === true || /\{\{|\{!!/.test(value)) throw new TemplateError(`<${tag}> needs a static name="..."`, line)
-  return {name: value, rest: attributes.filter((_, i) => i !== index)}
+  if (value === true || /\{\{|\{!!/.test(value)) throw new TemplateError(`<${tag}> needs a static ${key}="..."`, line)
+  return {value, rest: attributes.filter((_, i) => i !== index)}
+}
+
+// The component name as a JS expression, and the attributes left for the component. `<c:name>`
+// and name="..." are literals checked here; `:is="expr"` is checked when it renders.
+function componentName(tag, attributes, line) {
+  if (tag.startsWith('c:')) return {name: checkedName(tag.slice(2), line), rest: attributes}
+  const dynamic = attributes.find(attribute => attribute.name === ':is')
+  const {value, rest} = staticAttribute(attributes, 'name', tag, line)
+  if (dynamic && value !== null) throw new TemplateError('<odac:component> takes name="..." or :is="...", not both', line)
+  if (value !== null) return {name: checkedName(value, line), rest}
+  if (!dynamic) throw new TemplateError('<odac:component> needs a name="..." or :is="..."', line)
+  if (dynamic.value === true || !dynamic.value.trim()) throw new TemplateError('":is" needs an expression', line)
+  return {name: `await (${expression(dynamic.value)})`, rest: rest.filter(attribute => attribute !== dynamic)}
+}
+
+function checkedName(name, line) {
+  if (!COMPONENT_NAME.test(name)) throw new TemplateError(`Invalid component name "${name}"`, line)
+  return literal(name)
 }
 
 /**
@@ -122,15 +153,18 @@ function staticName(attributes, tag, line) {
  * @param {string} source Template markup (after Form and Image transforms).
  * @param {object} [options]
  * @param {boolean} [options.component] The template is a component: `<odac:props>` is allowed.
+ * @param {string} [options.file] Template path; identifies its `once` blocks within a response.
  * @returns {{content: string, props: Array<{name: string, value: (string|undefined)}>}}
  *   `value` is the default expression; undefined marks a required prop.
  * @throws {TemplateError} On malformed or mismatched component markup.
  */
-function transform(source, {component = false} = {}) {
+function transform(source, {component = false, file = ''} = {}) {
   const token = new RegExp(TOKEN.source, 'g')
   const stack = []
   const props = []
   let declaredProps = false
+  let onceBlocks = 0
+  const onceId = () => literal(`${file}#${onceBlocks++}`)
   let output = ''
   let last = 0
   let line = 1
@@ -142,9 +176,9 @@ function transform(source, {component = false} = {}) {
     return line
   }
 
+  // `name` is a JS expression for the component name: a literal, or `:is` checked at render time.
   const call = (name, attributes, selfClosing, at, tag) => {
-    if (!COMPONENT_NAME.test(name)) throw new TemplateError(`Invalid component name "${name}"`, at)
-    const head = `html += await __c(${literal(name)}, ${at}, ${attributeList(attributes, at)}, `
+    const head = `html += await __r.component(${name}, ${at}, ${attributeList(attributes, at)}, `
     if (selfClosing) return `${head}null);`
     stack.push({kind: 'component', tag, line: at})
     return `${head}async (__provide) => { let html = '';`
@@ -152,16 +186,28 @@ function transform(source, {component = false} = {}) {
 
   const open = (tag, text, selfClosing, at) => {
     const attributes = parseAttributes(text)
-    if (tag.startsWith('c:')) return call(tag.slice(2), attributes, selfClosing, at, tag)
+    if (CONTAINERS.has(tag) && selfClosing) throw new TemplateError(`<${tag}> needs content and a closing </${tag}>`, at)
 
-    if (tag === 'odac:component') {
-      const {name, rest} = staticName(attributes, tag, at)
-      if (name === null) throw new TemplateError('<odac:component> needs a name="..."', at)
+    if (tag.startsWith('c:') || tag === 'odac:component') {
+      const {name, rest} = componentName(tag, attributes, at)
       return call(name, rest, selfClosing, at, tag)
     }
 
+    if (tag === 'odac:once') {
+      stack.push({kind: 'once', tag, line: at})
+      return `if (__r.once(${onceId()})) {`
+    }
+
+    if (tag === 'odac:push') {
+      const {value: name} = staticAttribute(attributes, 'to', tag, at)
+      if (name === null) throw new TemplateError('<odac:push> needs a to="..." stack name', at)
+      if (!SLOT_NAME.test(name)) throw new TemplateError(`Invalid stack name "${name}"`, at)
+      stack.push({kind: 'push', tag, line: at})
+      return `await __r.push(${literal(name)}, async () => { let html = '';`
+    }
+
     if (tag === 'odac:slot') {
-      const name = staticName(attributes, tag, at).name ?? 'default'
+      const name = staticAttribute(attributes, 'name', tag, at).value ?? 'default'
       if (!SLOT_NAME.test(name)) throw new TemplateError(`Invalid slot name "${name}"`, at)
       const slot = `slots[${literal(name)}]`
       if (selfClosing) return `html += ${slot} ? await ${slot}() : '';`
@@ -191,25 +237,55 @@ function transform(source, {component = false} = {}) {
   const close = (tag, at) => {
     const top = stack.pop()
     if (!top) throw new TemplateError(`</${tag}> has no opening tag`, at)
-    const matches = top.kind === 'component' ? top.tag === tag : tag === 'odac:slot'
-    if (!matches) throw new TemplateError(`</${tag}> does not match <${top.tag}> opened in line ${top.line}`, at)
-    return top.kind === 'slot' ? '}' : 'return html; });'
+    if (top.tag !== tag) throw new TemplateError(`</${tag}> does not match <${top.tag}> opened in line ${top.line}`, at)
+    return top.kind === 'slot' || top.kind === 'once' ? '}' : 'return html; });'
+  }
+
+  // A <script> or <style> element: its content is skipped; with `once` it renders once.
+  const element = (match, name) => {
+    const end = tagEnd(source, token.lastIndex)
+    if (end === -1) return
+    const closing = `</${name}>`
+    const closeAt = source.indexOf(closing, end + 1)
+    const text = source.slice(token.lastIndex, end)
+    const once = parseAttributes(text).some(attribute => attribute.name === 'once')
+    if (!once) {
+      token.lastIndex = closeAt === -1 ? end + 1 : closeAt + closing.length
+      return
+    }
+    const at = lineAt(match.index)
+    if (closeAt === -1) throw new TemplateError(`<${name} once> is never closed`, at)
+    // `once` is removed with the whitespace before it; line breaks stay for line alignment.
+    const attributes = text.replace(SPACED_ATTRIBUTE, (attribute, space, attributeName) =>
+      attributeName === 'once' ? space.replace(/[^\n]/g, '') : attribute
+    )
+    const opening = `<${name}${attributes}>`
+    const after = closeAt + closing.length
+    output +=
+      source.slice(last, match.index) +
+      `<odac:js>if (__r.once(${onceId()})) {</odac:js>${opening}${source.slice(end + 1, after)}<odac:js>}</odac:js>`
+    last = after
+    token.lastIndex = after
   }
 
   let match
   while ((match = token.exec(source))) {
     if (match[1]) continue
+    if (match[2]) {
+      element(match, match[2])
+      continue
+    }
     const at = lineAt(match.index)
     const end = tagEnd(source, token.lastIndex)
     if (end === -1) throw new TemplateError(`${match[0]} is never closed with ">"`, at)
 
-    const tag = match[3] !== undefined ? `c:${match[3]}` : `odac:${match[4]}`
+    const tag = match[4] !== undefined ? `c:${match[4]}` : `odac:${match[5]}`
     let text = source.slice(token.lastIndex, end)
     const selfClosing = /\/\s*$/.test(text)
     if (selfClosing) text = text.replace(/\/\s*$/, '')
 
     let code
-    if (match[2]) {
+    if (match[3]) {
       if (tag === 'odac:props' || selfClosing || text.trim()) throw new TemplateError(`Malformed closing tag </${tag}>`, at)
       code = close(tag, at)
     } else {

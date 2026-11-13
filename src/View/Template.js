@@ -13,7 +13,7 @@ const {cacheName, compileTemplate, TemplateError} = require('./Compiler')
  * failure inside a component nested five levels deep is reported exactly like one in a page.
  *
  * Every compiled module has the same signature:
- *   (Odac, get, __, __x, __c, props, attrs, slots, {locals} = props)
+ *   (Odac, get, __, __x, __r, props, attrs, slots, {locals} = props)
  * A view receives the request's `Odac.set()` values as `props` and declares the keys it uses as
  * locals; a component receives its attributes and declares its `<odac:props>`. The template body
  * runs in its own block so a `<script:odac>` declaration may reuse a local's name.
@@ -134,7 +134,7 @@ function source(loaded, locals) {
   const props = JSON.stringify(loaded.props.map(prop => prop.name))
   const required = JSON.stringify(loaded.props.filter(prop => prop.value === undefined).map(prop => prop.name))
   return (
-    `module.exports = async (Odac, get, __, __x, __c, props, attrs, slots${declarations}) => {\n` +
+    `module.exports = async (Odac, get, __, __x, __r, props, attrs, slots${declarations}) => {\n` +
     `let html = ''; {\n` +
     `${loaded.code}\n}\nreturn html.trim()\n}\n` +
     `module.exports.props = ${props}\nmodule.exports.required = ${required}\n`

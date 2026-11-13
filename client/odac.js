@@ -125,6 +125,7 @@ if (typeof window !== 'undefined') {
     #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
     #pendingHash = ''
+    #stackScripts = []
 
     constructor() {
       // In constructor we can't call this.data() easily if it uses 'this' for caching properly before init
@@ -978,6 +979,51 @@ if (typeof window !== 'undefined') {
       return textarea.value
     }
 
+    /**
+     * Inserts the `<odac:push>` content of a navigated page into the page's stacks.
+     * Why: a component on the next page may need CSS or a script the current page never loaded.
+     * Each stack marker (`<template data-odac-stack>`) lists the keys of the items it already
+     * has, so an item is inserted once however often pages using it are visited. It runs before
+     * the new content is swapped in (styles apply without a flash) and again after it, for the
+     * markers that came with the new content. Scripts are kept for #runStackScripts().
+     *
+     * @param {Object<string, Array<{key: string, html: string}>>} stacks - Response `stacks`.
+     */
+    #applyStacks(stacks) {
+      if (!stacks || typeof stacks !== 'object') return
+      for (const name of Object.keys(stacks)) {
+        if (!/^[A-Za-z_][\w-]*$/.test(name) || !Array.isArray(stacks[name])) continue
+        const marker = document.querySelector(`template[data-odac-stack="${name}"]`)
+        if (!marker || !marker.parentNode) continue
+        const keys = new Set((marker.getAttribute('data-odac-keys') || '').split(' ').filter(Boolean))
+        for (const item of stacks[name]) {
+          if (!item || typeof item.key !== 'string' || typeof item.html !== 'string' || keys.has(item.key)) continue
+          keys.add(item.key)
+          const holder = document.createElement('template')
+          holder.innerHTML = item.html
+          for (const node of Array.from(holder.content.childNodes)) {
+            if (node.nodeName === 'SCRIPT') this.#stackScripts.push({marker, node})
+            else marker.parentNode.insertBefore(node, marker)
+          }
+        }
+        marker.setAttribute('data-odac-keys', Array.from(keys).join(' '))
+      }
+    }
+
+    // Scripts parsed from HTML do not run; each pushed script is recreated so the browser runs it.
+    // A script whose marker was replaced with its part was queued again for the new marker.
+    #runStackScripts() {
+      const scripts = this.#stackScripts
+      this.#stackScripts = []
+      for (const {marker, node} of scripts) {
+        if (!marker.parentNode) continue
+        const script = document.createElement('script')
+        for (const attribute of Array.from(node.attributes)) script.setAttribute(attribute.name, attribute.value)
+        script.textContent = node.textContent
+        marker.parentNode.insertBefore(script, marker)
+      }
+    }
+
     load(url, callback, push = true) {
       if (this.#isNavigating) return false
 
@@ -1074,6 +1120,7 @@ if (typeof window !== 'undefined') {
 
           // Update tracked parts from server manifest
           if (data.parts) this.#loader.parts = data.parts
+          this.#applyStacks(data.stacks)
 
           // Determine which parts were removed by the new page
           const removedParts = []
@@ -1151,6 +1198,7 @@ if (typeof window !== 'undefined') {
             window.location.href = finalUrl
             return
           }
+          this.#applyStacks(data.stacks)
           if (finalUrl !== currentUrl && push) window.history.pushState(null, document.title, finalUrl + this.#pendingHash)
 
           const newPage = xhr.getResponseHeader('X-Odac-Page')
@@ -1208,6 +1256,8 @@ if (typeof window !== 'undefined') {
     }
 
     #handleLoadComplete(data, callback) {
+      this.#applyStacks(data.stacks)
+      this.#runStackScripts()
       this.#initForms()
 
       if (this.actions.load)

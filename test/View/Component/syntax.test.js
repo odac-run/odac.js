@@ -49,6 +49,31 @@ describe('Component syntax', () => {
     expect(transform(source).content).toBe(source)
   })
 
+  it('compiles :is into a component name chosen at render time', () => {
+    const {content} = transform('<odac:component :is="w.type" :w="w" />')
+    expect(content).toContain('__r.component(await (w.type), 1, [["w", await (w)]], null)')
+  })
+
+  it('wraps once blocks in a check identified by file and position', () => {
+    const {content} = transform('<odac:once>a</odac:once><style once>b{}</style><script\n  once defer>c()</script>', {file: 'f.html'})
+    expect(content).toContain('if (__r.once("f.html#0")) {</odac:js>a<odac:js>}')
+    expect(content).toContain('<odac:js>if (__r.once("f.html#1")) {</odac:js><style>b{}</style><odac:js>}</odac:js>')
+    expect(content).toContain('<odac:js>if (__r.once("f.html#2")) {</odac:js><script\n defer>c()</script><odac:js>}</odac:js>')
+  })
+
+  it('skips the content of plain <script> and <style> elements', () => {
+    const source = '<script>const t = "<c:card>"</script><style>/* </c:card> */</style><c:ok />'
+    const {content} = transform(source)
+    expect(content.startsWith('<script>const t = "<c:card>"</script><style>/* </c:card> */</style>')).toBe(true)
+    expect(content).toContain('__r.component("ok"')
+  })
+
+  it('compiles a push into a closure rendered in place', () => {
+    expect(transform('<odac:push to="head"><link></odac:push>').content).toBe(
+      `<odac:js>await __r.push("head", async () => { let html = '';</odac:js><link><odac:js>return html; });</odac:js>`
+    )
+  })
+
   it('declares props with defaults and required props', () => {
     const {props, content} = transform('<odac:props title="\'Untitled\'" :user count="1 + 1" />\n<p></p>', {component: true})
     expect(props).toEqual([
@@ -67,7 +92,15 @@ describe('Component syntax', () => {
     ['<c:card></c:card foo>', 'Malformed closing tag </c:card>', 1],
     ['<c:card title="x"', '<c:card is never closed with ">"', 1],
     ['<c:.bad />', 'Invalid component name ".bad"', 1],
-    ['<odac:component title="x" />', '<odac:component> needs a name="..."', 1],
+    ['<odac:component title="x" />', '<odac:component> needs a name="..." or :is="..."', 1],
+    ['<odac:component name="a" :is="b" />', '<odac:component> takes name="..." or :is="...", not both', 1],
+    ['<odac:component :is />', '":is" needs an expression', 1],
+    ['<odac:once />', '<odac:once> needs content and a closing </odac:once>', 1],
+    ['<odac:push to="head" />', '<odac:push> needs content and a closing </odac:push>', 1],
+    ['<odac:push>x</odac:push>', '<odac:push> needs a to="..." stack name', 1],
+    ['<odac:push to="a b">x</odac:push>', 'Invalid stack name "a b"', 1],
+    ['<odac:push to="head">\n</odac:once>', '</odac:once> does not match <odac:push> opened in line 1', 2],
+    ['<p>\n<style once>a{}', '<style once> is never closed', 2],
     ['<odac:component name="{{ n }}" />', '<odac:component> needs a static name="..."', 1],
     ['<odac:slot name="a b" />', 'Invalid slot name "a b"', 1],
     ['<c:x :="y" />', 'An attribute name is missing after ":"', 1],
@@ -90,6 +123,6 @@ describe('Component syntax', () => {
 
   it('compiles component markup only when asked, so mail templates keep it as text', () => {
     expect(compile('<c:card />')).toContain('<c:card />')
-    expect(compileTemplate('<c:card />', {components: true}).code).toContain('__c("card", 1, [], null)')
+    expect(compileTemplate('<c:card />', {components: true}).code).toContain('__r.component("card", 1, [], null)')
   })
 })

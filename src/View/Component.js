@@ -1,3 +1,4 @@
+const nodeCrypto = require('crypto')
 const Template = require('./Template')
 
 /**
@@ -9,10 +10,13 @@ const Template = require('./Template')
  * (trees, menus), and its scope holds only its props, so it renders the same wherever it is used.
  */
 
+// Where page components live; mail templates pass their own directory (view/mail/components).
 const DIRECTORY = './view/components'
 const NAME = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/
 // Deep enough for real trees, shallow enough to stop a component that renders itself forever.
 const MAX_DEPTH = 50
+// Where `<odac:push to="name">` content is printed: `<odac:stack name="name" />`.
+const STACK_MARKER = /<odac:stack\s+name=(["'])([A-Za-z_][\w-]*)\1\s*\/?>(?:\s*<\/odac:stack>)?/g
 const ESCAPES = {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}
 const EMPTY_SLOTS = Object.freeze(Object.create(null))
 
@@ -95,18 +99,62 @@ class Attributes {
 const EMPTY_ATTRIBUTES = new Attributes()
 
 /**
- * Creates the `__c` function a compiled template calls for each component tag.
- * @param {object} scope
- * @param {object} scope.odac Request context.
- * @param {Function[]} scope.helpers `[get, __, __x]` passed to every template.
- * @param {string} scope.file Template that contains the component tags.
- * @param {string|null} scope.module Compiled module name of `scope.file`.
- * @param {string[]} scope.chain Templates that rendered `scope.file`, nearest first.
- * @param {Set<string>} scope.seen Templates checked for changes in this request.
- * @returns {Function}
+ * Per-response state shared by every template of one render: the `once` blocks already printed
+ * and the content pushed to each stack (insertion-ordered, identical pushes kept once).
+ * @returns {{once: Set<string>, stacks: Map<string, Set<string>>}}
  */
-function caller(scope) {
-  return (name, line, attributes, children) => render(scope, name, line, attributes, children)
+function createState() {
+  return {once: new Set(), stacks: new Map()}
+}
+
+/**
+ * The `__r` object a compiled template calls for component tags, `once` blocks and pushes.
+ *
+ * Why: one runtime per template keeps the template's place in the component chain (for errors
+ * and the nesting limit) while sharing the response's `once` and stack state.
+ */
+class Runtime {
+  #scope
+
+  /**
+   * @param {object} scope
+   * @param {object} scope.odac Request context.
+   * @param {Function[]} scope.helpers `[get, __, __x]` passed to every template.
+   * @param {string} scope.file Template that contains the tags.
+   * @param {string|null} scope.module Compiled module name of `scope.file`.
+   * @param {string[]} scope.chain Templates that rendered `scope.file`, nearest first.
+   * @param {Set<string>} scope.seen Templates checked for changes in this response.
+   * @param {object} scope.state Shared response state (see createState()).
+   * @param {string} [scope.directory] Component directory, `./view/components` by default.
+   */
+  constructor(scope) {
+    this.#scope = scope
+  }
+
+  /** Renders `<c:name>`. */
+  component(name, line, attributes, children) {
+    return render(this.#scope, name, line, attributes, children)
+  }
+
+  /** @returns {boolean} True the first time block `id` renders in this response. */
+  once(id) {
+    const printed = this.#scope.state.once
+    if (printed.has(id)) return false
+    printed.add(id)
+    return true
+  }
+
+  /**
+   * Renders `<odac:push to="stack">` content where it appears (in the template's scope) and
+   * keeps it for the page's `<odac:stack name="stack" />`.
+   */
+  async push(stack, renderContent) {
+    const html = (await renderContent()).trim()
+    if (!html) return
+    const stacks = this.#scope.state.stacks
+    if (!stacks.has(stack)) stacks.set(stack, new Set())
+    stacks.get(stack).add(html)
+  }
 }
 
 function split(attributes, declared) {
@@ -152,7 +200,7 @@ async function render(scope, name, line, attributes, children) {
     throw Template.failure(new Error(`Components are nested more than ${MAX_DEPTH} levels deep at "${name}"`), origin)
   }
 
-  const file = `${DIRECTORY}/${name.replace(/\./g, '/')}.html`
+  const file = `${scope.directory ?? DIRECTORY}/${name.replace(/\./g, '/')}.html`
   const chain = [scope.file, ...scope.chain]
   const component = await Template.load(file, scope.odac, {component: true, seen: scope.seen, chain})
   if (!component) throw Template.failure(new Error(`Component "${name}" not found (${file})`), origin)
@@ -162,7 +210,7 @@ async function render(scope, name, line, attributes, children) {
   if (missing !== undefined) throw Template.failure(new Error(`Component "${name}" requires the "${missing}" prop`), origin)
 
   const collected = await slots(scope, children)
-  const nested = caller({...scope, file, module: component.name, chain})
+  const nested = new Runtime({...scope, file, module: component.name, chain})
   try {
     return await component.fn(scope.odac, ...scope.helpers, nested, props, attrs, collected)
   } catch (e) {
@@ -170,4 +218,52 @@ async function render(scope, name, line, attributes, children) {
   }
 }
 
-module.exports = {Attributes, EMPTY_ATTRIBUTES, EMPTY_SLOTS, caller, render}
+/**
+ * The content pushed in this response, per stack, each item with a key derived from its HTML.
+ * Why: the browser keeps the keys of what a page already has and inserts only new items when
+ * AJAX navigation brings the pushes of the next page.
+ * @param {object} state Response state (see createState()).
+ * @returns {Object<string, Array<{key: string, html: string}>>|null} null when nothing was pushed.
+ */
+function stackItems(state) {
+  if (state.stacks.size === 0) return null
+  const stacks = {}
+  for (const [name, items] of state.stacks) {
+    stacks[name] = [...items].map(html => ({key: nodeCrypto.hash('sha1', html).slice(0, 16), html}))
+  }
+  return stacks
+}
+
+/**
+ * Replaces `<odac:stack name="..." />` markers with the content pushed to them.
+ *
+ * Why: a component used in the page body needs its CSS in `<head>` or its script before
+ * `</body>`, which render before or outside the component. Markers are filled after every part
+ * has rendered, so a push from any part reaches any marker. In a page each marker becomes an
+ * inert `<template data-odac-stack>` holding the keys of what precedes it, where AJAX navigation
+ * inserts the pushes of the next page that are not on the page yet. Only the first marker of a
+ * name is filled; repeats are removed.
+ * @param {string} html Rendered page, part or mail.
+ * @param {object} state Response state (see createState()).
+ * @param {object} [options]
+ * @param {boolean} [options.content] Print the pushed items. A part sent to the browser omits
+ *   them: the browser inserts them from the response's `stacks`.
+ * @param {boolean} [options.marker] Leave the `<template>` marker (pages; not mail).
+ * @returns {string}
+ */
+function fillStacks(html, state, {content = true, marker = true} = {}) {
+  if (!html.includes('<odac:stack')) return html
+  const items = content ? stackItems(state) : null
+  const filled = new Set()
+  return html.replace(STACK_MARKER, (match, quote, name) => {
+    if (filled.has(name)) return ''
+    filled.add(name)
+    const pushed = items?.[name] ?? []
+    const printed = pushed.map(item => item.html).join('\n')
+    if (!marker) return printed
+    const keys = pushed.map(item => item.key).join(' ')
+    return `${printed}<template data-odac-stack="${name}" data-odac-keys="${keys}"></template>`
+  })
+}
+
+module.exports = {Attributes, EMPTY_ATTRIBUTES, EMPTY_SLOTS, Runtime, createState, fillStacks, render, stackItems}

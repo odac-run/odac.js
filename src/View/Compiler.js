@@ -356,7 +356,7 @@ function compile(content, {file = ''} = {}) {
  */
 function compileTemplate(content, {file = '', components = false, component = false} = {}) {
   let props = []
-  if (components) ({content, props} = transform(content, {component}))
+  if (components) ({content, props} = transform(content, {component, file}))
   return {code: compile(content, {file}), props}
 }
 

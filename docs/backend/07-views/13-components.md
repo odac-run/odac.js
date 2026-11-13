@@ -162,6 +162,83 @@ A component sees **only its props**, not the variables of the page that uses it.
 <odac:component name="ui.modal" title="Settings">...</odac:component>
 ```
 
+### Dynamic Components
+
+`:is` picks the component when the page renders, for dashboards and block-based content:
+
+```html
+<odac:for in="widgets" value="widget">
+  <odac:component :is="'widgets.' + widget.type" :data="widget" />
+</odac:for>
+```
+
+The name is checked like a written one: it must stay inside `view/components/` (`../` and slashes are rejected with a 500). Never build it from unchecked user input. Map input to the names you allow instead.
+
+### Rendering Once
+
+A component used twenty times on a page should not print its `<style>` twenty times. Add `once` to a `<style>` or `<script>` element, or wrap any markup in `<odac:once>`:
+
+```html
+<!-- view/components/tooltip.html -->
+<style once>.tooltip { position: absolute }</style>
+<script once>document.addEventListener('mouseover', showTooltip)</script>
+<odac:once><div id="tooltip-root"></div></odac:once>
+
+<span class="tooltip" data-text="{{ props.text }}"><odac:slot /></span>
+```
+
+A `once` block renders the first time it is reached in a response; later uses of the same template skip it. The next request renders it again.
+
+The content of plain `<script>` and `<style>` elements is left to the browser: component tags written inside them (for example in a JavaScript string) are not rendered.
+
+### Push and Stack
+
+A component in the page body often needs something in `<head>` (a stylesheet) or before `</body>` (a script). `<odac:push to="name">` sends content to the place marked `<odac:stack name="name" />`, usually in the skeleton:
+
+```html
+<!-- skeleton/main.html -->
+<head>
+  <title>My App</title>
+  <odac:stack name="head" />
+</head>
+<body>
+  <main>{{ CONTENT }}</main>
+  <odac:stack name="scripts" />
+</body>
+```
+
+```html
+<!-- view/components/chart.html -->
+<odac:props :points />
+<odac:push to="head"><link rel="stylesheet" href="/css/chart.css"></odac:push>
+<odac:push to="scripts"><script src="/js/chart.js"></script></odac:push>
+
+<canvas class="chart" data-points="{{ JSON.stringify(points) }}"></canvas>
+```
+
+- Identical pushes are printed once, so a component can push its assets every time it renders.
+- Pushed content renders in the scope where it is pushed (`{{ }}` works). It is printed where the stack is, even when the stack comes earlier in the page.
+- A stack can be in the skeleton or in any part. Only the first `<odac:stack>` of a name is filled.
+- **AJAX navigation:** the pushes of the next page are sent with the response. The browser adds the ones the page does not have yet, before the new content is shown (stylesheets apply without a flash). Pushed scripts run after the new content is in place, once per page load.
+- Stack markers are rendered as empty `<template data-odac-stack>` elements, which the browser ignores. They are where navigation inserts new items.
+
+### Components in Mail
+
+Mail templates use components from `view/mail/components/`. They are separate from the page components because email needs table layouts and inline styles:
+
+```html
+<!-- view/mail/components/button.html -->
+<odac:props :href label="'Open'" />
+<a href="{{ href }}" style="background:#4f46e5;color:#fff;padding:12px 20px;border-radius:6px">{{ label }}</a>
+```
+
+```html
+<!-- view/mail/welcome.html -->
+<c:button :href="url" label="Confirm your email" />
+```
+
+Props, slots, `once` and push work the same. A `<odac:stack name="styles" />` in the mail's `<head>` collects the `<style>` blocks its components push.
+
 ### Rendering From a Controller
 
 `Odac.View.component()` renders a component to an HTML string. Use it for AJAX responses and WebSocket pushes that update part of a page with the same markup the page uses:
@@ -193,4 +270,4 @@ This covers a missing component file, a missing required prop, an error inside t
 
 Each component compiles once to its own cached module. Rendering an instance is a function call (a few microseconds), with no file access in production. In debug mode a changed component is picked up on the next request without recompiling the views that use it. As with views, production caches components per process, so deploy (restart) to pick up changed files.
 
-Components are rendered in views and their parts. Skeleton files are static layouts and do not render components.
+Components are rendered in views, their parts and mail templates. Skeleton files are static layouts: they hold `<odac:stack>` markers but do not render components.

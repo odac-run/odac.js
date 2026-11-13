@@ -34,7 +34,7 @@ function project() {
     await fs.writeFile(file, html)
   }
 
-  state.view = ({variables = {}, debug = true} = {}) => {
+  state.view = ({variables = {}, debug = true, ajax = true} = {}) => {
     const stored = {}
     for (const key of Object.keys(variables)) stored[key] = {value: variables[key], ajax: false}
     state.odac = {
@@ -44,7 +44,7 @@ function project() {
       Request: {
         req: {url: '/test'},
         res: {finished: false},
-        isAjaxLoad: true,
+        isAjaxLoad: ajax,
         ajaxLoad: ['content'],
         clientParts: {},
         page: 'test_page',
@@ -71,6 +71,22 @@ function project() {
     view.set({content: name})
     await view.print()
     return state.odac.Request.end.mock.calls[0]?.[0]?.output?.content
+  }
+
+  // Renders `view/content/<name>.html` as a full page in `skeleton/main.html`; the HTML sent.
+  state.renderPage = async (name, options = {}) => {
+    const view = state.view({...options, ajax: false})
+    view.skeleton('main').set({content: name})
+    await view.print()
+    return state.odac.Request.end.mock.calls[0]?.[0]
+  }
+
+  // The AJAX navigation payload for `view/content/<name>.html`.
+  state.renderAjax = async (name, options) => {
+    const view = state.view(options)
+    view.set({content: name})
+    await view.print()
+    return state.odac.Request.end.mock.calls[0]?.[0]
   }
 
   // The logged error lines, joined for matching.

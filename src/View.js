@@ -66,6 +66,8 @@ class View {
   // Templates checked for changes during this request (debug mode reads each file once).
   #seen = new Set()
   #helpers
+  // `once` blocks and stack pushes of this response (see Component.createState()).
+  #state = Component.createState()
 
   constructor(odac) {
     this.#odac = odac
@@ -214,6 +216,10 @@ class View {
       this.#odac.Request.header('X-Odac-Page', this.#odac.Request.page || '')
       this.#languageHeaders(served, ['X-Odac', 'X-Odac-Lang'])
 
+      // A re-rendered part replaces the stack markers it contains; the browser inserts this
+      // response's pushes into them (and into the markers it already has) from `stacks`.
+      for (const key of Object.keys(output)) output[key] = Component.fillStacks(output[key], this.#state, {content: false})
+
       const response = {
         output: output,
         parts: currentParts,
@@ -223,6 +229,8 @@ class View {
         skeletonChanged: skeletonChanged
       }
       if (served) response.document = {lang: served.lang, dir: served.dir}
+      const stacks = Component.stackItems(this.#state)
+      if (stacks) response.stacks = stacks
       // The browser reports the translations it holds as `lang:v`; they are sent again when
       // the language or their content changed (a language file edited on the server).
       const translations = await this.#translations()
@@ -239,6 +247,7 @@ class View {
       result = await this.#readSkeleton(`./skeleton/${this.#part.skeleton}.html`)
       result = this.#annotateHtmlTag(result, served)
       result = await this.#fillSkeleton(result)
+      result = Component.fillStacks(result, this.#state)
     }
 
     if (result) {
@@ -361,7 +370,8 @@ class View {
       file: 'Odac.View.component()',
       module: null,
       chain: [],
-      seen: this.#seen
+      seen: this.#seen,
+      state: this.#state
     }
     return (await Component.render(scope, name, undefined, Object.entries(props ?? {}), null)).trim()
   }
@@ -383,9 +393,17 @@ class View {
     const {data, locals} = this.#data()
     const view = await Template.load(file, this.#odac, {locals, seen: this.#seen})
     if (!view) return ''
-    const __c = Component.caller({odac: this.#odac, helpers: this.#helpers, file, module: view.name, chain: [], seen: this.#seen})
+    const runtime = new Component.Runtime({
+      odac: this.#odac,
+      helpers: this.#helpers,
+      file,
+      module: view.name,
+      chain: [],
+      seen: this.#seen,
+      state: this.#state
+    })
     try {
-      return await view.fn(this.#odac, ...this.#helpers, __c, data, Component.EMPTY_ATTRIBUTES, Component.EMPTY_SLOTS)
+      return await view.fn(this.#odac, ...this.#helpers, runtime, data, Component.EMPTY_ATTRIBUTES, Component.EMPTY_SLOTS)
     } catch (e) {
       throw Template.failure(e, {file, module: view.name})
     }
