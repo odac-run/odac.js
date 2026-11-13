@@ -65,3 +65,8 @@ module.exports = User;
 -   **Naming**: If a class name conflicts with core services (like `Mail`), it is placed under `Odac.App` (e.g., `Odac.App.Mail`).
 -   **Separation**: Keep controllers focused on request/response; move all data processing and business logic to the `class/` directory.
 -   **Splitting large services**: Since subfolders aren't scanned, keep the loadable class file at the root of `class/` and `require()` submodules from a subfolder inside it (plain Node.js `require`, not auto-loading) — e.g. `class/Billing.js` requiring `./billing/invoiceHelpers.js`.
+
+## Runtime: TCP Port and Proxy Socket
+-   The app always listens on its TCP port (`PORT`, default `1071`). On an ODAC server, bridge apps also get `ODAC_PROXY_SOCKET` (e.g. `/odac-proxy/http.sock`); the framework then serves the same app on that unix socket too. The server sets it automatically; never set or hard-code it in app code, and never open your own listener for it.
+-   TCP remains the fallback: a socket that cannot be created is logged and the app keeps serving TCP. Operators disable sockets server-wide with `ODAC_BACKEND_SOCKETS=off`.
+-   Requests on the socket are trusted proxy traffic, so `Odac.Request.ip` and `Odac.Request.ssl` are the visitor's values exactly as over TCP. Use them; do not read `req.socket.remoteAddress`, which is empty on a unix socket.

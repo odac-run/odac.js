@@ -68,7 +68,7 @@ The ODAC Proxy passes the visitor's address and TLS state in `X-Odac-Connection-
 }
 ```
 
-Entries can be IP addresses, CIDR ranges or the names `loopback` and `private`; `[]` trusts no proxy. If you run behind a different reverse proxy on a trusted address (e.g. nginx on localhost), it must overwrite both headers, for example `proxy_set_header X-Odac-Connection-RemoteAddress $remote_addr;`, or a client can still set them.
+Entries can be IP addresses, CIDR ranges or the names `loopback` and `private`; `[]` trusts no proxy. A request that arrives on the ODAC Proxy's unix socket (`ODAC_PROXY_SOCKET`, see [Running Behind the ODAC Proxy](../01-overview/03-development-server.md#running-behind-the-odac-proxy)) has no peer address and is always treated as the proxy, whatever this list says; only the proxy can reach that socket. If you run behind a different reverse proxy on a trusted address (e.g. nginx on localhost), it must overwrite both headers, for example `proxy_set_header X-Odac-Connection-RemoteAddress $remote_addr;`, or a client can still set them.
 
 ### Request Headers
 
