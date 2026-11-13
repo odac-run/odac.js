@@ -37,7 +37,7 @@ Detailed instructions are organized into Backend and Frontend categories:
 - `backend/odac-var.md`: Odac.Var (Fluent String Manipulation, Hashing, Encryption).
 - `backend/utilities.md`: Flow Control (abort, direct, session).
 - `backend/validation.md`: Input sanitization and security checks.
-- `backend/views.md`: Template syntax, skeletons, and server-side JS.
+- `backend/views.md`: Template syntax, skeletons, components, and server-side JS.
 
 ### Frontend
 - `frontend/core.md`: Framework lifecycle, page scoping, and storage.

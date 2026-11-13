@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const {TemplateError, transform} = require('./ComponentSyntax')
 
 /**
  * Template compiler shared by View and Mail.
@@ -30,10 +31,6 @@ const FUNCTIONS = {
   break: {
     function: 'break;',
     arguments: {}
-  },
-  component: {
-    // TODO: Implement component
-    //   <odac:component name="navbar" title="Dashboard"/>
   },
   continue: {
     function: 'continue;',
@@ -343,9 +340,29 @@ function compile(content, {file = ''} = {}) {
   return result
 }
 
+/**
+ * Compiles a view or component template.
+ *
+ * Why: component markup needs a stack-based pass before the regex pipeline of compile(), and a
+ * component's `<odac:props>` declaration has to reach the module wrapper. Mail keeps calling
+ * compile() directly, where component tags stay plain text.
+ * @param {string} content Template markup.
+ * @param {object} [options]
+ * @param {string} [options.file] Template path, used in compile error messages.
+ * @param {boolean} [options.components] Compile `<c:*>`, `<odac:component>` and `<odac:slot>`.
+ * @param {boolean} [options.component] The template is a component (`<odac:props>` allowed).
+ * @returns {{code: string, props: Array<{name: string, value: (string|undefined)}>}}
+ * @throws {TemplateError} On malformed component markup.
+ */
+function compileTemplate(content, {file = '', components = false, component = false} = {}) {
+  let props = []
+  if (components) ({content, props} = transform(content, {component}))
+  return {code: compile(content, {file}), props}
+}
+
 /** Stable cache file name for a compiled template. */
 function cacheName(...parts) {
   return nodeCrypto.createHash('md5').update(parts.join('\u0000')).digest('hex')
 }
 
-module.exports = {cacheName, compile}
+module.exports = {cacheName, compile, compileTemplate, TemplateError}

@@ -3,6 +3,7 @@ const fsPromises = fs.promises
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 const Image = require('./View/Image')
+const Component = require('./View/Component')
 const Template = require('./View/Template')
 const {isLocalName} = require('./View/Identifiers')
 const {RenderError} = Template
@@ -343,6 +344,28 @@ class View {
     }
   }
 
+  /**
+   * Renders a component to HTML outside a view.
+   *
+   * Why: controllers answering an AJAX call or pushing over a WebSocket need the same markup a
+   * page renders with `<c:name>`, without duplicating it in a string or a separate view.
+   * @param {string} name Component name: `card` or `ui.card` (`view/components/ui/card.html`).
+   * @param {object} [props] Props and pass-through attributes, as on the tag.
+   * @returns {Promise<string>}
+   * @throws {Error} When the component is missing or throws (the error is logged first).
+   */
+  async component(name, props = {}) {
+    const scope = {
+      odac: this.#odac,
+      helpers: this.#helpers,
+      file: 'Odac.View.component()',
+      module: null,
+      chain: [],
+      seen: this.#seen
+    }
+    return (await Component.render(scope, name, undefined, Object.entries(props ?? {}), null)).trim()
+  }
+
   // The request's `Odac.set()` values. A view declares the keys it mentions as locals.
   #data() {
     const variables = this.#odac.Request.variables ?? {}
@@ -360,8 +383,9 @@ class View {
     const {data, locals} = this.#data()
     const view = await Template.load(file, this.#odac, {locals, seen: this.#seen})
     if (!view) return ''
+    const __c = Component.caller({odac: this.#odac, helpers: this.#helpers, file, module: view.name, chain: [], seen: this.#seen})
     try {
-      return await view.fn(this.#odac, ...this.#helpers, data)
+      return await view.fn(this.#odac, ...this.#helpers, __c, data, Component.EMPTY_ATTRIBUTES, Component.EMPTY_SLOTS)
     } catch (e) {
       throw Template.failure(e, {file, module: view.name})
     }

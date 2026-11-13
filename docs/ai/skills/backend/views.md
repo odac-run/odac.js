@@ -1,8 +1,8 @@
 ---
 name: backend-views-templates-skill
-description: ODAC server-side rendering guidelines for skeleton layouts, smart part diffing, template syntax, and safe output rendering.
+description: ODAC server-side rendering guidelines for skeleton layouts, smart part diffing, template syntax, components, and safe output rendering.
 metadata:
-  tags: backend, views, templates, ssr, xss-protection, skeleton, rendering, part-diffing, ajax-navigation
+  tags: backend, views, templates, ssr, xss-protection, skeleton, rendering, part-diffing, ajax-navigation, components, slots, props
 ---
 
 # Backend Views & Templates Skill
@@ -27,7 +27,8 @@ Views in ODAC are logic-light but powerful. They support automatic XSS protectio
 5.  **Conditionals**: Use `<odac:if condition="VAR"> ... </odac:if>`.
 6.  **Looping**: Use `<odac:for in="ARRAY" value="ITEM"> ... </odac:for>`.
 7.  **Server-Side JS**: Use `<script:odac>` for complex calculations during rendering.
-8.  **Variables are locals**: every `Odac.set()` key that is a plain identifier is a template variable (`{{ user.name }}`). Keys like `first-name` and reserved names (`class`, `html`, `props`, `get`, `Odac`) are not; read them with `get('first-name')`. Reading a key that was never set throws (500): set optional values to `null` or test `typeof x !== 'undefined'`.
+8.  **Variables are locals**: every `Odac.set()` key that is a plain identifier is a template variable (`{{ user.name }}`). Keys like `first-name` and reserved names (`class`, `html`, `props`, `attrs`, `slots`, `get`, `Odac`) are not; read them with `get('first-name')`. Reading a key that was never set throws (500): set optional values to `null` or test `typeof x !== 'undefined'`.
+9.  **Components**: repeated markup belongs in `view/components/*.html`, used as `<c:name>` (see below). Do not copy the same markup across views.
 
 ## Smart Part Diffing (AJAX Navigation)
 
@@ -140,9 +141,45 @@ module.exports = function (Odac) {
 <p>Tax: ${{ tax }}</p>
 ```
 
+## Components
+
+Reusable markup in `view/components/`. File name = tag name: `view/components/card.html` → `<c:card>`, `view/components/ui/modal.html` → `<c:ui.modal>`. Long form: `<odac:component name="ui.modal">`.
+
+### Rules
+- **Declare props** once at the top: `<odac:props title="'Untitled'" count="0" :user />`. Values are JS expressions used as defaults; a prop without a value is **required** (missing → 500). Declared props are variables (`{{ title }}`); every passed value is also on `props` (kebab-case → camelCase).
+- **Passing values**: `title="Text"` (string), `title="No. {{ id }}"` (interpolated string), `:user="expr"` (any JS value), `disabled` (`true`), `max-items="5"` → `maxItems`.
+- **Pass-through attributes**: undeclared attributes (`class`, `id`, `data-*`, `aria-*`) go to `attrs`. Print with `{!! attrs !!}` on the root element. Merge classes with `{!! attrs.class('card') !!}`; never write `class="..."` next to `{!! attrs !!}` (duplicate attribute). `attrs.except('id')`, `attrs.only('id')`, `attrs.has('id')`, `attrs.get('id')`. `true` → bare attribute, `false`/`null`/`undefined` → omitted. Values are escaped.
+- **Slots**: children = default slot, printed with `<odac:slot />` (children of that tag are the fallback). Named: provide with `<odac:slot name="footer">...</odac:slot>` directly inside the component tag; print with `<odac:slot name="footer" />` or `<odac:slot name="footer">fallback</odac:slot>` in the component. Test presence with `slots.footer`.
+- **Scope is isolated**: a component sees only its props plus `Odac`, `get()`, `__()`. Pass page data explicitly (`:user="user"`). Slot content renders in the caller's scope (loop variables work).
+- **Nesting and recursion** are supported (trees: a component rendering itself). Depth limit 50 → 500.
+- **Errors** (missing component, missing required prop, throw inside, mismatched `</c:x>`) answer 500 and log the file, line and the chain of views that used it.
+- A leading `:` on a component attribute is an ODAC expression; for Alpine/Vue bindings on a component tag use the long form (`x-bind:class`).
+- Components render in views and parts, not in skeleton files or mail templates.
+- **From a controller**: `return Odac.View.component('cart.item', {item, class: 'highlight'})` renders the same markup as a string (AJAX/WebSocket partial updates).
+
+### Reference Pattern
+```html
+<!-- view/components/modal.html -->
+<odac:props title />
+<div {!! attrs.class('modal') !!}>
+  <header>{{ title }}</header>
+  <div class="body"><odac:slot>Nothing here.</odac:slot></div>
+  <odac:if condition="slots.footer"><footer><odac:slot name="footer" /></footer></odac:if>
+</div>
+
+<!-- view/content/users.html -->
+<odac:for in="users" value="user">
+  <c:modal title="Delete {{ user.name }}" id="delete-{{ user.id }}">
+    <p>This cannot be undone.</p>
+    <odac:slot name="footer"><c:button variant="danger" :disabled="!user.deletable">Delete</c:button></odac:slot>
+  </c:modal>
+</odac:for>
+```
+
 ## Security Best Practices
 -   **Both `{{ }}` and `<odac var>` are XSS-safe**: Both apply HTML escaping by default.
 -   **Raw output requires trust**: Only use `raw` / `{!! !!}` with content you fully control. Never with user input.
+-   **Component values are escaped where printed**: `{{ prop }}` and `{!! attrs !!}` escape; there is no raw prop. Pass trusted HTML through a slot instead.
 -   **Limit `<script:odac>`**: Do not perform database queries or API calls inside views; keep them in the controller.
 
 ## Render Errors and Production Caching

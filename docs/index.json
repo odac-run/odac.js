@@ -223,6 +223,10 @@
         {
           "file": "12-scripts-and-typescript.md",
           "title": "Scripts & TypeScript"
+        },
+        {
+          "file": "13-components.md",
+          "title": "Components"
         }
       ]
     },
