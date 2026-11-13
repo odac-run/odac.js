@@ -1,5 +1,6 @@
 const {PassThrough} = require('stream')
 const OdacRequest = require('../../src/Request')
+const {markProxySocket} = require('../../src/Request/TrustedProxy')
 
 // The constructor runs for every HTTP request and every WebSocket upgrade.
 // HTTP/1.0 does not require a Host header, so it must cope with one missing.
@@ -78,6 +79,52 @@ describe('Request.constructor()', () => {
       new OdacRequest('id', req, null, {})
       expect(req.headers['x-odac-connection-remoteaddress']).toBeUndefined()
       expect(req.headers['x-odac-connection-ssl']).toBeUndefined()
+    })
+  })
+
+  // A connection on the ODAC proxy's unix socket (ODAC_PROXY_SOCKET) has no peer address.
+  describe('proxy unix socket', () => {
+    const proxyHeaders = {host: 'example.com', 'x-odac-connection-remoteaddress': '203.0.113.7', 'x-odac-connection-ssl': 'true'}
+
+    function socketConnection() {
+      const socket = {remoteAddress: undefined}
+      markProxySocket(socket)
+      return socket
+    }
+
+    it('honours the proxy headers on a connection from the proxy socket', () => {
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, socketConnection()), null, {})
+      expect(request.ip).toBe('203.0.113.7')
+      expect(request.ssl).toBe(true)
+      expect(request.fromTrustedProxy).toBe(true)
+    })
+
+    it('trusts the proxy socket regardless of trustedProxies', () => {
+      global.Odac.Config.request.trustedProxies = []
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, socketConnection()), null, {})
+      expect(request.ip).toBe('203.0.113.7')
+      expect(request.fromTrustedProxy).toBe(true)
+    })
+
+    it('reads the connection from req.socket as Node sets it', () => {
+      global.Odac.Config.request.trustedProxies = []
+      const req = makeReq({...proxyHeaders})
+      req.socket = socketConnection()
+      const request = new OdacRequest('id', req, null, {})
+      expect(request.ip).toBe('203.0.113.7')
+    })
+
+    it('leaves the address empty when the proxy sent none', () => {
+      const request = new OdacRequest('id', makeReq({host: 'example.com'}, socketConnection()), null, {})
+      expect(request.ip).toBe('')
+      expect(request.ssl).toBe(false)
+    })
+
+    it('does not trust a TCP socket that merely lost its remote address', () => {
+      const request = new OdacRequest('id', makeReq({...proxyHeaders}, {remoteAddress: undefined}), null, {})
+      expect(request.ip).toBe('')
+      expect(request.ssl).toBe(false)
+      expect(request.fromTrustedProxy).toBe(false)
     })
   })
 })

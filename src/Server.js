@@ -3,6 +3,7 @@ const nodeCrypto = require('crypto')
 const cluster = require('node:cluster')
 const os = require('node:os')
 const Stream = require('./Stream.js')
+const ProxySocket = require('./Server/ProxySocket.js')
 
 // How long a worker lets in-flight requests (downloads, slow uploads) finish
 // after shutdown starts before cutting them. Kept well under the primary's
@@ -86,12 +87,40 @@ module.exports = {
       const startedAt = new Map()
       let crashStreak = 0
 
+      // The primary owns the proxy socket's listening handle, so it alone clears a stale file
+      // and decides whether workers serve the socket. Workers get the resolved path, or an
+      // empty value for TCP only, so none of them touches the path on its own.
+      let proxySocket = null
+      let proxySocketId = null
+      let forkEnv
+
       const spawn = () => {
-        const worker = cluster.fork()
+        const worker = cluster.fork(forkEnv)
         if (worker) startedAt.set(worker.id, Date.now())
       }
 
-      for (let i = 0; i < numCPUs; i++) spawn()
+      const start = () => {
+        if (isShuttingDown) return
+        for (let i = 0; i < numCPUs; i++) spawn()
+      }
+
+      if (process.env[ProxySocket.ENV]) {
+        cluster.on('listening', (worker, address) => {
+          if (!proxySocket || address?.addressType !== -1 || address.address !== proxySocket) return
+          ProxySocket.identify(proxySocket).then(id => {
+            if (id) proxySocketId = id
+          })
+        })
+        ProxySocket.prepare()
+          .catch(() => null)
+          .then(target => {
+            proxySocket = target
+            forkEnv = {[ProxySocket.ENV]: target ?? ''}
+            start()
+          })
+      } else {
+        start()
+      }
 
       cluster.on('exit', (worker, code) => {
         const uptime = Date.now() - (startedAt.get(worker.id) ?? 0)
@@ -172,6 +201,8 @@ module.exports = {
 
         console.log('\x1b[32m[Shutdown]\x1b[0m All workers stopped.')
 
+        if (proxySocket) await ProxySocket.release(proxySocket, proxySocketId)
+
         // Phase 3: Release shared resources (order matters: DB → IPC → Storage)
         // Database.close() runs the WriteBuffer final flush, which reads the
         // buffered writes from the IPC store and falls back to an LMDB
@@ -209,50 +240,15 @@ module.exports = {
         gracefulShutdown('uncaughtException', 1)
       })
     } else {
-      const server = http.createServer((req, res) => {
-        return Odac.Route.request(req, res)
-      })
+      const handleRequest = (req, res) => Odac.Route.request(req, res)
 
       /**
-       * ENTERPRISE PERFORMANCE CONFIGURATION
-       * ------------------------------------
-       * 1. Keep-Alive: Set higher than the upstream Load Balancer/Proxy (usually 60s).
-       *    This prevents the "502 Bad Gateway" race condition where Node closes
-       *    an idle connection while the proxy attempts to reuse it.
+       * WebSocket upgrades run outside Route.request()'s try/catch, and Node
+       * strips its own socket error handler before emitting 'upgrade'. Any
+       * throw or socket reset here would otherwise escape as an uncaught
+       * exception and take down every connection on this worker.
        */
-      server.keepAliveTimeout = 65000 // 65 seconds
-      server.headersTimeout = 66000 // 66 seconds (Must be > keepAliveTimeout)
-
-      /**
-       * 2. Low Latency: Disable Nagle's Algorithm.
-       *    We want to send data immediately, even if the packet is small.
-       *    Critical for sub-millisecond API responses.
-       */
-      server.on('connection', socket => {
-        socket.setNoDelay(true)
-      })
-
-      /**
-       * 3. Connection Rotation: Force reset after 10k requests.
-       *    - Helps with Load Balancing (clients are forced to reconnect and potentially pick a new pod/worker).
-       *    - Mitigates long-term memory leaks in the TLS/Socket layer.
-       */
-      server.maxRequestsPerSocket = 10000
-
-      /**
-       * 4. Hard Timeout: Kill connection if request processing (headers + body) takes too long.
-       *    - Defaults to 0 (unlimited) or 5min in older Node.
-       *    - 30s is more than enough for an API; fail fast if the client is stuck.
-       */
-      server.requestTimeout = 30000 // 30 seconds
-
-      /**
-       * 5. WebSocket upgrades run outside Route.request()'s try/catch, and Node
-       *    strips its own socket error handler before emitting 'upgrade'. Any
-       *    throw or socket reset here would otherwise escape as an uncaught
-       *    exception and take down every connection on this worker.
-       */
-      server.on('upgrade', (req, socket, head) => {
+      const handleUpgrade = (req, socket, head) => {
         socket.on('error', () => socket.destroy())
         try {
           const id = nodeCrypto.randomUUID()
@@ -262,10 +258,54 @@ module.exports = {
           console.error(JSON.stringify({level: 'ERROR', message: 'WebSocket upgrade failed', error: e.message}))
           socket.destroy()
         }
-      })
+      }
+
+      // The TCP port and the proxy socket serve the same app, so both get the same handlers
+      // and tuning.
+      const createServer = () => {
+        const server = http.createServer(handleRequest)
+
+        /**
+         * ENTERPRISE PERFORMANCE CONFIGURATION
+         * ------------------------------------
+         * 1. Keep-Alive: Set higher than the upstream Load Balancer/Proxy (usually 60s).
+         *    This prevents the "502 Bad Gateway" race condition where Node closes
+         *    an idle connection while the proxy attempts to reuse it.
+         */
+        server.keepAliveTimeout = 65000 // 65 seconds
+        server.headersTimeout = 66000 // 66 seconds (Must be > keepAliveTimeout)
+
+        /**
+         * 2. Low Latency: Disable Nagle's Algorithm.
+         *    We want to send data immediately, even if the packet is small.
+         *    Critical for sub-millisecond API responses. A no-op on unix sockets.
+         */
+        server.on('connection', socket => {
+          socket.setNoDelay(true)
+        })
+
+        /**
+         * 3. Connection Rotation: Force reset after 10k requests.
+         *    - Helps with Load Balancing (clients are forced to reconnect and potentially pick a new pod/worker).
+         *    - Mitigates long-term memory leaks in the TLS/Socket layer.
+         */
+        server.maxRequestsPerSocket = 10000
+
+        /**
+         * 4. Hard Timeout: Kill connection if request processing (headers + body) takes too long.
+         *    - Defaults to 0 (unlimited) or 5min in older Node.
+         *    - 30s is more than enough for an API; fail fast if the client is stuck.
+         */
+        server.requestTimeout = 30000 // 30 seconds
+
+        server.on('upgrade', handleUpgrade)
+        return server
+      }
+
+      const server = createServer()
 
       /**
-       * 6. Without an 'error' listener a bind failure is an uncaught exception.
+       * 5. Without an 'error' listener a bind failure is an uncaught exception.
        *    A bind error cannot be fixed by retrying, so the worker exits with
        *    EXIT_FATAL and the primary stops the app with a clear error.
        */
@@ -274,12 +314,26 @@ module.exports = {
         if (BIND_SYSCALLS.has(err.syscall)) process.exit(EXIT_FATAL)
       })
 
+      /**
+       * 6. The ODAC proxy's unix socket, when ODAC_PROXY_SOCKET is set. It opens
+       *    before the TCP port so the server finds it as soon as the app is up.
+       *    The proxy falls back to TCP on any failed dial, so a socket error is
+       *    logged and never fatal.
+       */
+      const servers = [server]
+      const proxySocket = ProxySocket.socketPath()
+      if (proxySocket) {
+        const socketServer = createServer()
+        ProxySocket.listen(socketServer, proxySocket)
+        servers.push(socketServer)
+      }
+
       server.listen(port)
 
       /**
        * GRACEFUL SHUTDOWN — WORKER PROCESS
        * ──────────────────────────────────
-       * 1. Stop accepting new connections  (server.close)
+       * 1. Stop accepting new connections on every listener (server.close)
        * 2. End connections that never finish on their own: idle keep-alive
        *    sockets, WebSocket clients (1001) and SSE streams. Any of them
        *    would keep server.close() from calling back until the primary's
@@ -287,6 +341,9 @@ module.exports = {
        * 3. Give in-flight requests SHUTDOWN_GRACE to finish, then cut them
        * 4. Release worker-scoped resources (IPC pending requests, DB pools)
        * 5. Exit 0 (1 when the drain follows an uncaught exception)
+       *
+       * The proxy socket file is left alone: in a cluster its handle belongs
+       * to the primary and siblings may still serve it.
        */
       let isShuttingDown = false
       const drain = exitCode => {
@@ -294,10 +351,14 @@ module.exports = {
         isShuttingDown = true
         console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Closing server...`)
 
-        const graceTimer = setTimeout(() => server.closeAllConnections?.(), SHUTDOWN_GRACE)
+        const graceTimer = setTimeout(() => {
+          for (const s of servers) s.closeAllConnections?.()
+        }, SHUTDOWN_GRACE)
         graceTimer.unref()
 
-        server.close(async () => {
+        let open = servers.length
+        const onClosed = async () => {
+          if (--open > 0) return
           clearTimeout(graceTimer)
           try {
             await Odac.Ipc.close()
@@ -317,9 +378,10 @@ module.exports = {
           }
           console.log(`\x1b[36m[Worker ${process.pid}]\x1b[0m Server closed.`)
           process.exit(exitCode)
-        })
+        }
 
-        server.closeIdleConnections?.()
+        for (const s of servers) s.close(onClosed)
+        for (const s of servers) s.closeIdleConnections?.()
         Odac.Route.wsServer.closeAll(1001, 'Server shutting down')
         Stream.closeAll()
       }

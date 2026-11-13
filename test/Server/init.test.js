@@ -18,6 +18,7 @@ const http = require('http')
 const cluster = require('node:cluster')
 const Server = require('../../src/Server.js')
 const Stream = require('../../src/Stream.js')
+const ProxySocket = require('../../src/Server/ProxySocket.js')
 
 function makeFakeServer() {
   const server = new EventEmitter()
@@ -435,6 +436,242 @@ describe('Server.init()', () => {
       expect(global.Odac.instance).toHaveBeenCalledWith(expect.any(String), req, null)
       expect(global.Odac.Route.handleWebSocketUpgrade).toHaveBeenCalledWith(req, socket, head, param)
       expect(socket.destroy).not.toHaveBeenCalled()
+    })
+  })
+
+  // ODAC_PROXY_SOCKET: the primary owns the socket's listening handle in a cluster, so it
+  // clears a stale file once before forking and tells workers what to serve.
+  describe('proxy socket in the primary', () => {
+    const target = '/odac-proxy/http.sock'
+    let originalEnv
+
+    beforeEach(() => {
+      originalEnv = process.env.ODAC_PROXY_SOCKET
+      cluster.isPrimary = true
+      cluster.workers = {}
+      cluster.fork.mockReset()
+      cluster.fork.mockImplementation(() => ({id: 1}))
+      global.Odac = {
+        Config: {debug: true},
+        Route: {stopCron: jest.fn()},
+        Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn()},
+        Ipc: {close: jest.fn(async () => {})},
+        Database: {close: jest.fn(async () => {})}
+      }
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      if (originalEnv === undefined) delete process.env.ODAC_PROXY_SOCKET
+      else process.env.ODAC_PROXY_SOCKET = originalEnv
+    })
+
+    const flush = () => new Promise(resolve => setImmediate(resolve))
+
+    it('forks at once and never touches a socket when the variable is absent', () => {
+      delete process.env.ODAC_PROXY_SOCKET
+      const prepare = jest.spyOn(ProxySocket, 'prepare')
+
+      Server.init()
+
+      expect(prepare).not.toHaveBeenCalled()
+      expect(cluster.fork).toHaveBeenCalledWith(undefined)
+    })
+
+    it('clears the stale file before forking and hands workers the resolved path', async () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      let resolvePrepare
+      jest.spyOn(ProxySocket, 'prepare').mockReturnValue(new Promise(resolve => (resolvePrepare = resolve)))
+
+      Server.init()
+      expect(cluster.fork).not.toHaveBeenCalled()
+
+      resolvePrepare(target)
+      await flush()
+
+      expect(cluster.fork).toHaveBeenCalledWith({ODAC_PROXY_SOCKET: target})
+    })
+
+    it('keeps workers on TCP only when the path cannot be used', async () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      jest.spyOn(ProxySocket, 'prepare').mockResolvedValue(null)
+
+      Server.init()
+      await flush()
+
+      expect(cluster.fork).toHaveBeenCalledWith({ODAC_PROXY_SOCKET: ''})
+    })
+
+    it('respawns workers with the same decision', async () => {
+      jest.useFakeTimers()
+      try {
+        process.env.ODAC_PROXY_SOCKET = target
+        jest.spyOn(ProxySocket, 'prepare').mockResolvedValue(target)
+        Server.init()
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        jest.advanceTimersByTime(60000)
+        cluster.emit('exit', {id: 1}, 1, null)
+        jest.advanceTimersByTime(0)
+
+        expect(cluster.fork).toHaveBeenCalledTimes(2)
+        expect(cluster.fork).toHaveBeenLastCalledWith({ODAC_PROXY_SOCKET: target})
+      } finally {
+        jest.useRealTimers()
+      }
+    })
+
+    it('removes the socket it bound once every worker has stopped', async () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      const identity = {dev: 1n, ino: 2n}
+      jest.spyOn(ProxySocket, 'prepare').mockResolvedValue(target)
+      const identify = jest.spyOn(ProxySocket, 'identify').mockResolvedValue(identity)
+      const release = jest.spyOn(ProxySocket, 'release').mockResolvedValue()
+      Server.init()
+      await flush()
+
+      cluster.emit('listening', {id: 1}, {addressType: 4, address: null, port: 1071})
+      cluster.emit('listening', {id: 1}, {addressType: -1, address: target, port: -1})
+      await flush()
+      expect(identify).toHaveBeenCalledTimes(1)
+
+      added('SIGTERM')()
+      await flush()
+
+      expect(release).toHaveBeenCalledWith(target, identity)
+      expect(release.mock.invocationCallOrder[0]).toBeLessThan(global.Odac.Database.close.mock.invocationCallOrder[0])
+      expect(process.exit).toHaveBeenCalledWith(0)
+    })
+
+    it('does not fork when shutdown starts while the path is being prepared', async () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      let resolvePrepare
+      jest.spyOn(ProxySocket, 'prepare').mockReturnValue(new Promise(resolve => (resolvePrepare = resolve)))
+      const release = jest.spyOn(ProxySocket, 'release').mockResolvedValue()
+      Server.init()
+
+      added('SIGTERM')()
+      resolvePrepare(target)
+      await flush()
+
+      expect(cluster.fork).not.toHaveBeenCalled()
+      expect(release).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('proxy socket in a worker', () => {
+    const target = '/odac-proxy/http.sock'
+    let originalEnv
+    let tcp
+    let unix
+
+    beforeEach(() => {
+      originalEnv = process.env.ODAC_PROXY_SOCKET
+      cluster.isPrimary = false
+      tcp = makeFakeServer()
+      unix = makeFakeServer()
+      http.createServer.mockReset()
+      http.createServer.mockReturnValueOnce(tcp).mockReturnValueOnce(unix)
+      global.Odac = {
+        Config: {debug: true},
+        instance: jest.fn(() => ({})),
+        Route: {request: jest.fn(), handleWebSocketUpgrade: jest.fn(), wsServer: {closeAll: jest.fn()}},
+        Ipc: {close: jest.fn(async () => {})},
+        Database: {close: jest.fn(async () => {})},
+        Storage: {close: jest.fn(async () => {})}
+      }
+      jest.spyOn(Stream, 'closeAll').mockImplementation(() => {})
+      jest.spyOn(process, 'exit').mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      if (originalEnv === undefined) delete process.env.ODAC_PROXY_SOCKET
+      else process.env.ODAC_PROXY_SOCKET = originalEnv
+    })
+
+    function shutdown() {
+      return added('message')('shutdown')
+    }
+
+    it('creates only the TCP server when the primary passed an empty value', () => {
+      process.env.ODAC_PROXY_SOCKET = ''
+      Server.init()
+
+      expect(http.createServer).toHaveBeenCalledTimes(1)
+      expect(tcp.listen).toHaveBeenCalledWith(0)
+    })
+
+    it('serves the same handlers on the socket, opened before the TCP port', () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      Server.init()
+
+      expect(http.createServer).toHaveBeenCalledTimes(2)
+      expect(http.createServer.mock.calls[1][0]).toBe(http.createServer.mock.calls[0][0])
+      expect(unix.listen).toHaveBeenCalledWith(target)
+      expect(tcp.listen).toHaveBeenCalledWith(0)
+      expect(unix.listen.mock.invocationCallOrder[0]).toBeLessThan(tcp.listen.mock.invocationCallOrder[0])
+      expect(unix.listeners('upgrade')).toEqual(tcp.listeners('upgrade'))
+      expect(unix.keepAliveTimeout).toBe(tcp.keepAliveTimeout)
+      expect(unix.requestTimeout).toBe(tcp.requestTimeout)
+    })
+
+    it('routes a WebSocket upgrade on the socket like one on TCP', () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      Server.init()
+      const req = {headers: {host: 'example.com'}}
+      const socket = makeSocket()
+
+      unix.emit('upgrade', req, socket, Buffer.alloc(0))
+
+      expect(global.Odac.Route.handleWebSocketUpgrade).toHaveBeenCalledWith(req, socket, expect.any(Buffer), expect.anything())
+    })
+
+    it('keeps serving TCP when the socket cannot be bound', () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      Server.init()
+
+      const err = Object.assign(new Error('bind EADDRINUSE ' + target), {code: 'EADDRINUSE', syscall: 'bind'})
+      expect(() => unix.emit('error', err)).not.toThrow()
+
+      expect(process.exit).not.toHaveBeenCalled()
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('serving on TCP only'))
+    })
+
+    it('closes both listeners and exits only after both have closed', async () => {
+      process.env.ODAC_PROXY_SOCKET = target
+      Server.init()
+      shutdown()
+
+      expect(tcp.close).toHaveBeenCalledTimes(1)
+      expect(unix.close).toHaveBeenCalledTimes(1)
+      expect(tcp.closeIdleConnections).toHaveBeenCalled()
+      expect(unix.closeIdleConnections).toHaveBeenCalled()
+
+      await tcp.close.mock.calls[0][0]()
+      expect(global.Odac.Ipc.close).not.toHaveBeenCalled()
+      expect(process.exit).not.toHaveBeenCalled()
+
+      await unix.close.mock.calls[0][0]()
+      expect(global.Odac.Ipc.close).toHaveBeenCalled()
+      expect(process.exit).toHaveBeenCalledWith(0)
+    })
+
+    it('force-closes busy connections on both listeners after the grace period', () => {
+      jest.useFakeTimers()
+      try {
+        process.env.ODAC_PROXY_SOCKET = target
+        Server.init()
+        shutdown()
+
+        jest.advanceTimersByTime(10000)
+
+        expect(tcp.closeAllConnections).toHaveBeenCalled()
+        expect(unix.closeAllConnections).toHaveBeenCalled()
+      } finally {
+        jest.useRealTimers()
+      }
     })
   })
 })

@@ -23,6 +23,32 @@ const DEFAULT_TRUSTED = ['loopback', 'private']
 
 const cache = new Map()
 
+// Connections accepted on the ODAC proxy's unix socket (ODAC_PROXY_SOCKET). Keyed by the socket
+// object so the mark dies with the connection.
+const proxySockets = new WeakSet()
+
+/**
+ * Marks a connection accepted on the ODAC proxy's unix socket as trusted proxy traffic.
+ * Why: a unix socket peer has no address, so the IP-based rule in isTrustedProxy() cannot
+ * recognise it. Only processes that can reach the socket's directory can connect, which outside
+ * the app's own container is the ODAC proxy alone.
+ * @param {import('net').Socket} socket Connection from the proxy socket server's 'connection' event.
+ */
+function markProxySocket(socket) {
+  if (socket && typeof socket === 'object') proxySockets.add(socket)
+}
+
+/**
+ * Whether a connection arrived on the ODAC proxy's unix socket.
+ * Why: decided by which listener accepted the connection rather than by an empty remoteAddress,
+ * which a TCP socket also reports once it has been reset.
+ * @param {import('net').Socket|undefined} socket
+ * @returns {boolean}
+ */
+function isProxySocket(socket) {
+  return !!socket && typeof socket === 'object' && proxySockets.has(socket)
+}
+
 function addEntry(list, entry) {
   if (PRESETS[entry]) {
     for (const [address, prefix, type] of PRESETS[entry]) list.addSubnet(address, prefix, type)
@@ -77,4 +103,4 @@ function isTrustedProxy(remoteAddress, configured) {
   return list.check(remoteAddress, version === 4 ? 'ipv4' : 'ipv6')
 }
 
-module.exports = {isTrustedProxy}
+module.exports = {isProxySocket, isTrustedProxy, markProxySocket}
