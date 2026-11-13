@@ -74,12 +74,6 @@ const FUNCTIONS = {
     function: '`; ',
     close: '</odac:js>'
   },
-  lazy: {
-    // TODO: Implement lazy
-    //  <odac:lazy>
-    //    <odac:component name="profile-card" data="user"/>
-    //  </odac:lazy>
-  },
   list: {
     arguments: {
       in: null,
