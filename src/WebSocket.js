@@ -226,6 +226,13 @@ class WebSocketClient {
 
     this.#socket.on('data', this.#onData)
     this.#socket.on('close', () => this.#handleClose())
+    // The HTTP server keeps sockets half-open, and the upgrade detaches the handler that would
+    // end ours. A peer FIN without a CLOSE frame (RFC 6455 abnormal closure, 1006) otherwise
+    // left the connection and its request scope alive until the heartbeat timed it out.
+    // During close() our side has already ended and its timer bounds the flush.
+    this.#socket.on('end', () => {
+      if (!this.#closeTimer) this.terminate()
+    })
     // Stays attached for the socket's whole life: a reset that lands between
     // our CLOSE frame and the TCP close is otherwise an unhandled 'error'
     // event that kills the worker. Post-close errors are expected noise.
