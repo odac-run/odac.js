@@ -181,6 +181,17 @@ const nodeEnv = process.env.NODE_ENV
 }
 ```
 
+**Encryption key:**
+The secret behind `Odac.Var().encrypt()` and the placeholders of [lazy components](../07-views/13-components.md#lazy-components). Keep it in `.env`. `Var.encrypt()` refuses to run in production without it; lazy components fall back to a key generated in `storage/.key`, which is enough on a single server. Apps on several servers must set the same `encrypt.key` on all of them.
+
+```json
+{
+  "encrypt": {
+    "key": "${APP_KEY}"
+  }
+}
+```
+
 **Debug Mode:**
 Enable verbose logging for development. This helps in troubleshooting by inspecting detailed logs for system actions like sending emails (e.g., SMTP connection details, server responses). Default is `false`.
 

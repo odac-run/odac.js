@@ -222,6 +222,48 @@ A component in the page body often needs something in `<head>` (a stylesheet) or
 - **AJAX navigation:** the pushes of the next page are sent with the response. The browser adds the ones the page does not have yet, before the new content is shown (stylesheets apply without a flash). Pushed scripts run after the new content is in place, once per page load.
 - Stack markers are rendered as empty `<template data-odac-stack>` elements, which the browser ignores. They are where navigation inserts new items.
 
+### Lazy Components
+
+Add `lazy` to a component tag to render it after the page reached the browser, in a second request. The page is sent sooner, and the component's own work (database queries in `<script:odac>`, slow APIs) no longer delays it:
+
+```html
+<c:comments lazy :post-id="post.id">
+  <div class="h-40 animate-pulse bg-gray-100"></div>   <!-- shown until it loads -->
+</c:comments>
+
+<c:user-menu lazy="load" />
+```
+
+| Value | Loads |
+|-------|-------|
+| `lazy` or `lazy="visible"` | When the placeholder comes within 200px of the viewport |
+| `lazy="load"` | Right after the page has loaded |
+
+- **The tag's content is the placeholder**, rendered now in the page's scope. A lazy component takes no slots.
+- **Props travel with the page**, encrypted: the browser can neither read nor change them, so a prop like `:post-id` can be trusted. Pass ids and small values (at most 3 KB serialized) and load the records inside the component:
+
+  ```html
+  <!-- view/components/comments.html -->
+  <odac:props :postId />
+  <script:odac>
+    const comments = await Odac.DB.comments.where('post_id', postId).orderBy('id', 'desc').limit(20)
+  </script:odac>
+  <section {!! attrs.class('comments') !!}>
+    <odac:for in="comments" value="comment"><p>{{ comment.body }}</p></odac:for>
+  </section>
+  ```
+
+- **The component renders for the visitor who loads it**, with their session and `Odac.Auth`. A page rendered for a signed-in user produces placeholders only that user can load; a page rendered for a guest produces placeholders anyone can load. Still check access inside the component when it shows private data: props say *what* to show, not *who* may see it.
+- **Personalized parts of cached pages:** a page cached with `Odac.cache()` is the same for everyone, but its `lazy="load"` components render per visitor. Put the user menu or cart count in a lazy component, render the page as a guest page, and cache it.
+- The component, its required props and its props' size are checked when the page renders, so a mistake fails the page, not a request in the background.
+- The lazy request renders in the language of the page. It does not see the page's `Odac.set()` values or query string: pass what the component needs as props.
+- `<odac:push>` content of a lazy component is added to the page's stacks, and pushed scripts run once it is in place. Lazy components inside a lazy component load in turn. Inline `<script>` in the component's HTML does not run; push it instead.
+- Placeholders are `<odac-lazy>` elements. While loading they carry `data-odac-lazy-state="loading"`; when the load fails the placeholder stays with `data-odac-lazy-state="error"`. The browser fires `odac:lazy` (`detail.nodes`) after a component is in place and `odac:lazyError` (`detail.element`) on failure.
+- A placeholder expires 7 days after the page was rendered.
+- Mail templates cannot use `lazy`.
+
+**Keys:** placeholders are encrypted with a key derived from `encrypt.key` in `odac.json`. Without a configured `encrypt.key`, ODAC generates one in `storage/.key` (shared by the workers of one server). Keep `storage/` across deploys, or placeholders in pages that are still open or cached stop loading. **When the app runs on several servers, set `encrypt.key`** to the same secret on all of them.
+
 ### Components in Mail
 
 Mail templates use components from `view/mail/components/`. They are separate from the page components because email needs table layouts and inline styles:
@@ -264,7 +306,7 @@ TypeError: Cannot read properties of undefined (reading 'name')
   used in "./view/content/home.html"
 ```
 
-This covers a missing component file, a missing required prop, an error inside the component, and malformed markup such as a `</c:card>` that closes a `<c:list>`. A view never renders with an empty gap where a component failed.
+This covers a missing component file, a missing required prop, an error inside the component, and malformed markup such as a `</c:card>` that closes a `<c:list>`. A view never renders with an empty gap where a component failed. A lazy component that fails in its own request answers that request with 500 and keeps its placeholder.
 
 ### Performance
 

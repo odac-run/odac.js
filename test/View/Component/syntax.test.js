@@ -49,6 +49,12 @@ describe('Component syntax', () => {
     expect(transform(source).content).toBe(source)
   })
 
+  it('compiles lazy into a mode passed after the children, without a lazy attribute', () => {
+    expect(transform('<c:card lazy :id="x" />').content).toContain('__r.component("card", 1, [["id", await (x)]], null, "visible");')
+    expect(transform('<odac:component :is="n" lazy="load" />').content).toContain('__r.component(await (n), 1, [], null, "load");')
+    expect(transform('<c:card lazy="visible"><i></i></c:card>').content).toContain(`<i></i><odac:js>return html; }, "visible");`)
+  })
+
   it('compiles :is into a component name chosen at render time', () => {
     const {content} = transform('<odac:component :is="w.type" :w="w" />')
     expect(content).toContain('__r.component(await (w.type), 1, [["w", await (w)]], null)')
@@ -95,6 +101,13 @@ describe('Component syntax', () => {
     ['<odac:component title="x" />', '<odac:component> needs a name="..." or :is="..."', 1],
     ['<odac:component name="a" :is="b" />', '<odac:component> takes name="..." or :is="...", not both', 1],
     ['<odac:component :is />', '":is" needs an expression', 1],
+    ['<c:card lazy="soon" />', 'lazy takes no value, "visible" or "load"', 1],
+    ['<c:card :lazy="x" />', 'lazy takes no value, "visible" or "load"', 1],
+    [
+      '<c:card lazy>\n<odac:slot name="footer">x</odac:slot>\n</c:card>',
+      'A lazy component takes no slots: its content is the placeholder shown while it loads',
+      2
+    ],
     ['<odac:once />', '<odac:once> needs content and a closing </odac:once>', 1],
     ['<odac:push to="head" />', '<odac:push> needs content and a closing </odac:push>', 1],
     ['<odac:push>x</odac:push>', '<odac:push> needs a to="..." stack name', 1],

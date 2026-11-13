@@ -18,6 +18,8 @@ const {isLocalName} = require('./Identifiers')
  * - `<odac:once>`, `<style once>` and `<script once>` render once per response, however often
  *   the template containing them renders.
  * - `<odac:push to="head">` adds its content to the `<odac:stack name="head" />` of the page.
+ * - `lazy` / `lazy="load"` on a component tag renders the component in a second request (see
+ *   Lazy.js); the tag's children are the placeholder shown until then, not slot content.
  *
  * The content of plain `<script>` and `<style>` elements is browser code, not markup: component
  * tags inside it are left alone.
@@ -143,6 +145,18 @@ function componentName(tag, attributes, line) {
   return {name: `await (${expression(dynamic.value)})`, rest: rest.filter(attribute => attribute !== dynamic)}
 }
 
+// `lazy` on a component tag: deferred until visible (`lazy`, `lazy="visible"`) or until the page
+// has loaded (`lazy="load"`). Removed from the attributes the component receives.
+function lazyMode(attributes, line) {
+  const index = attributes.findIndex(attribute => attribute.name === 'lazy' || attribute.name === ':lazy')
+  if (index === -1) return {lazy: null, rest: attributes}
+  const {name, value} = attributes[index]
+  if (name === ':lazy' || (value !== true && value !== 'visible' && value !== 'load')) {
+    throw new TemplateError('lazy takes no value, "visible" or "load"', line)
+  }
+  return {lazy: value === true ? 'visible' : value, rest: attributes.filter((_, i) => i !== index)}
+}
+
 function checkedName(name, line) {
   if (!COMPONENT_NAME.test(name)) throw new TemplateError(`Invalid component name "${name}"`, line)
   return literal(name)
@@ -177,10 +191,12 @@ function transform(source, {component = false, file = ''} = {}) {
   }
 
   // `name` is a JS expression for the component name: a literal, or `:is` checked at render time.
-  const call = (name, attributes, selfClosing, at, tag) => {
+  // A lazy call passes its mode after the children (closed in close()).
+  const call = (name, attributes, selfClosing, at, tag, lazy) => {
     const head = `html += await __r.component(${name}, ${at}, ${attributeList(attributes, at)}, `
-    if (selfClosing) return `${head}null);`
-    stack.push({kind: 'component', tag, line: at})
+    const mode = lazy ? `, ${literal(lazy)}` : ''
+    if (selfClosing) return `${head}null${mode});`
+    stack.push({kind: 'component', tag, line: at, mode})
     return `${head}async (__provide) => { let html = '';`
   }
 
@@ -190,7 +206,8 @@ function transform(source, {component = false, file = ''} = {}) {
 
     if (tag.startsWith('c:') || tag === 'odac:component') {
       const {name, rest} = componentName(tag, attributes, at)
-      return call(name, rest, selfClosing, at, tag)
+      const {lazy, rest: passed} = lazyMode(rest, at)
+      return call(name, passed, selfClosing, at, tag, lazy)
     }
 
     if (tag === 'odac:once') {
@@ -212,6 +229,9 @@ function transform(source, {component = false, file = ''} = {}) {
       const slot = `slots[${literal(name)}]`
       if (selfClosing) return `html += ${slot} ? await ${slot}() : '';`
       if (stack.at(-1)?.kind === 'component') {
+        if (stack.at(-1).mode) {
+          throw new TemplateError('A lazy component takes no slots: its content is the placeholder shown while it loads', at)
+        }
         stack.push({kind: 'provide', tag, line: at})
         return `__provide(${literal(name)}, async () => { let html = '';`
       }
@@ -238,7 +258,8 @@ function transform(source, {component = false, file = ''} = {}) {
     const top = stack.pop()
     if (!top) throw new TemplateError(`</${tag}> has no opening tag`, at)
     if (top.tag !== tag) throw new TemplateError(`</${tag}> does not match <${top.tag}> opened in line ${top.line}`, at)
-    return top.kind === 'slot' || top.kind === 'once' ? '}' : 'return html; });'
+    if (top.kind === 'slot' || top.kind === 'once') return '}'
+    return `return html; }${top.mode ?? ''});`
   }
 
   // A <script> or <style> element: its content is skipped; with `once` it renders once.

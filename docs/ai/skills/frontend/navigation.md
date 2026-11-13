@@ -86,6 +86,7 @@ The fade animation only runs on elements that actually receive new content. Unch
 ### Component assets (`<odac:push>` stacks)
 - The response carries the next page's `<odac:push>` content as `stacks`. The client inserts the items the page does not have yet at the matching `<template data-odac-stack>` marker (rendered from `<odac:stack name>`), deduplicated by key.
 - Stylesheets and other items are inserted before the new content is shown. Pushed scripts run after the content is in place, once per page load.
+- Lazy components (`<c:x lazy>`) arrive as `<odac-lazy>` placeholders that odac.js loads automatically (on visibility, or at once with `lazy="load"`), also inside navigated content. Hook `document.addEventListener('odac:lazy', e => e.detail.nodes)` to initialize them, `odac:lazyError` for failures; style `odac-lazy[data-odac-lazy-state="loading"|"error"]`. Do not hand-write fetch-and-inject code for deferred sections.
 - Inline `<script>` inside a part's own HTML still does **not** run after AJAX navigation. Push the script, or use an `Odac.action({load: ...})` handler, when it must run on pages that use the component.
 
 ## View Transitions (Native Browser API)

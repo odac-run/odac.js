@@ -126,16 +126,22 @@ if (typeof window !== 'undefined') {
     #isNavigating = false
     #pendingHash = ''
     #stackScripts = []
+    #lazyObserver = null
+    #lazyObserved = new Set()
 
     constructor() {
       // In constructor we can't call this.data() easily if it uses 'this' for caching properly before init
       // But based on original code logic:
       this.#data = this.data()
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => this.#initForms())
-      } else {
+      const ready = () => {
         this.#initForms()
+        this.#initLazy()
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', ready)
+      } else {
+        ready()
       }
     }
 
@@ -988,8 +994,9 @@ if (typeof window !== 'undefined') {
      * markers that came with the new content. Scripts are kept for #runStackScripts().
      *
      * @param {Object<string, Array<{key: string, html: string}>>} stacks - Response `stacks`.
+     * @param {Array} [scripts] - Where pushed scripts are queued (navigation's queue by default).
      */
-    #applyStacks(stacks) {
+    #applyStacks(stacks, scripts = this.#stackScripts) {
       if (!stacks || typeof stacks !== 'object') return
       for (const name of Object.keys(stacks)) {
         if (!/^[A-Za-z_][\w-]*$/.test(name) || !Array.isArray(stacks[name])) continue
@@ -1002,7 +1009,7 @@ if (typeof window !== 'undefined') {
           const holder = document.createElement('template')
           holder.innerHTML = item.html
           for (const node of Array.from(holder.content.childNodes)) {
-            if (node.nodeName === 'SCRIPT') this.#stackScripts.push({marker, node})
+            if (node.nodeName === 'SCRIPT') scripts.push({marker, node})
             else marker.parentNode.insertBefore(node, marker)
           }
         }
@@ -1012,9 +1019,11 @@ if (typeof window !== 'undefined') {
 
     // Scripts parsed from HTML do not run; each pushed script is recreated so the browser runs it.
     // A script whose marker was replaced with its part was queued again for the new marker.
-    #runStackScripts() {
-      const scripts = this.#stackScripts
-      this.#stackScripts = []
+    #runStackScripts(scripts) {
+      if (!scripts) {
+        scripts = this.#stackScripts
+        this.#stackScripts = []
+      }
       for (const {marker, node} of scripts) {
         if (!marker.parentNode) continue
         const script = document.createElement('script')
@@ -1022,6 +1031,76 @@ if (typeof window !== 'undefined') {
         script.textContent = node.textContent
         marker.parentNode.insertBefore(script, marker)
       }
+    }
+
+    /**
+     * Loads the lazy components (`<c:name lazy>`) of the page: each `<odac-lazy>` placeholder
+     * when it comes near the viewport, or right away with `data-odac-when="load"`.
+     * Why: the page is sent without the deferred components, and runs again after AJAX
+     * navigation and after a lazy component brought placeholders of its own. Placeholders that
+     * navigation removed are no longer observed, so the observer holds no detached elements.
+     */
+    #initLazy() {
+      for (const element of this.#lazyObserved) {
+        if (element.isConnected) continue
+        this.#lazyObserver.unobserve(element)
+        this.#lazyObserved.delete(element)
+      }
+      for (const element of document.querySelectorAll('odac-lazy[data-odac-lazy]:not([data-odac-lazy-state])')) {
+        if (this.#lazyObserved.has(element)) continue
+        if (element.getAttribute('data-odac-when') === 'load' || typeof IntersectionObserver === 'undefined') {
+          this.#loadLazy(element)
+          continue
+        }
+        if (!this.#lazyObserver) {
+          this.#lazyObserver = new IntersectionObserver(
+            entries => {
+              for (const entry of entries) {
+                if (!entry.isIntersecting) continue
+                this.#lazyObserver.unobserve(entry.target)
+                this.#lazyObserved.delete(entry.target)
+                this.#loadLazy(entry.target)
+              }
+            },
+            {rootMargin: '200px'}
+          )
+        }
+        this.#lazyObserved.add(element)
+        this.#lazyObserver.observe(element)
+      }
+    }
+
+    // Fetches one lazy component and puts it in place of its placeholder. A failed load keeps
+    // the placeholder, marked `data-odac-lazy-state="error"` for styling.
+    #loadLazy(element) {
+      element.setAttribute('data-odac-lazy-state', 'loading')
+      const failed = () => {
+        if (!element.isConnected) return
+        element.setAttribute('data-odac-lazy-state', 'error')
+        document.dispatchEvent(new CustomEvent('odac:lazyError', {detail: {element}}))
+      }
+      this.#ajax({
+        url: '/_odac/lazy?t=' + encodeURIComponent(element.getAttribute('data-odac-lazy')),
+        type: 'GET',
+        headers: {'X-Odac': 'lazy'},
+        dataType: 'json',
+        contentType: null,
+        success: data => {
+          if (!element.isConnected) return
+          if (!data || typeof data.html !== 'string') return failed()
+          const scripts = []
+          this.#applyStacks(data.stacks, scripts)
+          const holder = document.createElement('template')
+          holder.innerHTML = data.html
+          const nodes = Array.from(holder.content.childNodes)
+          element.replaceWith(holder.content)
+          this.#runStackScripts(scripts)
+          this.#initForms()
+          this.#initLazy()
+          document.dispatchEvent(new CustomEvent('odac:lazy', {detail: {nodes}}))
+        },
+        error: failed
+      })
     }
 
     load(url, callback, push = true) {
@@ -1259,6 +1338,7 @@ if (typeof window !== 'undefined') {
       this.#applyStacks(data.stacks)
       this.#runStackScripts()
       this.#initForms()
+      this.#initLazy()
 
       if (this.actions.load)
         (Array.isArray(this.actions.load) ? this.actions.load : [this.actions.load]).forEach(fn => fn(this.page(), data.variables))

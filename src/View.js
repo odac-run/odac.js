@@ -376,6 +376,32 @@ class View {
     return (await Component.render(scope, name, undefined, Object.entries(props ?? {}), null)).trim()
   }
 
+  /**
+   * Renders the component of a `/_odac/lazy` request (see View/Lazy.js).
+   * Why: the browser inserts the result in place of the page's `<odac-lazy>` placeholder, and
+   * the component's `<odac:push>` content goes to the page's stacks like on AJAX navigation.
+   * @param {{name: string, attributes: Array<[string, *]>}} payload An opened lazy token.
+   * @returns {Promise<{html: string, stacks: object}|undefined>} undefined after answering 500.
+   */
+  async lazy({name, attributes}) {
+    const scope = {
+      odac: this.#odac,
+      helpers: this.#helpers,
+      file: `/_odac/lazy (${name})`,
+      module: null,
+      chain: [],
+      seen: this.#seen,
+      state: this.#state
+    }
+    try {
+      const html = (await Component.render(scope, name, undefined, attributes, null)).trim()
+      return {html, stacks: Component.stackItems(this.#state) ?? {}}
+    } catch (e) {
+      if (!(e instanceof RenderError)) throw e
+      return this.#odac.Request.abort(500)
+    }
+  }
+
   // The request's `Odac.set()` values. A view declares the keys it mentions as locals.
   #data() {
     const variables = this.#odac.Request.variables ?? {}

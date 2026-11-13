@@ -8,6 +8,7 @@ const Hook = require('./Hook.js')
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
 const Image = require('./View/Image.js')
+const Lazy = require('./View/Lazy.js')
 const MiddlewareChain = require('./Route/Middleware.js')
 const RateLimit = require('./Route/RateLimit.js')
 const {WebSocketServer} = require('./WebSocket.js')
@@ -763,6 +764,9 @@ class Route {
       },
       {token: false}
     )
+
+    // Renders a component a page deferred with `<c:name lazy>`; Lazy.serve checks the token.
+    this.set('GET', '/_odac/lazy', async Odac => await Lazy.serve(Odac), {token: false})
 
     this.set(
       'GET',

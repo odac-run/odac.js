@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const Lazy = require('./Lazy')
 const Template = require('./Template')
 
 /**
@@ -126,13 +127,15 @@ class Runtime {
    * @param {Set<string>} scope.seen Templates checked for changes in this response.
    * @param {object} scope.state Shared response state (see createState()).
    * @param {string} [scope.directory] Component directory, `./view/components` by default.
+   * @param {boolean} [scope.lazy] False where no browser loads lazy components (mail).
    */
   constructor(scope) {
     this.#scope = scope
   }
 
-  /** Renders `<c:name>`. */
-  component(name, line, attributes, children) {
+  /** Renders `<c:name>`, or the placeholder of `<c:name lazy>` (`lazy` is its mode). */
+  component(name, line, attributes, children, lazy) {
+    if (lazy) return deferred(this.#scope, name, line, attributes, children, lazy)
     return render(this.#scope, name, line, attributes, children)
   }
 
@@ -193,7 +196,8 @@ async function slots(scope, children) {
   return collected
 }
 
-async function render(scope, name, line, attributes, children) {
+// Finds and loads a component; checks its name, the nesting limit and its required props.
+async function resolve(scope, name, line, attributes) {
   const origin = {file: scope.file, line, chain: scope.chain}
   if (typeof name !== 'string' || !NAME.test(name)) throw Template.failure(new Error(`Invalid component name "${name}"`), origin)
   if (scope.chain.length >= MAX_DEPTH) {
@@ -208,7 +212,11 @@ async function render(scope, name, line, attributes, children) {
   const {props, attrs} = split(attributes, component.declared)
   const missing = component.required.find(prop => props[prop] === undefined)
   if (missing !== undefined) throw Template.failure(new Error(`Component "${name}" requires the "${missing}" prop`), origin)
+  return {origin, file, chain, component, props, attrs}
+}
 
+async function render(scope, name, line, attributes, children) {
+  const {file, chain, component, props, attrs} = await resolve(scope, name, line, attributes)
   const collected = await slots(scope, children)
   const nested = new Runtime({...scope, file, module: component.name, chain})
   try {
@@ -216,6 +224,30 @@ async function render(scope, name, line, attributes, children) {
   } catch (e) {
     throw Template.failure(e, {file, module: component.name, chain})
   }
+}
+
+/**
+ * Renders the placeholder of a lazy component: an `<odac-lazy>` element holding the token the
+ * browser sends to `/_odac/lazy`, around the tag's children (shown until the component loads).
+ * Why: the component and its required props are checked now, so a typo fails the page that
+ * contains it instead of a request the browser makes later.
+ */
+async function deferred(scope, name, line, attributes, children, mode) {
+  const {origin} = await resolve(scope, name, line, attributes)
+  if (scope.lazy === false) throw Template.failure(new Error(`Component "${name}" cannot be lazy here: no browser loads it`), origin)
+
+  // The children are the placeholder: the default slot, rendered now in the caller's scope.
+  const collected = await slots(scope, children)
+  const placeholder = collected.default ? await collected.default() : ''
+  let token
+  try {
+    const lang = scope.odac.Lang?.current?.() ?? null
+    token = await Lazy.seal(scope.odac, {name, attributes, user: Lazy.user(scope.odac), lang})
+  } catch (e) {
+    throw Template.failure(e, origin)
+  }
+  const when = mode === 'load' ? ' data-odac-when="load"' : ''
+  return `<odac-lazy data-odac-lazy="${token}"${when}>${placeholder}</odac-lazy>`
 }
 
 /**

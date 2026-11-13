@@ -16,7 +16,8 @@ ODAC uses `odac.json` for structure and `.env` for secrets. Values can be access
 1.  **Direct Access**: Use `Odac.Config.key` for settings in `odac.json`.
 2.  **Environment Variables**: Use `${VAR_NAME}` in `odac.json` to map to `.env` values.
 3.  **Encapsulation**: Never hardcode credentials. Always use `.env`.
-4.  **Feature Sections**: Feature settings are documented in their own skill; e.g. `lang` (`default`, `supported`, `collect`, `keep`, `highlightMissing`) in `backend/translations.md`.
+4.  **Encryption key**: set `"encrypt": {"key": "${APP_KEY}"}` (long random secret in `.env`). It keys `Odac.Var().encrypt()` (required in production) and lazy component tokens (otherwise generated per server in `storage/.key`; multi-server apps must set it).
+5.  **Feature Sections**: Feature settings are documented in their own skill; e.g. `lang` (`default`, `supported`, `collect`, `keep`, `highlightMissing`) in `backend/translations.md`.
 
 ## Reference Patterns
 ### 1. Accessing Config

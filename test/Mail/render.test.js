@@ -128,6 +128,13 @@ describe('Mail templates and headers', () => {
       expect(console.error.mock.calls.flat().join('\n')).toContain('Component "page" not found')
     })
 
+    it('fails the send for a lazy component: no browser loads it', async () => {
+      component('late', 'x')
+      template('lazy', '<c:late lazy />')
+      await expect(mail('lazy').send({})).resolves.toBe(false)
+      expect(console.error.mock.calls.flat().join('\n')).toContain('Component "late" cannot be lazy here: no browser loads it')
+    })
+
     it('fails the send on malformed component markup, logging the line', async () => {
       template('malformed', '<p>x</p>\n<c:a></c:b>')
       await expect(mail('malformed').send({})).resolves.toBe(false)

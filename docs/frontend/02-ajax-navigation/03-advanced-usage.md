@@ -563,6 +563,26 @@ Odac.action({
 })
 ```
 
+## Lazy Components
+
+Components rendered with `<c:name lazy>` (see [Components](../../backend/07-views/13-components.md#lazy-components)) arrive as `<odac-lazy>` placeholders. odac.js loads each one when it comes within 200px of the viewport (`lazy="load"`: right after the page loads), replaces the placeholder with the component, binds its forms and runs the scripts it pushed. Placeholders in content brought by AJAX navigation are picked up the same way. Nothing needs to be configured.
+
+```javascript
+// Run code on a component once it is in place
+document.addEventListener('odac:lazy', event => {
+  for (const node of event.detail.nodes) if (node.matches?.('.chart')) drawChart(node)
+})
+
+// A placeholder that could not load keeps its content and gets data-odac-lazy-state="error"
+document.addEventListener('odac:lazyError', event => {
+  event.detail.element.textContent = 'Could not load this section.'
+})
+```
+
+```css
+odac-lazy[data-odac-lazy-state='loading'] { opacity: 0.6; }
+```
+
 ## Next Steps
 
 - Learn about [Form Handling](../03-forms/01-form-handling.md)

@@ -94,7 +94,8 @@ class Mail {
       chain: [],
       seen: new Set(),
       state,
-      directory: `${__dir}/view/mail/components`
+      directory: `${__dir}/view/mail/components`,
+      lazy: false
     })
     const html = await require(compiled.target)(Odac, data, ...helpers, runtime, Component.EMPTY_SLOTS)
     return Component.fillStacks(html, state, {marker: false})
