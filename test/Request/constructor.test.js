@@ -45,16 +45,20 @@ describe('Request.constructor()', () => {
     expect(request.host).toBe('api.example.com')
   })
   // ODAC_APP=true is read once when TrustedProxy loads, so each mode gets its own module registry.
-  function load(underOdac) {
-    const original = process.env.ODAC_APP
+  function load(underOdac, key) {
+    const original = {ODAC_APP: process.env.ODAC_APP, ODAC_PROXY_KEY: process.env.ODAC_PROXY_KEY}
     if (underOdac) process.env.ODAC_APP = 'true'
     else delete process.env.ODAC_APP
+    if (key) process.env.ODAC_PROXY_KEY = key
+    else delete process.env.ODAC_PROXY_KEY
     let loaded
     jest.isolateModules(() => {
       loaded = {OdacRequest: require('../../src/Request'), ...require('../../src/Request/TrustedProxy')}
     })
-    if (original === undefined) delete process.env.ODAC_APP
-    else process.env.ODAC_APP = original
+    for (const [name, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
     return loaded
   }
 
@@ -95,6 +99,51 @@ describe('Request.constructor()', () => {
       new Req('id', req, null, {})
       expect(req.headers['x-odac-connection-remoteaddress']).toBeUndefined()
       expect(req.headers['x-odac-connection-ssl']).toBeUndefined()
+    })
+  })
+
+  // An ODAC server that signs gives every app ODAC_PROXY_KEY, so a private peer alone proves nothing.
+  describe('proxy connection headers under ODAC with a signing key', () => {
+    const {OdacRequest: Req} = load(true, 'k')
+
+    function signed(headers = {}) {
+      const nodeCrypto = require('crypto')
+      const t = Math.floor(Date.now() / 1000)
+      const all = {...proxyHeaders, ...headers}
+      const mac = nodeCrypto.createHmac('sha256', 'k')
+      mac.update(
+        ['odac-connection-v1', t, 'GET', all.host, '/ws', all['x-odac-connection-remoteaddress'], all['x-odac-connection-ssl'] ?? ''].join(
+          '\n'
+        )
+      )
+      return {...all, 'x-odac-connection-signature': `t=${t},v1=${mac.digest('hex')}`}
+    }
+
+    it('uses the headers of a signed request', () => {
+      const request = new Req('id', makeReq(signed(), {remoteAddress: '172.18.0.2'}), null, {})
+      expect(request.ip).toBe('203.0.113.7')
+      expect(request.ssl).toBe(true)
+      expect(request.fromTrustedProxy).toBe(true)
+    })
+
+    it.each(['172.17.0.1', '::ffff:127.0.0.1'])('ignores unsigned headers from a private or loopback peer (%s)', peer => {
+      const request = new Req('id', makeReq({...proxyHeaders}, {remoteAddress: peer}), null, {})
+      expect(request.ip).toBe(peer.replace('::ffff:', ''))
+      expect(request.ssl).toBe(false)
+      expect(request.fromTrustedProxy).toBe(false)
+    })
+
+    it('ignores a signature made for other values', () => {
+      const headers = {...signed(), 'x-odac-connection-remoteaddress': '198.51.100.1'}
+      const request = new Req('id', makeReq(headers, {remoteAddress: '172.17.0.1'}), null, {})
+      expect(request.ip).toBe('172.17.0.1')
+      expect(request.fromTrustedProxy).toBe(false)
+    })
+
+    it('strips the signature with the other headers', () => {
+      const req = makeReq(signed(), {remoteAddress: '172.17.0.1'})
+      new Req('id', req, null, {})
+      expect(req.headers['x-odac-connection-signature']).toBeUndefined()
     })
   })
 

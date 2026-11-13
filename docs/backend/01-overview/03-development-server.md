@@ -79,13 +79,14 @@ On an ODAC server, the ODAC Proxy forwards visitors to your app. For apps on a b
 |----------|--------|---------|
 | `ODAC_APP` | ODAC server, automatically | `true` for every app the ODAC server runs. Decides the default `request.trustedProxies` (see below). |
 | `ODAC_PROXY_SOCKET` | ODAC server, automatically | Absolute path of a unix socket (e.g. `/odac-proxy/http.sock`) the app should serve in addition to its TCP port. |
+| `ODAC_PROXY_KEY` | ODAC server, automatically | Secret the proxy signs `X-Odac-Connection-*` with, so the app can tell the proxy from anything else reaching its TCP port. |
 
 When `ODAC_PROXY_SOCKET` is set, the framework listens on that path as well as on the TCP port, with the same routes, middleware and WebSocket handling. Nothing in your app changes. The proxy prefers the socket because it skips the TCP stack between proxy and app.
 
 - **TCP stays the fallback.** The TCP port is always opened. If the socket cannot be created (bad path, read-only directory, another process already serving it), the error is logged and the app keeps serving on TCP; the proxy falls back to TCP for any request it cannot send over the socket.
 - **Stale files are handled.** A restarted container keeps the old socket file. The primary process removes it before the workers start, but only if nothing is listening on it. A symlink at the path is removed as a link and never followed; any other kind of file is left alone and the app serves TCP only.
 - **Shutdown cleans up.** A graceful stop closes both listeners and removes the socket file.
-- **Trust.** A connection on the socket is the ODAC Proxy by construction, so its `X-Odac-Connection-*` headers are always honoured, regardless of `request.trustedProxies`. Over TCP, an app under ODAC (`ODAC_APP=true`, also set by the server) trusts loopback and private peers by default; an app not under ODAC trusts nobody unless `trustedProxies` says so (see [Client IP behind a proxy](../06-request-and-response/01-the-request-object-what-is-the-user-asking-for.md#client-ip-behind-a-proxy)).
+- **Trust.** A connection on the socket is the ODAC Proxy by construction, so its `X-Odac-Connection-*` headers are always honoured, regardless of `request.trustedProxies`. Over TCP they are honoured when the proxy's signature checks out against `ODAC_PROXY_KEY`; an app with no key falls back to trusting private peers under ODAC and nobody otherwise (see [Client IP behind a proxy](../06-request-and-response/01-the-request-object-what-is-the-user-asking-for.md#client-ip-behind-a-proxy)).
 - **Turning it off.** Without the variable the app serves TCP only, exactly as before. Operators can disable the socket for every app on a server with `ODAC_BACKEND_SOCKETS=off` in the ODAC server's environment; the variable is then not set for apps.
 
-You do not need to set either variable yourself. Outside an ODAC server (local development, other hosting) leave them unset.
+You do not need to set any of these variables yourself. Outside an ODAC server (local development, other hosting) leave them unset.

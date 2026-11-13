@@ -15,7 +15,7 @@ Handling incoming data and sending structured responses.
     -   `Odac.Request.post('key')`: Targeted POST data.
     -   `Odac.Request.get('key')`: Targeted URL parameters.
 2.  **Metadata**: Access `Odac.Request.method`, `Odac.Request.ip`, `Odac.Request.header('name')`.
-    -   `Odac.Request.ip` / `Odac.Request.ssl` come from the ODAC Proxy's `X-Odac-Connection-*` headers only when the peer is trusted: any connection on the proxy unix socket (`ODAC_PROXY_SOCKET`), or a TCP peer in `request.trustedProxies`. When that list is unset, an app under ODAC (`ODAC_APP=true`, set by the server) trusts loopback + private networks and any other app trusts nobody. Never read `req.socket.remoteAddress` or the raw headers yourself. Under ODAC, a client reaching the TCP port from a private address (published port, neighbour container) can still spoof them; narrow `trustedProxies` when that matters.
+    -   `Odac.Request.ip` / `Odac.Request.ssl` come from the ODAC Proxy's `X-Odac-Connection-*` headers only when they provably come from the proxy: a connection on the proxy unix socket (`ODAC_PROXY_SOCKET`), a valid `X-Odac-Connection-Signature` (HMAC with `ODAC_PROXY_KEY`, set by the server), or a TCP peer listed in `request.trustedProxies`. With a key and no list, unsigned TCP requests are never trusted, even from private addresses. Without a key (older server, app not restarted since the update) an app under ODAC (`ODAC_APP=true`) trusts loopback + private networks and any other app trusts nobody. Never read `req.socket.remoteAddress` or the raw headers yourself, and never verify the signature by hand.
 3.  **Returning Data**: 
     -   `return { ... }`: Returns JSON.
     -   `return Odac.return({ ... })`: Explicit JSON return.

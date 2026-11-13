@@ -1,3 +1,4 @@
+const nodeCrypto = require('crypto')
 const net = require('net')
 
 // Named address groups accepted in `request.trustedProxies`.
@@ -23,6 +24,12 @@ const DEFAULT_TRUSTED = ['loopback', 'private']
 
 // The ODAC server sets ODAC_APP=true for every app it runs. Read once: it cannot change after start.
 const UNDER_ODAC = process.env.ODAC_APP === 'true'
+
+// Key the ODAC proxy signs X-Odac-Connection-* with (ODAC_PROXY_KEY). Also set at container start.
+const PROXY_KEY = process.env.ODAC_PROXY_KEY || ''
+
+const SIGNATURE = /^t=(\d{1,15}),v1=([0-9a-f]{64})$/
+const MAX_SKEW_SECONDS = 60
 
 const cache = new Map()
 
@@ -113,4 +120,52 @@ function isTrustedProxy(remoteAddress, configured, underOdac = UNDER_ODAC) {
   return list.check(remoteAddress, version === 4 ? 'ipv4' : 'ipv6')
 }
 
-module.exports = {isProxySocket, isTrustedProxy, markProxySocket}
+/**
+ * Verifies the ODAC proxy's signature over a request's connection headers.
+ * Why: on TCP, anything that reaches the app's port (a published port, a neighbour container) can
+ * send `X-Odac-Connection-*`. Only the proxy holds the app's key, and method, host and URL are
+ * signed with the values so a captured signature proves nothing on another route.
+ * @param {import('http').IncomingMessage} req Request as received; headers not yet stripped.
+ * @param {string} [key] The app's `ODAC_PROXY_KEY`.
+ * @param {number} [now] Current time in milliseconds.
+ * @returns {boolean}
+ */
+function hasProxySignature(req, key = PROXY_KEY, now = Date.now()) {
+  if (!key) return false
+  const match = SIGNATURE.exec(req.headers['x-odac-connection-signature'] ?? '')
+  if (!match) return false
+  if (Math.abs(now / 1000 - Number(match[1])) > MAX_SKEW_SECONDS) return false
+  const signed = [
+    'odac-connection-v1',
+    match[1],
+    req.method,
+    req.headers.host ?? '',
+    req.url,
+    req.headers['x-odac-connection-remoteaddress'] ?? '',
+    req.headers['x-odac-connection-ssl'] ?? ''
+  ].join('\n')
+  const expected = nodeCrypto.createHmac('sha256', key).update(signed).digest()
+  return nodeCrypto.timingSafeEqual(expected, Buffer.from(match[2], 'hex'))
+}
+
+/**
+ * Decides whether a request's `X-Odac-Connection-*` headers were written by the ODAC proxy.
+ * Why: the proxy socket and a valid signature prove it outright. An app holding a key knows its
+ * proxy signs, so unsigned TCP traffic is someone else even from a private peer, unless the
+ * operator listed that peer in `trustedProxies`. Without a key (an ODAC server older than signing,
+ * or a container started before it) the network rule in isTrustedProxy() still applies.
+ * @param {import('http').IncomingMessage} req
+ * @param {import('net').Socket|undefined} socket The connection the request arrived on.
+ * @param {string|string[]|undefined} configured `Config.request.trustedProxies`.
+ * @param {{underOdac?: boolean, key?: string, now?: number}} [options] Overrides for tests.
+ * @returns {boolean}
+ */
+function isFromOdacProxy(req, socket, configured, {underOdac = UNDER_ODAC, key = PROXY_KEY, now = Date.now()} = {}) {
+  if (isProxySocket(socket)) return true
+  if (hasProxySignature(req, key, now)) return true
+  const explicit = configured !== undefined && configured !== null
+  if (key && !explicit) return false
+  return isTrustedProxy(socket?.remoteAddress, configured, underOdac)
+}
+
+module.exports = {hasProxySignature, isFromOdacProxy, isProxySocket, isTrustedProxy, markProxySocket}

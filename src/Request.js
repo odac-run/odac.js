@@ -3,7 +3,7 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
 const os = require('os')
-const {isProxySocket, isTrustedProxy} = require('./Request/TrustedProxy')
+const {isFromOdacProxy} = require('./Request/TrustedProxy')
 
 // decodeURIComponent throws a URIError on malformed percent-encoding (e.g. `%`
 // or `%ZZ`). A single crafted query/body/path would otherwise bubble out and
@@ -87,12 +87,12 @@ class OdacRequest {
     // drops remoteAddress; neither may throw on the upgrade path, which runs
     // outside Route.request()'s 500 guard.
     this.host = req.headers.host ?? ''
-    // Client address and TLS state are only taken from the proxy headers when the socket peer
-    // is a trusted proxy; anyone else could set them to impersonate another client. A connection
-    // on the proxy's unix socket has no peer address and is the proxy by construction.
+    // Client address and TLS state are only taken from the proxy headers when they provably come
+    // from the ODAC proxy (its unix socket or its signature) or a trusted peer; anyone else could
+    // set them to impersonate another client.
     const socket = req.socket ?? req.connection
     const peer = socket?.remoteAddress
-    const fromProxy = isProxySocket(socket) || isTrustedProxy(peer, global.Odac.Config.request?.trustedProxies)
+    const fromProxy = isFromOdacProxy(req, socket, global.Odac.Config.request?.trustedProxies)
     // Whether the peer is a trusted proxy. Only then has the Host header passed
     // through something that routes configured domains; a direct client can send any Host.
     this.fromTrustedProxy = fromProxy
@@ -101,6 +101,7 @@ class OdacRequest {
     this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'
     delete this.req.headers['x-odac-connection-ssl']
     delete this.req.headers['x-odac-connection-remoteaddress']
+    delete this.req.headers['x-odac-connection-signature']
     let route = this.host.split('.')[0]
     if (!global.Odac.Route.routes[route]) route = 'www'
     this.route = route
