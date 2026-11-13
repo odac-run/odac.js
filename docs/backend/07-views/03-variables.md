@@ -99,6 +99,14 @@ Odac.set('user', {
 <p>City: <odac var="user.profile.address.city" /></p>
 ```
 
+### Variable Names
+
+Every key passed with `Odac.set()` is available in the view by its name. A key becomes a template variable when it is a plain JavaScript identifier (`user`, `pageTitle`, `_count`):
+
+- **Other keys** (`first-name`, `2fa`) and **reserved names** (`class`, `default`, `html`, `props`, `get`, `Odac`) are not declared as variables. Read them with `get('first-name')` or `<odac get="first-name" />`.
+- **Unset variables throw.** If a controller sets `error` only on failure, a view that reads `error` throws when it is not set, and the page answers 500. Always set it (`Odac.set('error', null)`) or check `typeof error !== 'undefined'`.
+- **Backend code may reuse a name.** `<script:odac>const user = ...</script:odac>` replaces the set `user` from that point on, without an error.
+
 ### String Literals
 
 Display static text directly:

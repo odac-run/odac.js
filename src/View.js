@@ -1,16 +1,15 @@
-const nodeCrypto = require('crypto')
 const fs = require('fs')
 const fsPromises = fs.promises
 const Form = require('./View/Form')
 const EarlyHints = require('./View/EarlyHints')
 const Image = require('./View/Image')
-const {compile} = require('./View/Compiler')
+const Template = require('./View/Template')
+const {isLocalName} = require('./View/Identifiers')
+const {RenderError} = Template
 
 const TITLE_REGEX = /<title[^>]*>([^<]*)<\/title>/i
 // A skeleton placeholder: `{{ CONTENT }}`. The capture group keeps names in split() output.
 const SKELETON_PLACEHOLDER = /\{\{\s*([A-Z_][A-Z0-9_]*)\s*\}\}/
-
-const CACHE_DIR = './storage/.cache'
 
 // One attribute of a start tag, with its value if it has one. Matching whole attributes in
 // order keeps text inside a quoted value (`data-x="a lang=b"`) from being read as an attribute.
@@ -53,9 +52,6 @@ function translationScript(translations) {
   return script
 }
 
-// A view threw while rendering (or its compiled code did not load). Already logged.
-class RenderError extends Error {}
-
 // A requested part name is only a part when the controller set it; `__proto__`, `constructor`
 // and other inherited names from a request header are not.
 const partName = (parts, name) => typeof name === 'string' && Object.hasOwn(parts, name) && typeof parts[name] === 'string'
@@ -66,6 +62,9 @@ class View {
   #refresh = new Set()
   #odac = null
   #failed = false
+  // Templates checked for changes during this request (debug mode reads each file once).
+  #seen = new Set()
+  #helpers
 
   constructor(odac) {
     this.#odac = odac
@@ -85,6 +84,11 @@ class View {
     global.Odac.View.Image = Image
     this.Form = Form
     this.Image = Image
+    this.#helpers = [
+      key => this.#odac.Request.get(key),
+      (...args) => this.#odac.Lang.get(...args),
+      (key, context, ...args) => this.#odac.Lang.getx(key, context, ...args)
+    ]
   }
 
   all(name) {
@@ -339,102 +343,28 @@ class View {
     }
   }
 
-  // Runs a compiled view. A throw inside the template is logged with its view line and
-  // becomes a RenderError.
-  async #run(compiled, file) {
-    try {
-      return await compiled(
-        this.#odac,
-        key => this.#odac.Request.get(key),
-        (...args) => this.#odac.Lang.get(...args),
-        (key, context, ...args) => this.#odac.Lang.getx(key, context, ...args)
-      )
-    } catch (e) {
-      throw this.#renderError(e, file)
+  // The request's `Odac.set()` values. A view declares the keys it mentions as locals.
+  #data() {
+    const variables = this.#odac.Request.variables ?? {}
+    const data = Object.create(null)
+    const locals = []
+    for (const key of Object.keys(variables)) {
+      if (key === '__proto__') continue
+      data[key] = variables[key]?.value
+      if (isLocalName(key)) locals.push(key)
     }
-  }
-
-  #renderError(e, file) {
-    const stackLine = e?.stack?.split('\n')[1]?.match(/:(\d+):\d+/)
-    const line = stackLine ? parseInt(stackLine[1]) - 3 : e?.lineNumber ? e.lineNumber - 3 : 'unknown'
-    console.error(String(e).split('\n')[0] + `\n  in line ${line}\n  of "${file}"`)
-    return new RenderError(String(e))
+    return {data, locals: locals.sort()}
   }
 
   async #render(file) {
-    if (!global.Odac.View) global.Odac.View = {}
-    if (!global.Odac.View.cache) global.Odac.View.cache = {}
-
-    // Performance: In Production, skip stat check if cached. Only a missing compiled file
-    // falls back to compiling; an error inside the view is not retried by running it twice.
-    if (!this.#odac.Config?.debug && global.Odac.View.cache[file]) {
-      let compiled = null
-      try {
-        compiled = require(`${__dir}/${CACHE_DIR}/${global.Odac.View.cache[file].cache}`)
-      } catch {
-        compiled = null
-      }
-      if (compiled) return this.#run(compiled, file)
-      delete global.Odac.View.cache[file]
-    }
-
-    let mtime
-    let content = null
-
+    const {data, locals} = this.#data()
+    const view = await Template.load(file, this.#odac, {locals, seen: this.#seen})
+    if (!view) return ''
     try {
-      const handle = await fsPromises.open(file, 'r')
-      try {
-        const stats = await handle.stat()
-        mtime = stats.mtimeMs
-
-        if (global.Odac.View.cache[file]?.mtime !== mtime) {
-          content = await handle.readFile('utf8')
-        }
-      } finally {
-        await handle.close()
-      }
-    } catch {
-      return ''
-    }
-
-    if (content !== null) {
-      content = Form.parse(content, this.#odac)
-      content = Image.parse(content)
-
-      const result = compile(content, {file})
-
-      let cache = `${nodeCrypto.createHash('md5').update(file).digest('hex')}`
-      const target = `${__dir}/${CACHE_DIR}/${cache}`
-      // Written beside the target and renamed into place: workers compiling the same view at
-      // once never require() a half-written file.
-      const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(6).toString('hex')}.tmp`
-      await fsPromises.mkdir(`${__dir}/${CACHE_DIR}`, {recursive: true})
-      try {
-        await fsPromises.writeFile(
-          temp,
-          `module.exports = async (Odac, get, __, __x) => {\nlet html = '';\n${result}\nreturn html.trim()\n}`
-        )
-        await fsPromises.rename(temp, target)
-      } catch (e) {
-        await fsPromises.unlink(temp).catch(() => {})
-        throw e
-      }
-      delete require.cache[require.resolve(target)]
-      if (!Odac.View) Odac.View = {}
-      if (!Odac.View.cache) Odac.View.cache = {}
-      Odac.View.cache[file] = {
-        mtime: mtime,
-        cache: cache
-      }
-    }
-    let compiled
-    try {
-      compiled = require(`${__dir}/${CACHE_DIR}/${Odac.View.cache[file].cache}`)
+      return await view.fn(this.#odac, ...this.#helpers, data)
     } catch (e) {
-      // The compiled view does not parse (a syntax error in an <odac:js> block).
-      throw this.#renderError(e, file)
+      throw Template.failure(e, {file, module: view.name})
     }
-    return this.#run(compiled, file)
   }
 
   // - SET PARTS

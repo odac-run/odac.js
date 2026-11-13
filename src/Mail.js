@@ -5,18 +5,9 @@ const fsPromises = fs.promises
 // const Form = require('./View/Form')
 
 const {cacheName, compile} = require('./View/Compiler')
+const {isLocalName} = require('./View/Identifiers')
 
 const CACHE_DIR = 'storage/.cache'
-// Data keys that may be declared as template locals: plain identifiers that neither shadow
-// the compiled function's own names nor are reserved words.
-const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
-const RESERVED = new Set(
-  (
-    'Odac data get __ html arguments await break case catch class const continue debugger default delete do else enum eval ' +
-    'export extends false finally for function if implements import in instanceof interface let new null package private ' +
-    'protected public return static super switch this throw true try typeof undefined var void while with yield'
-  ).split(' ')
-)
 // Header values and display names end up as raw header lines; CR/LF would start new headers.
 const stripLineBreaks = value => (value === undefined || value === null ? value : String(value).replace(/[\r\n]+/g, ' '))
 
@@ -53,9 +44,7 @@ class Mail {
       await handle.close()
     }
 
-    const locals = Object.keys(data)
-      .filter(key => IDENTIFIER.test(key) && !RESERVED.has(key))
-      .sort()
+    const locals = Object.keys(data).filter(isLocalName).sort()
     const variant = `${file}\u0000${locals.join(',')}`
     let compiled = Mail.#compiled.get(variant)
 

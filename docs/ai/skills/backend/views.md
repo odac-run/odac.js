@@ -27,6 +27,7 @@ Views in ODAC are logic-light but powerful. They support automatic XSS protectio
 5.  **Conditionals**: Use `<odac:if condition="VAR"> ... </odac:if>`.
 6.  **Looping**: Use `<odac:for in="ARRAY" value="ITEM"> ... </odac:for>`.
 7.  **Server-Side JS**: Use `<script:odac>` for complex calculations during rendering.
+8.  **Variables are locals**: every `Odac.set()` key that is a plain identifier is a template variable (`{{ user.name }}`). Keys like `first-name` and reserved names (`class`, `html`, `props`, `get`, `Odac`) are not; read them with `get('first-name')`. Reading a key that was never set throws (500): set optional values to `null` or test `typeof x !== 'undefined'`.
 
 ## Smart Part Diffing (AJAX Navigation)
 
