@@ -21,6 +21,9 @@ const PRESETS = {
 
 const DEFAULT_TRUSTED = ['loopback', 'private']
 
+// The ODAC server sets ODAC_APP=true for every app it runs. Read once: it cannot change after start.
+const UNDER_ODAC = process.env.ODAC_APP === 'true'
+
 const cache = new Map()
 
 // Connections accepted on the ODAC proxy's unix socket (ODAC_PROXY_SOCKET). Keyed by the socket
@@ -82,15 +85,22 @@ function build(entries) {
  * Why: those headers are written by the ODAC proxy. Accepting them from any peer lets a client
  * that reaches the app directly choose its own IP, which defeats every IP-based control
  * (brute-force limits, form and session binding, auth anomaly detection) and fakes HTTPS.
+ * Without an explicit list, an app under ODAC trusts loopback and private peers (the proxy's TCP
+ * path); any other app trusts nobody, since no ODAC proxy writes these headers for it and a
+ * private peer there is just as likely nginx, a Docker published port or a neighbour.
  * @param {string|undefined} remoteAddress Socket peer address.
  * @param {string|string[]|undefined} configured `Config.request.trustedProxies`; IPs, CIDRs or
- *   the names `loopback`/`private`. Defaults to both names; an empty array trusts no one.
+ *   the names `loopback`/`private`. An explicit value always wins; an empty array trusts no one.
+ * @param {boolean} [underOdac] Whether the app runs under an ODAC server (`ODAC_APP=true`).
  * @returns {boolean}
  */
-function isTrustedProxy(remoteAddress, configured) {
+function isTrustedProxy(remoteAddress, configured, underOdac = UNDER_ODAC) {
   if (!remoteAddress) return false
 
-  const entries = configured === undefined || configured === null ? DEFAULT_TRUSTED : [].concat(configured)
+  const explicit = configured !== undefined && configured !== null
+  if (!explicit && !underOdac) return false
+
+  const entries = explicit ? [].concat(configured) : DEFAULT_TRUSTED
   const key = entries.join(',')
   let list = cache.get(key)
   if (!list) {

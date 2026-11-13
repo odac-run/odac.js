@@ -15,7 +15,7 @@ Handling incoming data and sending structured responses.
     -   `Odac.Request.post('key')`: Targeted POST data.
     -   `Odac.Request.get('key')`: Targeted URL parameters.
 2.  **Metadata**: Access `Odac.Request.method`, `Odac.Request.ip`, `Odac.Request.header('name')`.
-    -   `Odac.Request.ip` / `Odac.Request.ssl` come from the ODAC Proxy's `X-Odac-Connection-*` headers only when the peer is trusted: an address in `request.trustedProxies` (default loopback + private networks) or any connection on the proxy unix socket (`ODAC_PROXY_SOCKET`). Never read `req.socket.remoteAddress` yourself: it is empty on the unix socket.
+    -   `Odac.Request.ip` / `Odac.Request.ssl` come from the ODAC Proxy's `X-Odac-Connection-*` headers only when the peer is trusted: any connection on the proxy unix socket (`ODAC_PROXY_SOCKET`), or a TCP peer in `request.trustedProxies`. When that list is unset, an app under ODAC (`ODAC_APP=true`, set by the server) trusts loopback + private networks and any other app trusts nobody. Never read `req.socket.remoteAddress` or the raw headers yourself. Under ODAC, a client reaching the TCP port from a private address (published port, neighbour container) can still spoof them; narrow `trustedProxies` when that matters.
 3.  **Returning Data**: 
     -   `return { ... }`: Returns JSON.
     -   `return Odac.return({ ... })`: Explicit JSON return.
