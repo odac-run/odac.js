@@ -1,7 +1,8 @@
 const fs = require('fs')
+const net = require('net')
 const path = require('path')
 const ProxySocket = require('../../../src/Server/ProxySocket')
-const {staleSocket, tempDir} = require('./helpers')
+const {close, listenOn, staleSocket, tempDir} = require('./helpers')
 
 // Shutdown removes the socket file only if it is still the one this app bound.
 describe('ProxySocket.release()', () => {
@@ -28,15 +29,40 @@ describe('ProxySocket.release()', () => {
     expect(fs.existsSync(target)).toBe(false)
   })
 
-  it('leaves a socket created after it was identified', async () => {
+  it('leaves a socket with a different identity', async () => {
+    await staleSocket(target)
+    const identity = await ProxySocket.identify(target)
+
+    await ProxySocket.release(target, {dev: identity.dev, ino: identity.ino + 1n})
+
+    expect(fs.lstatSync(target).isSocket()).toBe(true)
+  })
+
+  // Linux reuses the freed inode number, so the new socket can carry the old identity.
+  it('leaves a socket another process bound and serves after it was identified', async () => {
     await staleSocket(target)
     const identity = await ProxySocket.identify(target)
     fs.unlinkSync(target)
-    await staleSocket(target)
+    const server = await listenOn(net.createServer(), target)
 
-    await ProxySocket.release(target, identity)
+    try {
+      await ProxySocket.release(target, {dev: identity.dev, ino: identity.ino})
+      expect(fs.lstatSync(target).isSocket()).toBe(true)
+    } finally {
+      await close(server)
+    }
+  })
 
-    expect(fs.lstatSync(target).isSocket()).toBe(true)
+  it('leaves its own socket while something still serves it', async () => {
+    const server = await listenOn(net.createServer(), target)
+    const identity = await ProxySocket.identify(target)
+
+    try {
+      await ProxySocket.release(target, identity)
+      expect(fs.lstatSync(target).isSocket()).toBe(true)
+    } finally {
+      await close(server)
+    }
   })
 
   it('leaves a non-socket at the path', async () => {

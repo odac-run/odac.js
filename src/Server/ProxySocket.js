@@ -136,6 +136,10 @@ async function identify(target) {
  * Removes the socket file at shutdown if it is still the one this app bound.
  * Why: closing the last listening handle normally unlinks it already; this covers the cases
  * where it did not, so a stopped app leaves no socket the server could mistake for a live one.
+ * The dev/ino match alone cannot prove ownership: Linux hands a freed inode number straight to
+ * the next file, so a socket a new instance bound after this one has the same identity. Once
+ * every worker has stopped, a socket that still answers belongs to another process and is never
+ * removed; one with this identity that nobody serves is stale either way.
  * @param {string} target
  * @param {{dev: bigint, ino: bigint}|null} identity From identify().
  */
@@ -144,6 +148,7 @@ async function release(target, identity) {
   try {
     const stat = await fs.promises.lstat(target, {bigint: true})
     if (!stat.isSocket() || stat.dev !== identity.dev || stat.ino !== identity.ino) return
+    if (await isLive(target)) return
     await fs.promises.unlink(target)
   } catch (err) {
     if (err.code !== 'ENOENT') log('WARN', 'Could not remove the proxy socket', {path: target, code: err.code, error: err.message})
