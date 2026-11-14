@@ -545,6 +545,62 @@ describe('Server.init()', () => {
       expect(process.exit).toHaveBeenCalledWith(0)
     })
 
+    describe('Turbo Mode banner', () => {
+      let originalApp
+      let log
+
+      beforeEach(() => {
+        originalApp = process.env.ODAC_APP
+        process.env.ODAC_PROXY_SOCKET = target
+        jest.spyOn(ProxySocket, 'prepare').mockResolvedValue(target)
+        jest.spyOn(ProxySocket, 'identify').mockResolvedValue(null)
+        log = jest.spyOn(console, 'log').mockImplementation(() => {})
+      })
+
+      afterEach(() => {
+        if (originalApp === undefined) delete process.env.ODAC_APP
+        else process.env.ODAC_APP = originalApp
+      })
+
+      const banners = () => log.mock.calls.filter(([line]) => String(line).includes('Turbo Mode'))
+
+      it('is printed once under ODAC, however many workers serve the socket', async () => {
+        process.env.ODAC_APP = 'true'
+        Server.init()
+        await flush()
+
+        cluster.emit('listening', {id: 1}, {addressType: 4, address: null, port: 1071})
+        expect(banners()).toHaveLength(0)
+
+        cluster.emit('listening', {id: 1}, {addressType: -1, address: target, port: -1})
+        cluster.emit('listening', {id: 2}, {addressType: -1, address: target, port: -1})
+
+        expect(banners()).toHaveLength(1)
+      })
+
+      it.each([undefined, '', 'false', '1'])('is not printed when ODAC_APP is %j', async value => {
+        if (value === undefined) delete process.env.ODAC_APP
+        else process.env.ODAC_APP = value
+        Server.init()
+        await flush()
+
+        cluster.emit('listening', {id: 1}, {addressType: -1, address: target, port: -1})
+
+        expect(banners()).toHaveLength(0)
+      })
+
+      it('is not printed when the socket could not be prepared', async () => {
+        process.env.ODAC_APP = 'true'
+        ProxySocket.prepare.mockResolvedValue(null)
+        Server.init()
+        await flush()
+
+        cluster.emit('listening', {id: 1}, {addressType: -1, address: target, port: -1})
+
+        expect(banners()).toHaveLength(0)
+      })
+    })
+
     it('does not fork when shutdown starts while the path is being prepared', async () => {
       process.env.ODAC_PROXY_SOCKET = target
       let resolvePrepare

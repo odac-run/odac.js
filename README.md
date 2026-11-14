@@ -15,6 +15,7 @@
 *   🌍 **i18n Support:** Native multi-language support to help you reach a global audience.
 *   ⏰ **Task Scheduling:** Built-in Cron job system for handling background tasks and recurring operations.
 *   ⚡ **Zero-Config Early Hints:** Intelligent HTTP 103 implementation that requires **no setup**. ODAC automatically analyzes your views and serves assets instantly, drastically improving load times without a single line of code.
+*   🏎️ **Turbo Mode on ODAC:** When running on an ODAC server, your app automatically serves the ODAC Proxy over a private unix socket, bypassing the TCP stack between proxy and app. No configuration, no code changes, with TCP as a transparent fallback.
 
 ## 🛠️ Advanced Capabilities
 

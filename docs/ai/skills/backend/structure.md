@@ -68,7 +68,7 @@ module.exports = User;
 
 ## Runtime: TCP Port and Proxy Socket
 -   The app always listens on its TCP port (`PORT`, default `1071`). On an ODAC server, bridge apps also get `ODAC_PROXY_SOCKET` (e.g. `/odac-proxy/http.sock`); the framework then serves the same app on that unix socket too. The server sets it automatically; never set or hard-code it in app code, and never open your own listener for it.
--   TCP remains the fallback: a socket that cannot be created is logged and the app keeps serving TCP. Operators disable sockets server-wide with `ODAC_BACKEND_SOCKETS=off`.
+-   TCP remains the fallback: a socket that cannot be created is logged and the app keeps serving TCP. Operators disable sockets server-wide with `ODAC_BACKEND_SOCKETS=off`. Under ODAC (`ODAC_APP=true`) the primary prints `⚡ Turbo Mode` once when the socket is live; its absence means the app is on TCP only.
 -   Requests on the socket are trusted proxy traffic, so `Odac.Request.ip` and `Odac.Request.ssl` are the visitor's values exactly as over TCP. Use them; do not read `req.socket.remoteAddress`, which is empty on a unix socket.
 -   The server also sets `ODAC_PROXY_KEY`, the secret the proxy signs `X-Odac-Connection-*` with. Never log it, copy it into config or set it yourself.
 -   The server also sets `ODAC_APP=true`. Without it (standalone, own nginx, Docker published port) and without `request.trustedProxies`, no peer is trusted and `X-Odac-Connection-*` are ignored. Behind your own proxy, list it in `trustedProxies`; never re-enable trust by setting `ODAC_APP` yourself.

@@ -105,8 +105,15 @@ module.exports = {
       }
 
       if (process.env[ProxySocket.ENV]) {
+        // Announced once, by the primary, the first time a worker serves the socket: every worker
+        // reports its own 'listening', and the banner is about the app, not each process.
+        let announce = process.env.ODAC_APP === 'true'
         cluster.on('listening', (worker, address) => {
           if (!proxySocket || address?.addressType !== -1 || address.address !== proxySocket) return
+          if (announce) {
+            announce = false
+            console.log(`\x1b[35m⚡ Turbo Mode\x1b[0m ODAC Proxy → unix socket, TCP stack bypassed.`)
+          }
           ProxySocket.identify(proxySocket).then(id => {
             if (id) proxySocketId = id
           })
