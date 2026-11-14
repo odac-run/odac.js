@@ -1,5 +1,6 @@
 const nodeCrypto = require('crypto')
 const Hook = require('./Hook.js')
+const Lang = require('./Lang.js')
 const ROTATED_TOKEN_EPOCH_THRESHOLD_MS = 31536000000
 // Window after rotation during which the old token can still recover a lost
 // rotation response (one-shot). Shorter = smaller replay surface; too short
@@ -568,6 +569,12 @@ class Auth {
     return this.#odac || global.Odac
   }
 
+  // Messages returned to the visitor are translated into the request's language. Callers
+  // branch on `code` or `field`, never on the text.
+  #__(key, ...args) {
+    return Lang.translator(this.#hookContext())(key, ...args)
+  }
+
   // A veto hook fails closed: if the check that would block an account cannot run, the
   // account is not let in. Only an explicit `false` denies; any other return value allows.
   async #allowLogin(user, method) {
@@ -623,11 +630,11 @@ class Auth {
     } catch (e) {
       // If DB not configured or connection failed
       console.error('Odac Auth Error:', e.message)
-      return {success: false, error: 'Database connection failed'}
+      return {success: false, code: 'unavailable', error: this.#__('Database connection failed')}
     }
 
     if (!data || typeof data !== 'object') {
-      return {success: false, error: 'Invalid data provided'}
+      return {success: false, error: this.#__('Invalid data provided')}
     }
 
     if (data[passwordField] && !Odac.Var(data[passwordField]).is('hash')) {
@@ -640,11 +647,11 @@ class Auth {
         try {
           const existing = await Odac.DB[this.#table].where(field, data[field]).first()
           if (existing) {
-            return {success: false, error: `${field} already exists`, field}
+            return {success: false, error: this.#__('%s already exists', field), field}
           }
         } catch (e) {
           console.error('Odac Auth Error checking unique:', e.message)
-          return {success: false, error: 'A database error occurred during registration.'}
+          return {success: false, error: this.#__('A database error occurred during registration.')}
         }
       }
     }
@@ -687,13 +694,13 @@ class Auth {
 
       if (userId === undefined || userId === null) {
         console.error('Odac Auth Error: Could not determine new user ID')
-        return {success: false, error: 'Failed to create user'}
+        return {success: false, error: this.#__('Failed to create user')}
       }
 
       const newUser = await Odac.DB[this.#table].where(primaryKey, userId).first()
 
       if (!newUser) {
-        return {success: false, error: 'User created but could not be retrieved'}
+        return {success: false, error: this.#__('User created but could not be retrieved')}
       }
 
       delete newUser[passwordField]
@@ -704,7 +711,7 @@ class Auth {
         const login = await this.#login(loginData, 'register')
 
         if (!login.success) {
-          return {success: true, user: newUser, autoLogin: false, message: 'User created but auto-login failed'}
+          return {success: true, user: newUser, autoLogin: false, message: this.#__('User created but auto-login failed')}
         }
       }
 
@@ -712,7 +719,7 @@ class Auth {
     } catch (error) {
       // Driver messages name tables, columns and submitted values; they stay in the log.
       console.error('Odac Auth Error: Registration failed:', error.message)
-      return {success: false, error: 'Registration failed'}
+      return {success: false, error: this.#__('Registration failed')}
     }
   }
 
@@ -804,6 +811,15 @@ class Auth {
 
   // --- MAGIC LINK START ---
 
+  /**
+   * Mails a one-time sign-in link to `email`.
+   * Why: passwordless sign-in; the link is rate limited per session, email and IP because
+   * this endpoint sends mail to any address without authentication.
+   * @param {string} email
+   * @param {object} [options] redirect, errorRedirect, template, subject, from, and `lang`:
+   *   the language of the mail (default: the request's language).
+   * @returns {Promise<{success: boolean, message?: string, error?: string}>}
+   */
   async magic(email, options = {}) {
     if (!Odac.Config.auth) Odac.Config.auth = {}
     this.#table = Odac.Config.auth.table || 'users'
@@ -831,7 +847,7 @@ class Auth {
     const lastRequestTime = this.#request.session('magic_last_request')
     if (lastRequestTime && Date.now() - lastRequestTime < sessionCooldown) {
       const remaining = Math.ceil((sessionCooldown - (Date.now() - lastRequestTime)) / 1000)
-      return {success: false, error: `Please wait ${remaining} seconds before requesting another link.`}
+      return {success: false, error: this.#__('Please wait %s seconds before requesting another link.', remaining)}
     }
     this.#request.session('magic_last_request', Date.now())
 
@@ -843,7 +859,7 @@ class Auth {
         .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
 
       if (recentEmailRequests && recentEmailRequests.length >= maxAttempts) {
-        return {success: false, error: 'Too many login attempts. Please wait a while before trying again.'}
+        return {success: false, error: this.#__('Too many login attempts. Please wait a while before trying again.')}
       }
 
       // Check IP-based rate limit (prevents mass enumeration attacks)
@@ -853,13 +869,13 @@ class Auth {
         .where('created_at', '>', new Date(Date.now() - rateLimitWindow))
 
       if (recentIPRequests && recentIPRequests.length >= maxAttemptsPerIP) {
-        return {success: false, error: 'Too many requests from this IP. Please wait a while.'}
+        return {success: false, error: this.#__('Too many requests from this IP. Please wait a while.')}
       }
     } catch (e) {
       // An unenforceable limit must not turn into no limit: this endpoint sends email to any
       // address without authentication.
       console.error('Odac Auth Error: Magic link rate limit check failed:', e.message)
-      return {success: false, error: 'Magic link login is temporarily unavailable.'}
+      return {success: false, error: this.#__('Magic link login is temporarily unavailable.')}
     }
 
     // Cleanup: Remove expired tokens periodically
@@ -890,7 +906,7 @@ class Auth {
       console.error(
         'Odac Auth Error: cannot build a trusted magic link URL for this request. Set "url" (or "auth.magicLinkUrl") in odac.json to the public address of the app.'
       )
-      return {success: false, error: 'Magic link login is not available.'}
+      return {success: false, error: this.#__('Magic link login is not available.')}
     }
 
     // 2. Generate secure token. 256 random bits need no slow hash (see #hashToken).
@@ -914,9 +930,12 @@ class Auth {
     if (options.errorRedirect) link += `&error_url=${encodeURIComponent(options.errorRedirect)}`
 
     try {
+      // The person asking for the link reads it: the mail is in the request's language (the
+      // form's, see Internal.bindLanguage) unless the caller names another one.
       let mail = Odac.Mail(options.template || 'auth/magic-link')
+        .lang(options.lang ?? this.#hookContext()?.Lang?.current?.())
         .to(email)
-        .subject(options.subject || 'Login to our site')
+        .subject(options.subject || (__ => __('Login to our site')))
 
       if (options.from) {
         if (typeof options.from === 'object') mail.from(options.from.email, options.from.name)
@@ -939,10 +958,10 @@ class Auth {
         .where('token_hash', tokenHash)
         .delete()
         .catch(() => {})
-      return {success: false, error: 'Failed to send email'}
+      return {success: false, error: this.#__('Failed to send email')}
     }
 
-    return {success: true, message: 'Magic link sent!'}
+    return {success: true, message: this.#__('Magic link sent!')}
   }
 
   /**
@@ -957,7 +976,7 @@ class Auth {
    */
   async verifyMagicLink(tokenRaw, email) {
     if (!tokenRaw || !email) {
-      return {success: false, code: 'invalid', error: 'Invalid link'}
+      return {success: false, code: 'invalid', error: this.#__('Invalid link')}
     }
 
     const magicTable = Odac.Config.auth?.magicTable || 'odac_magic'
@@ -979,12 +998,16 @@ class Auth {
 
     if (!validRecord) {
       await this.#loginFailed({email}, 'magic', 'invalid')
-      return {success: false, code: 'invalid', error: records.length === 0 ? 'Link expired or invalid' : 'Invalid token'}
+      return {
+        success: false,
+        code: 'invalid',
+        error: records.length === 0 ? this.#__('Link expired or invalid') : this.#__('Invalid token')
+      }
     }
 
     if (!(toMillis(validRecord.expires_at) > Date.now())) {
       await this.#loginFailed({email}, 'magic', 'expired')
-      return {success: false, code: 'expired', error: 'Link expired or invalid'}
+      return {success: false, code: 'expired', error: this.#__('Link expired or invalid')}
     }
 
     // 3. Consume all tokens for this email to prevent reuse of other valid links.
@@ -1011,14 +1034,14 @@ class Auth {
       const regResult = await this.register(registerData, {autoLogin: false})
 
       if (!regResult.success) {
-        return {success: false, code: 'failed', error: 'Registration failed'}
+        return {success: false, code: 'failed', error: this.#__('Registration failed')}
       }
 
       user = regResult.user
     }
 
     const login = await this.#login({[primaryKey]: user[primaryKey]}, 'magic')
-    if (!login.success) return {success: false, code: login.reason === 'denied' ? 'denied' : 'failed', error: 'Login failed'}
+    if (!login.success) return {success: false, code: login.reason === 'denied' ? 'denied' : 'failed', error: this.#__('Login failed')}
 
     return {success: true, user: user}
   }
@@ -1036,7 +1059,10 @@ class Auth {
     const flash = this.#request.session('_odac_magic_error')
     if (flash) this.#request.session('_odac_magic_error', null)
     this.#magicError = flash && typeof flash.code === 'string' ? {code: flash.code, message: String(flash.message ?? '')} : null
-    return this.#magicError
+    if (!this.#magicError) return null
+    // The message is stored untranslated (one of Internal's MAGIC_LINK_ERRORS keys) and
+    // translated on every call, in the page's language at that moment.
+    return {code: this.#magicError.code, message: Lang.translator(this.#hookContext())(this.#magicError.message)}
   }
 
   async #needsGeneratedPassword() {

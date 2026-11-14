@@ -63,8 +63,9 @@ async sendLink(req, res) {
     const result = await Odac.Auth.magic(email, {
         redirect: '/dashboard',       // Redirect after verification
         errorRedirect: '/login',      // Page a failed link returns to (optional)
-        subject: 'Log in to MyApp',   // Email subject
-        template: 'auth/magic-link'   // View path for the email template
+        subject: 'Log in to MyApp',   // Email subject, or __ => __('Log in to MyApp')
+        template: 'auth/magic-link',  // View path for the email template
+        lang: user.language           // Language of the mail (default: the request's)
     });
     
     if (result.success) {
@@ -89,7 +90,7 @@ A link can fail to sign the person in: it expired, it was already used, or your 
 
 Error pages must be same-site paths (`/login`); anything else redirects to `/`.
 
-On your own page, read the failure with `Odac.Auth.magicError()`. It returns `{code, message}` or `null`, and the failure is removed from the session once read, so reloading the page does not show it again. Within the same request it keeps returning the same value.
+On your own page, read the failure with `Odac.Auth.magicError()`. It returns `{code, message}` or `null`, and the failure is removed from the session once read, so reloading the page does not show it again. Within the same request it keeps returning the same value. `message` is translated into the page's language each time you call it, so a controller that calls `Odac.Lang.set()` first gets the message in that language.
 
 ```javascript
 // controller/page/link-error.js
@@ -102,6 +103,8 @@ module.exports = async function (Odac) {
   Odac.View.set({skeleton: 'main', content: 'auth.link-error'})
 }
 ```
+
+The messages below are the translation keys; translate them in your language files (see [Framework Messages](../07-views/07-translations.md#framework-messages)).
 
 | `code` | Meaning | Default message |
 |--------|---------|-----------------|

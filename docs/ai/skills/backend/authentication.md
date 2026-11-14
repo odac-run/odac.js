@@ -80,7 +80,9 @@ if (result.success) {
 }
 ```
 - **Failed links never end on an error screen.** `/_odac/magic-verify` redirects a failed link to, in order: the link's `errorRedirect` (`<odac:magic-login error-redirect="...">` or `magic(email, {errorRedirect})`), `auth.magicLinkErrorRedirect`, else a standalone 400 page. `<odac:magic-login>` defaults `error-redirect` to the page it is rendered on and shows the error itself — do not build a separate error page unless the design needs one.
-- **Custom error page**: read `Odac.Auth.magicError()` → `{code, message}` or `null` (read once per session, stable within the request). Branch on `code`, not on `message` (English default text).
+- **Custom error page**: read `Odac.Auth.magicError()` → `{code, message}` or `null` (read once per session, stable within the request). `message` is translated into the page's language at each call. Branch on `code`, not on `message`.
+- **Mail language**: the magic-link mail is sent in the request's language (the `<odac:magic-login>` form's language). Pass `magic(email, {lang})` to choose another; `subject` accepts `__ => __('...')`.
+- **Messages are translated**: `error`/`message` returned by `register()`, `magic()` and `verifyMagicLink()` are translated into the request's language (keys are the English texts, `%s` for values). Show them, never compare them: branch on `code` (`register()` returns `code: 'unavailable'` when the database is unreachable) or `field`.
 - **Codes** (also on `verifyMagicLink()` results): `invalid` (malformed, used, unknown), `expired`, `denied` (beforeLogin hook), `failed` (registration/sign-in error).
 - Error pages must be same-site paths; others become `/`. A second tap by a person already signed in with that email goes to the success page.
 

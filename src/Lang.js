@@ -447,6 +447,35 @@ class Lang {
   /** Frontend key scan; exposed so tests can reset it. */
   static frontendKeys = frontendKeys
 
+  /**
+   * Returns a Lang that serves `code`, independent of any request.
+   * Why: a mail is read in its recipient's language, which is not necessarily the language
+   * of the request that sends it, and a background job has no request at all. Calling set()
+   * on a shared instance (`global.Odac.Lang`) instead would switch the language of every
+   * other piece of code that uses it.
+   * @param {string} [code] Matched like set(): a missing or unsupported code serves `lang.default`.
+   * @param {object} [config] The application config; defaults to `Odac.Config`.
+   * @returns {Lang}
+   */
+  static for(code, config = global.Odac?.Config) {
+    const lang = new Lang({Config: config})
+    if (code != null) lang.set(code)
+    return lang
+  }
+
+  /**
+   * Returns the `__` function framework code translates its own messages with.
+   * Why: those messages are written as literal translation calls so that `odac lang:*` and the
+   * test that keeps Extractor.FRAMEWORK_KEYS complete can find them. The language is read on
+   * every call, so a later `Odac.Lang.set()` still applies (see Internal.bindLanguage). An
+   * Odac object without a Lang (a script before Odac.init()) gets the formatted key back.
+   * @param {object} [odac] An Odac instance, or any object with a `Lang`.
+   * @returns {function(string, ...*): string}
+   */
+  static translator(odac) {
+    return (key, ...args) => (odac?.Lang ? odac.Lang.get(key, ...args) : Catalog.format(key, args))
+  }
+
   constructor(Odac) {
     this.#odac = Odac
     this.set()

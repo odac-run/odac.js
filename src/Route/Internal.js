@@ -1,4 +1,5 @@
 const nodeCrypto = require('crypto')
+const Lang = require('../Lang.js')
 
 // Placeholder origin used to resolve a redirect target exactly the way a browser would.
 const REDIRECT_BASE = 'http://odac.invalid'
@@ -24,32 +25,60 @@ function sameSitePath(target) {
 }
 
 // What a person is told when their magic link does not sign them in, by verifyMagicLink() code.
+// Written as literal translation calls so `odac lang:*` finds them (see Extractor.FRAMEWORK_KEYS);
+// called with an identity function they give the untranslated key.
 const MAGIC_LINK_ERRORS = {
-  invalid: 'This sign-in link is invalid or has already been used. Please request a new one.',
-  expired: 'This sign-in link has expired. Please request a new one.',
-  denied: 'Sign-in is not allowed for this account.',
-  failed: 'Sign-in could not be completed. Please try again.'
+  invalid: __ => __('This sign-in link is invalid or has already been used. Please request a new one.'),
+  expired: __ => __('This sign-in link has expired. Please request a new one.'),
+  denied: __ => __('Sign-in is not allowed for this account.'),
+  failed: __ => __('Sign-in could not be completed. Please try again.')
 }
+const untranslated = key => key
+
+const escapeHtml = value => String(value).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`)
 
 /**
  * Standalone page for a failed magic link that has no page to return to.
  * Why: links sent by custom controllers without `errorRedirect` (and no
- * `auth.magicLinkErrorRedirect`) used to end on a bare text response.
+ * `auth.magicLinkErrorRedirect`) used to end on a bare text response. The page is in the
+ * request's language, declared in `<html lang dir>`.
+ * @param {string} message The translated failure.
+ * @param {function} __ Translator of the request (see Lang.translator).
+ * @param {object} [lang] The request's Lang, for `<html lang dir>`.
  */
-function magicLinkErrorPage(message) {
-  const text = String(message).replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`)
+function magicLinkErrorPage(message, __, lang) {
+  const code = escapeHtml(lang?.current?.() ?? 'en')
+  const dir = lang?.dir?.() === 'rtl' ? 'rtl' : 'ltr'
+  const title = escapeHtml(__('Sign-in link'))
   return (
-    '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">' +
-    '<title>Sign-in link</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
+    `<!doctype html><html lang="${code}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>${title}</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;` +
     'font-family:system-ui,-apple-system,sans-serif;background:#f6f7f9;color:#1f2328}main{max-width:26rem;margin:1rem;padding:2rem;' +
     'background:#fff;border-radius:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:0 0 1.25rem;' +
     'line-height:1.5;color:#59636e}a{color:#0969da}@media (prefers-color-scheme:dark){body{background:#0d1117;color:#e6edf3}' +
-    'main{background:#161b22}p{color:#9198a1}a{color:#4493f8}}</style></head><body><main><h1>Sign-in link</h1>' +
-    `<p>${text}</p><a href="/">Go to the home page</a></main></body></html>`
+    `main{background:#161b22}p{color:#9198a1}a{color:#4493f8}}</style></head><body><main><h1>${title}</h1>` +
+    `<p>${escapeHtml(message)}</p><a href="/">${escapeHtml(__('Go to the home page'))}</a></main></body></html>`
   )
 }
 
 class Internal {
+  /**
+   * Serves a form submission in the language its form was rendered in.
+   * Why: forms post to a URL of their own (`/_odac/form`, `/_odac/login`, or an `action` route
+   * such as `/contact`) that does not carry the language the page was served in, so the
+   * application's `Odac.Lang.set()` call for that page never runs. Without this, framework
+   * messages, the validator, `Odac.fn` callbacks and `action` controllers would fall back to
+   * Accept-Language. The code comes from the session, written by the server at render
+   * time, and `set()` still validates it against the supported languages. A controller that
+   * runs afterwards may call `Odac.Lang.set()` itself to override it.
+   * @param {object} Odac The request's Odac instance.
+   * @param {object} formData The form's session record (see Form.storeConfig).
+   */
+  static bindLanguage(Odac, formData) {
+    if (typeof formData?.lang !== 'string' || !Odac.Lang) return
+    Odac.Lang.set(formData.lang)
+  }
+
   static #validateField(validator, field, validation, value) {
     const rules = validation.rule.split('|')
     for (const rule of rules) {
@@ -67,11 +96,12 @@ class Internal {
   }
 
   static async register(Odac) {
+    const __ = Lang.translator(Odac)
     const token = await Odac.request('_odac_register_token')
     if (!token) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -80,36 +110,38 @@ class Internal {
     if (!formData) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
+
+    this.bindLanguage(Odac, formData)
 
     if (formData.expires < Date.now()) {
       Odac.Request.session(`_register_form_${token}`, null)
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
 
     if (formData.sessionId !== Odac.Request.session('_client')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid session'}
+        errors: {_odac_form: __('Invalid session')}
       })
     }
 
     if (formData.userAgent !== Odac.Request.header('user-agent')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
     if (formData.ip !== Odac.Request.ip) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -160,10 +192,10 @@ class Internal {
     })
 
     if (!registerResult.success) {
-      if (registerResult.error === 'Database connection failed') {
+      if (registerResult.code === 'unavailable') {
         return Odac.return({
           result: {success: false},
-          errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
+          errors: {_odac_form: __('Service temporarily unavailable. Please try again later.')}
         })
       }
       const errorField = registerResult.field || '_odac_form'
@@ -179,7 +211,7 @@ class Internal {
     return Odac.return({
       result: {
         success: true,
-        message: 'Registration successful',
+        message: __('Registration successful'),
         redirect: config.redirect
       }
     })
@@ -233,11 +265,12 @@ class Internal {
   }
 
   static async login(Odac) {
+    const __ = Lang.translator(Odac)
     const token = await Odac.request('_odac_login_token')
     if (!token) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -246,36 +279,38 @@ class Internal {
     if (!formData) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
+
+    this.bindLanguage(Odac, formData)
 
     if (formData.expires < Date.now()) {
       Odac.Request.session(`_login_form_${token}`, null)
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
 
     if (formData.sessionId !== Odac.Request.session('_client')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid session'}
+        errors: {_odac_form: __('Invalid session')}
       })
     }
 
     if (formData.userAgent !== Odac.Request.header('user-agent')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
     if (formData.ip !== Odac.Request.ip) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -303,7 +338,7 @@ class Internal {
     const tooManyAttempts = () =>
       Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Too many failed attempts. Please try again later.'}
+        errors: {_odac_form: __('Too many failed attempts. Please try again later.')}
       })
 
     let loginResult
@@ -314,7 +349,7 @@ class Internal {
       console.error(e)
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Service temporarily unavailable. Please try again later.'}
+        errors: {_odac_form: __('Service temporarily unavailable. Please try again later.')}
       })
     }
 
@@ -323,7 +358,7 @@ class Internal {
       if (await Odac.Auth.loginThrottled(credentials).catch(() => false)) return tooManyAttempts()
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid credentials'}
+        errors: {_odac_form: __('Invalid credentials')}
       })
     }
 
@@ -332,18 +367,19 @@ class Internal {
     return Odac.return({
       result: {
         success: true,
-        message: 'Login successful',
+        message: __('Login successful'),
         redirect: config.redirect
       }
     })
   }
 
   static async magicLogin(Odac) {
+    const __ = Lang.translator(Odac)
     const token = await Odac.request('_odac_magic_login_token')
     if (!token) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -351,15 +387,17 @@ class Internal {
     if (!formData) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
+
+    this.bindLanguage(Odac, formData)
 
     if (formData.expires < Date.now()) {
       Odac.Request.session(`_magic_login_form_${token}`, null)
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
 
@@ -371,7 +409,7 @@ class Internal {
     ) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request security token'}
+        errors: {_odac_form: __('Invalid request security token')}
       })
     }
 
@@ -395,7 +433,7 @@ class Internal {
     if (!email) {
       return Odac.return({
         result: {success: false},
-        errors: {email: 'Email is required'}
+        errors: {email: __('Email is required')}
       })
     }
 
@@ -409,7 +447,7 @@ class Internal {
     if (!result.success) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: result.error || 'Failed to send magic link'}
+        errors: {_odac_form: result.error || __('Failed to send magic link')}
       })
     }
 
@@ -418,7 +456,7 @@ class Internal {
     return Odac.return({
       result: {
         success: true,
-        message: result.message || 'Magic link sent! Please check your email.',
+        message: result.message || __('Magic link sent! Please check your email.'),
         // We might want to keep them on page or redirect to a "check email" page
         redirect: config.redirect
       }
@@ -467,6 +505,7 @@ class Internal {
    * Odac.Auth.magicError().
    */
   static async magicVerify(Odac) {
+    const __ = Lang.translator(Odac)
     const token = await Odac.request('token')
     const email = await Odac.request('email')
 
@@ -493,17 +532,18 @@ class Internal {
     }
 
     const code = MAGIC_LINK_ERRORS[result.code] ? result.code : 'failed'
-    const message = MAGIC_LINK_ERRORS[code]
     const errorTarget = (await Odac.request('error_url')) || Odac.Config.auth?.magicLinkErrorRedirect
 
     if (typeof errorTarget !== 'string' || !errorTarget) {
       Odac.Request.status(400)
       Odac.Request.header('Content-Type', 'text/html; charset=utf-8')
-      return Odac.Request.end(magicLinkErrorPage(message))
+      return Odac.Request.end(magicLinkErrorPage(MAGIC_LINK_ERRORS[code](__), __, Odac.Lang))
     }
 
-    // Read once by Odac.Auth.magicError() on the page the visitor lands on.
-    Odac.Request.session('_odac_magic_error', {code, message})
+    // Read once by Odac.Auth.magicError() on the page the visitor lands on. The key is stored
+    // untranslated: that page translates it in its own language, which may be set by its
+    // controller (a /{lang}/ URL) rather than by this request's Accept-Language.
+    Odac.Request.session('_odac_magic_error', {code, message: MAGIC_LINK_ERRORS[code](untranslated)})
     Odac.Request.redirect(sameSitePath(errorTarget))
     Odac.Request.end('')
   }
@@ -514,6 +554,8 @@ class Internal {
 
     const formData = Odac.Request.session(`_custom_form_${token}`)
     if (!formData) return
+
+    this.bindLanguage(Odac, formData)
 
     if (formData.expires < Date.now()) {
       Odac.Request.session(`_custom_form_${token}`, null)
@@ -569,11 +611,12 @@ class Internal {
   }
 
   static async customForm(Odac) {
+    const __ = Lang.translator(Odac)
     const token = await Odac.request('_odac_form_token')
     if (!token) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -582,36 +625,38 @@ class Internal {
     if (!formData) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
+
+    this.bindLanguage(Odac, formData)
 
     if (formData.expires < Date.now()) {
       Odac.Request.session(`_custom_form_${token}`, null)
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Form session expired. Please refresh the page.'}
+        errors: {_odac_form: __('Form session expired. Please refresh the page.')}
       })
     }
 
     if (formData.sessionId !== Odac.Request.session('_client')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid session'}
+        errors: {_odac_form: __('Invalid session')}
       })
     }
 
     if (formData.userAgent !== Odac.Request.header('user-agent')) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
     if (formData.ip !== Odac.Request.ip) {
       return Odac.return({
         result: {success: false},
-        errors: {_odac_form: 'Invalid request'}
+        errors: {_odac_form: __('Invalid request')}
       })
     }
 
@@ -630,7 +675,7 @@ class Internal {
           const existingRecord = await table.where(field.name, Odac.formData[field.name]).first()
 
           if (existingRecord) {
-            const errorMessage = field.message || `This ${field.name} is already registered`
+            const errorMessage = field.message || __('This %s is already registered', field.name)
             return Odac.return({
               result: {success: false},
               errors: {[field.name]: errorMessage}
@@ -667,7 +712,7 @@ class Internal {
         return Odac.return({
           result: {
             success: true,
-            message: Odac.formConfig.successMessage || 'Form submitted successfully!',
+            message: Odac.formConfig.successMessage || __('Form submitted successfully!'),
             redirect: Odac.formConfig.redirect
           }
         })
@@ -675,7 +720,7 @@ class Internal {
         if (error.message === 'Database connection failed') {
           return Odac.return({
             result: {success: false},
-            errors: {_odac_form: 'Database not configured. Please check your odac.json'}
+            errors: {_odac_form: __('Database not configured. Please check your odac.json')}
           })
         }
 
@@ -683,7 +728,7 @@ class Internal {
         console.error(JSON.stringify({level: 'ERROR', message: 'Form insert failed', table: Odac.formConfig.table, error: error.message}))
         return Odac.return({
           result: {success: false},
-          errors: {_odac_form: 'The form could not be saved. Please try again.'}
+          errors: {_odac_form: __('The form could not be saved. Please try again.')}
         })
       }
     }
@@ -792,7 +837,7 @@ class Internal {
             console.error(e)
             return Odac.return({
               result: {success: false},
-              errors: {_odac_form: 'An error occurred while processing your request.'}
+              errors: {_odac_form: __('An error occurred while processing your request.')}
             })
           }
         }
@@ -800,7 +845,7 @@ class Internal {
         console.error(`Action ${Odac.formConfig.action} not found or invalid.`)
         return Odac.return({
           result: {success: false},
-          errors: {_odac_form: 'An error occurred while processing your request.'}
+          errors: {_odac_form: __('An error occurred while processing your request.')}
         })
       }
     }
