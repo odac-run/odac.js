@@ -509,6 +509,12 @@ module.exports = async function(Odac) {
 }
 ```
 
+#### Forms Answer in the Page's Language
+
+ODAC forms (`<odac:form>`, `<odac:login>`, `<odac:register>`, `<odac:magic-login>`) post to a URL of their own, such as `/_odac/form` or the route in `action`. That URL does not carry the language your controller selected for the page, so the `Odac.Lang.set()` call that ran for the page does not run again for the submission. ODAC stores the language with each rendered form in the session and selects it again when the form is submitted. The submission is then handled in the language the visitor saw, whatever their `Accept-Language` header says. This applies to the `action` controller, `<odac:set callback>` functions and the validator.
+
+You do not need to call `Odac.Lang.set()` in a form's `action`. Call it there only to pick a different language, for example the signed-in user's saved preference. The stored language goes through the same check as any `set()` call: if the language is no longer supported, the usual fallback applies.
+
 `Odac.Lang.set()` accepts [language codes](#regional-languages) in any case and with `-` or `_` (`pt_br`, `PT-BR`); anything else falls back as described above. `Odac.Lang.current()` returns the active code in canonical form (`pt-BR`), ready for `Intl` (`new Intl.DateTimeFormat(Odac.Lang.current())`). `Odac.Lang.dir()` returns its writing direction: `'rtl'` for Arabic, Hebrew, Persian, Urdu and a few others, or for a right-to-left script subtag (`pa-Arab`), `'ltr'` otherwise.
 
 ### Regional Languages
@@ -574,6 +580,14 @@ This happens when the application declares its languages: it has more than one l
 }
 ```
 
+### Framework Messages
+
+The messages ODAC itself shows to visitors are translated like your own. This covers the errors and confirmations of `<odac:form>`, `<odac:login>`, `<odac:register>` and `<odac:magic-login>` ("Invalid credentials", "Form session expired. Please refresh the page."), the `error` and `message` texts returned by `Odac.Auth.register()`, `magic()` and `verifyMagicLink()`, the magic-link failures, the magic-link mail subject and the standalone magic-link error page. Their keys are the English texts. Values are filled in through `%s`, for example `"%s already exists": "%s zaten kayıtlı"`.
+
+- The keys are added to your language files the first time the application shows them, while key collection is on (debug mode). `odac lang:sync` does not add them up front, because which of them you need depends on the features you use.
+- `odac lang:check` and `odac lang:prune` never report them as unused once a file has them.
+- Translated texts are meant to be shown. Code that branches on a result reads its `code` or `field`, never its text.
+
 ### One URL, Several Languages
 
 When the language comes from the `Accept-Language` header, the same URL returns different HTML to different visitors. ODAC then adds `Vary: Accept-Language` to the response, so no shared cache serves one visitor's language to another. The ODAC Proxy does not cache such responses, even with `Odac.cache()`.
@@ -596,7 +610,7 @@ Things to keep in mind when several languages share one URL:
 
 - **Search engines**: crawlers mostly send no `Accept-Language` (Googlebot crawls mainly from the US), so only the default language gets indexed, and `hreflang` alternates need a separate URL per language. Keep shared URLs for pages behind a login (dashboards, account pages).
 - **User choice**: `Accept-Language` alone does not let a visitor pick another language. Store the choice (user record, session) and pass it to `Odac.Lang.set()`. If you read it from a cookie, the page also differs per cookie: do not `Odac.cache()` it.
-- **Mail and background jobs**: they have no visitor request; pass the user's stored language to `Odac.Lang.set()` instead of relying on the header.
+- **Mail and background jobs**: a mail is read by its recipient, not by the current visitor, and a job has no visitor at all. Send the mail with `Odac.Mail(...).lang(user.language)` (see [Translating Mail](../11-mail/01-the-mail-service.md#translating-mail)). Calling `Odac.Lang.set()` before sending does not reach the mail, and in a job it changes the shared `Odac.Lang`.
 
 ### Using Translation Helper in Controllers
 

@@ -16,6 +16,7 @@ ODAC forms for validation, authentication flows, and safe request handling.
 4.  **Server-side enrichment**: Use `<odac:set>` for trusted fields (`compute`, `value`, `callback`, `if-empty`) instead of taking these values from user input.
 5.  **Action vs table**: In `<odac:form>`, use `table="..."` for automatic insert or `action="Class.method"` for custom business logic.
 6.  **Translating form text**: `<odac:submit text/loading>`, `<odac:input label/placeholder/value>` and magic-login `email-label`/`submit-text` accept `{{ __('...') }}`. The `<odac:submit>` body may also hold markup (`<odac translate>Save</odac>`, icons); it becomes the button content and is restored after submit. `text` wins over the body; each `<odac:submit>` renders its own `text`/`loading`/`class`/`style`/`id`.
+7.  **Submission language is automatic**: A form is handled in the language it was rendered in (stored with its session token), so `action` methods, `<odac:set callback>` functions and `Odac.__()` use the page's language. Do not call `Odac.Lang.set()` in an action to restore it, and do not post a hidden `lang` field. The framework's own form messages ("Invalid credentials", "Form session expired. Please refresh the page.") are translated in that language through the language files; do not override them in JavaScript to translate them.
 
 ## Form Type Variants
 

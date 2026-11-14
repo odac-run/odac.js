@@ -53,15 +53,16 @@ async function inspect(root) {
 
   const extracted = await Extractor.extract(root)
   const used = extracted.entries
-  for (const key of Extractor.FRAMEWORK_KEYS) {
-    const id = Catalog.entryId(key)
-    if (!used.has(id)) used.set(id, {key, context: '', files: new Set(['(ODAC)']), frontend: false})
-  }
 
   const files = new Map()
   for (const code of languages) files.set(code, await Files.readLanguage(dir, code))
 
-  const keep = Extractor.keepMatcher(config)
+  // Framework messages are kept once a language file has them, but not added by sync: which
+  // of them an application shows depends on the features it uses (login, magic links, forms).
+  // They are added when first shown, while key collection is on (see Lang#get).
+  const configured = Extractor.keepMatcher(config)
+  const framework = new Set(Extractor.FRAMEWORK_KEYS)
+  const keep = key => framework.has(key) || configured(key)
   const inFiles = new Map()
   for (const {data} of files.values())
     for (const entry of Catalog.entries(data)) inFiles.set(Catalog.entryId(entry.key, entry.context), entry)

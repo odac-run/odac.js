@@ -7,6 +7,7 @@ const {pipeline} = require('stream')
 const Hook = require('./Hook.js')
 const Cron = require('./Route/Cron.js')
 const Internal = require('./Route/Internal.js')
+const Lang = require('./Lang.js')
 const Image = require('./View/Image.js')
 const Lazy = require('./View/Lazy.js')
 const MiddlewareChain = require('./Route/Middleware.js')
@@ -732,12 +733,13 @@ class Route {
         const result = await Internal.customForm(Odac)
         if (result !== null) return result
 
+        const __ = Lang.translator(Odac)
         return Odac.return({
           result: {
             success: false,
-            message: 'No handler defined for this form'
+            message: __('No handler defined for this form')
           },
-          errors: {_odac_form: 'Form action not configured'}
+          errors: {_odac_form: __('Form action not configured')}
         })
       },
       {token: true}

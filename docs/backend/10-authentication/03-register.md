@@ -66,6 +66,8 @@ const result = await Odac.Auth.register(
 }
 ```
 
+`error` is meant to be shown to the user, so it is translated into the request's language (its key is `'%s already exists'`, with the field name filled in; see [Framework Messages](../07-views/07-translations.md#framework-messages)). Do not compare it with a fixed string. Branch on `field`, or on `code`: `'unavailable'` when the database could not be reached.
+
 ## Features
 
 - **Automatic Password Hashing**: Passwords are automatically hashed using bcrypt

@@ -265,7 +265,10 @@ class Form {
       expires: Date.now() + 30 * 60 * 1000,
       sessionId: Odac.Request.session('_client'),
       userAgent: Odac.Request.header('user-agent'),
-      ip: Odac.Request.ip
+      ip: Odac.Request.ip,
+      // The submission is answered in this language (see Internal.bindLanguage): the URL it
+      // is posted to does not carry the language the page was selected in.
+      lang: Odac.Lang?.current?.() ?? null
     }
 
     Odac.View[meta.storageKey][token] = formData

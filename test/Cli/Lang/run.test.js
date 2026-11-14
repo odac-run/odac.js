@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const CliLang = require('../../../src/Cli/Lang')
+const Extractor = require('../../../src/Lang/Extractor')
 const Runtime = require('../../../src/Lang/Runtime')
 
 describe('odac lang:* commands', () => {
@@ -33,18 +34,21 @@ describe('odac lang:* commands', () => {
   describe('lang:sync', () => {
     it('adds every used key to every language file without removing any', async () => {
       expect(await run('lang:sync')).toBe(0)
-      const framework = 'Too many failed attempts. Please try again later.'
       expect(readLang('en')).toEqual({
         Gül: {verb: 'Gül'},
         Hello: 'Hello',
         Old: 'Old',
         Saved: 'Saved',
-        'status.ok': 'OK',
-        [framework]: framework
+        'status.ok': 'OK'
       })
-      expect(readLang('tr')).toEqual({Gül: {verb: ''}, Hello: 'Merhaba', Old: '', Saved: '', 'status.ok': '', [framework]: ''})
+      expect(readLang('tr')).toEqual({Gül: {verb: ''}, Hello: 'Merhaba', Old: '', Saved: '', 'status.ok': ''})
       expect(text()).toContain('1 unused key(s)')
       expect(text()).toContain('`status.${code}`')
+    })
+
+    it('does not add framework messages, which are added when the app first shows them', async () => {
+      await run('lang:sync')
+      for (const key of Extractor.FRAMEWORK_KEYS) expect(readLang('tr')[key]).toBeUndefined()
     })
 
     it('fails without touching a language file that is not valid JSON', async () => {
@@ -93,6 +97,15 @@ describe('odac lang:* commands', () => {
   })
 
   describe('lang:prune', () => {
+    it('keeps framework messages a language file has', async () => {
+      const framework = 'Invalid credentials'
+      write('lang/en.json', {Hello: 'Hello', Old: 'Old', [framework]: framework})
+      write('lang/tr.json', {Hello: 'Merhaba', [framework]: 'Geçersiz bilgiler'})
+      expect(await run('lang:prune', '--write')).toBe(0)
+      expect(readLang('tr')[framework]).toBe('Geçersiz bilgiler')
+      expect(readLang('en').Old).toBeUndefined()
+    })
+
     it('lists unused keys without removing them by default', async () => {
       expect(await run('lang:prune')).toBe(0)
       expect(text()).toContain('"Old"')

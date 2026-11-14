@@ -8,6 +8,7 @@ const {cacheName, compileTemplate, TemplateError} = require('./View/Compiler')
 const Component = require('./View/Component')
 const {isLocalName} = require('./View/Identifiers')
 const Template = require('./View/Template')
+const Lang = require('./Lang.js')
 
 const CACHE_DIR = 'storage/.cache'
 // Header values and display names end up as raw header lines; CR/LF would start new headers.
@@ -22,9 +23,26 @@ class Mail {
   #to
   #htmlContent
   #textContent
+  // Set by lang(); without it the template is translated through the global Odac.Lang.
+  #lang = null
 
   constructor(template) {
     this.#template = template
+  }
+
+  /**
+   * Sets the language the template is translated in, e.g. the recipient's saved language.
+   * Why: a mail is read by its recipient, not by the visitor of the request that sends it,
+   * and a job sending it has no request. Calling `Odac.Lang.set()` before sending changed the
+   * shared language of `global.Odac` instead (or, in a controller, a Lang the mail never
+   * read). The code is matched like `Odac.Lang.set()`: a missing or unsupported code sends
+   * the mail in `lang.default`. The mail also gets a `Content-Language` header.
+   * @param {string} [code] Language code such as `tr` or `pt-BR`.
+   * @returns {Mail}
+   */
+  lang(code) {
+    this.#lang = Lang.for(code, Odac.Config)
+    return this
   }
 
   /**
@@ -80,14 +98,23 @@ class Mail {
       Mail.#compiled.set(variant, compiled)
     }
 
+    const lang = this.#lang ?? Odac.Lang
+    // `Odac.__()` and `Odac.Lang` inside the template translate in the mail's language too.
+    const odac = this.#lang
+      ? Object.create(Odac, {
+          Lang: {value: lang},
+          __: {value: (...args) => lang.get(...args)},
+          __x: {value: (key, context, ...args) => lang.getx(key, context, ...args)}
+        })
+      : Odac
     const helpers = [
       key => data[key],
-      (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0]),
-      (key, context, ...args) => (Odac.Lang ? Odac.Lang.getx(key, context, ...args) : key)
+      (...args) => (lang ? lang.get(...args) : args[0]),
+      (key, context, ...args) => (lang ? lang.getx(key, context, ...args) : key)
     ]
     const state = Component.createState()
     const runtime = new Component.Runtime({
-      odac: Odac,
+      odac,
       helpers,
       file,
       module: compiled.name,
@@ -97,7 +124,7 @@ class Mail {
       directory: `${__dir}/view/mail/components`,
       lazy: false
     })
-    const html = await require(compiled.target)(Odac, data, ...helpers, runtime, Component.EMPTY_SLOTS)
+    const html = await require(compiled.target)(odac, data, ...helpers, runtime, Component.EMPTY_SLOTS)
     return Component.fillStacks(html, state, {marker: false})
   }
 
@@ -115,8 +142,16 @@ class Mail {
     return this
   }
 
+  /**
+   * Sets the subject line: a string, or a function given the mail's `__`.
+   * Why: the subject is read in the recipient's language too. A function is called at send(),
+   * after lang(), so it translates in the mail's language whatever the call order; written as
+   * a literal translation call, its key is found by `odac lang:*`.
+   * @param {string|function(function): string} subject
+   * @returns {Mail}
+   */
   subject(subject) {
-    this.#subject = stripLineBreaks(subject)
+    this.#subject = typeof subject === 'function' ? subject : stripLineBreaks(subject)
     return this
   }
 
@@ -215,6 +250,9 @@ class Mail {
     return new Promise(resolve => {
       ;(async () => {
         try {
+          if (typeof this.#subject === 'function') {
+            this.#subject = stripLineBreaks(this.#subject(Lang.translator({Lang: this.#lang ?? Odac.Lang})))
+          }
           if (!this.#from || !this.#subject || !this.#to) {
             console.error('[Mail] Missing required fields: From, Subject, or To')
             return resolve(false)
@@ -279,6 +317,7 @@ class Mail {
               this.#header['Content-Type'] = 'text/plain; charset=UTF-8'
             }
           }
+          if (this.#lang && !this.#header['Content-Language']) this.#header['Content-Language'] = this.#lang.current()
           if (!this.#header['X-Mailer']) this.#header['X-Mailer'] = 'ODAC'
           if (!this.#header['MIME-Version']) this.#header['MIME-Version'] = '1.0'
 

@@ -14,11 +14,58 @@ const FRONTEND_DIR = 'view/js'
 const CONCURRENCY = 32
 
 /**
- * Keys the framework itself translates.
- * Why: they are used from node_modules, which is never scanned, but belong in the
- * application's language files and must not be reported as unused.
+ * Keys the framework itself translates (form, login, register and magic-link messages).
+ * Why: they are used from node_modules, which is never scanned, so `odac lang:check` and
+ * `lang:prune` must not take them for unused once a language file has them. They are written
+ * as literal translation calls in src/; a test keeps this list complete.
  */
-const FRAMEWORK_KEYS = Object.freeze(['Too many failed attempts. Please try again later.'])
+const FRAMEWORK_KEYS = Object.freeze([
+  '%s already exists',
+  'A database error occurred during registration.',
+  'An error occurred while processing your request.',
+  'Database connection failed',
+  'Database not configured. Please check your odac.json',
+  'Email is required',
+  'Failed to create user',
+  'Failed to send email',
+  'Failed to send magic link',
+  'Form action not configured',
+  'Form session expired. Please refresh the page.',
+  'Form submitted successfully!',
+  'Go to the home page',
+  'Invalid credentials',
+  'Invalid data provided',
+  'Invalid link',
+  'Invalid request',
+  'Invalid request security token',
+  'Invalid session',
+  'Invalid token',
+  'Link expired or invalid',
+  'Login failed',
+  'Login successful',
+  'Login to our site',
+  'Magic link login is not available.',
+  'Magic link login is temporarily unavailable.',
+  'Magic link sent!',
+  'Magic link sent! Please check your email.',
+  'No handler defined for this form',
+  'Please wait %s seconds before requesting another link.',
+  'Registration failed',
+  'Registration successful',
+  'Service temporarily unavailable. Please try again later.',
+  'Sign-in could not be completed. Please try again.',
+  'Sign-in is not allowed for this account.',
+  'Sign-in link',
+  'The form could not be saved. Please try again.',
+  'This %s is already registered',
+  'This sign-in link has expired. Please request a new one.',
+  'This sign-in link is invalid or has already been used. Please request a new one.',
+  'Too many failed attempts. Please try again later.',
+  'Too many login attempts. Please wait a while before trying again.',
+  'Too many requests from this IP. Please wait a while.',
+  'User created but auto-login failed',
+  'User created but could not be retrieved'
+])
 
 // `__(`, `__x(`, `Lang.get(` and `Lang.getx(`, including `Odac.__(` and `this.Lang.get(`.
 const CALL = /(?<![\w$])(?:(__x?)|Lang\.(getx?))\s*\(/g

@@ -42,6 +42,7 @@ describe('Auth.magic()', () => {
     inserted = []
     const mail = {
       from: () => mail,
+      lang: () => mail,
       send: data => {
         sent.push(data)
         return Promise.resolve(true)

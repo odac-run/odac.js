@@ -251,6 +251,10 @@ The tag body can also hold markup, such as `<odac translate>` or an icon. It is 
 
 When the request finishes, the button's original content (markup included) is restored.
 
+#### Language of the Submission
+
+A form is submitted in the language it was rendered in. ODAC stores that language with the form's session token and selects it again on submit. Your `action` method, `<odac:set callback>` functions and `Odac.__()` calls therefore use the page's language even though `/_odac/form` (or your `action` route) has no language in its URL. You do not need `Odac.Lang.set()` in the action. See [Forms Answer in the Page's Language](../07-views/07-translations.md#forms-answer-in-the-pages-language).
+
 ## Client-Side Callbacks (Optional)
 
 `<odac:form>` works fully on its own — submission, CSRF, validation, loading

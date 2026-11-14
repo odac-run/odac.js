@@ -94,6 +94,27 @@ Reusable mail markup (buttons, layouts, footers) goes in `view/mail/components/`
 
 Components can push their `<style>` blocks to a `<odac:stack name="styles" />` in the mail's `<head>`. See [Components](../07-views/13-components.md) for props, slots, `once` and stacks.
 
+### Translating Mail
+
+Mail templates translate with `{{ __('...') }}` and `<odac translate>`, like views. A mail is read by its recipient, so choose the recipient's language with `.lang()`:
+
+```javascript
+await Odac.Mail('welcome')
+  .lang(user.language) // 'tr', 'pt-BR', ...
+  .from('noreply@example.com', 'My App')
+  .to(user.email, user.name)
+  .subject(__ => __('Welcome!')) // translated in the mail's language
+  .send({name: user.name})
+```
+
+- The code is matched like `Odac.Lang.set()`. A missing or unsupported code sends the mail in `lang.default`.
+- `__()`, `<odac translate>`, `Odac.__()` and `Odac.Lang` inside the template all use that language, including inside mail components. The mail gets a `Content-Language` header.
+- `.lang()` affects only this mail. It does not change `Odac.Lang` for the request or for other code.
+- Without `.lang()`, the template is translated through the global `Odac.Lang`, which serves `lang.default`. A controller's `Odac.Lang.set()` does not change the language of a mail, so do not call it before sending: use `.lang()`.
+- A string subject is sent as written. To translate it, pass a function: it is called at `send()` with the mail's `__`, so it uses the mail's language whatever order the methods are called in, and `odac lang:sync` finds its key.
+
+The built-in magic-link mail is sent in the language of the request that asks for the link (the form's language). Pass `lang` to `Odac.Auth.magic()` to choose another one.
+
 ### Sending Plain Text or Raw HTML (No Template)
 
 You can send emails **without creating a template file** by using the `.text()` or `.html()` methods directly. This is useful for simple notifications or dynamic content.
@@ -145,7 +166,8 @@ You can inject custom headers into the email using the `header()` method:
 
 *   `from(email, name)`: Sets the sender.
 *   `to(email)`: Sets the recipient.
-*   `subject(text)`: Sets the subject line.
+*   `subject(text)`: Sets the subject line. Also accepts `__ => __('...')`, translated in the mail's language.
+*   `lang(code)`: Sets the language the template is translated in (see [Translating Mail](#translating-mail)).
 *   `text(content)`: Sets the plain text body (used if no template is provided).
 *   `html(content)`: Sets the HTML body (used if no template is provided).
 *   `header(object)`: Merges custom headers.
