@@ -217,6 +217,15 @@ Or use content as button text:
 <odac:submit>Login</odac:submit>
 ```
 
+Both `text`/`loading` and the body accept translations:
+
+```html
+<odac:submit text="{{ __('Login') }}" loading="{{ __('Please wait...') }}"/>
+<odac:submit><odac translate>Login</odac></odac:submit>
+```
+
+See [Custom Forms → Submit Button](../05-forms/01-custom-forms.md#submit-button) for all options.
+
 ## Complete Examples
 
 ### Basic Login Form

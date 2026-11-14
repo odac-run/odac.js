@@ -15,6 +15,7 @@ ODAC forms for validation, authentication flows, and safe request handling.
 3.  **Validation in template**: Define rules with `<odac:validate rule="..." message="..."/>`; they become both frontend HTML constraints and backend validator checks.
 4.  **Server-side enrichment**: Use `<odac:set>` for trusted fields (`compute`, `value`, `callback`, `if-empty`) instead of taking these values from user input.
 5.  **Action vs table**: In `<odac:form>`, use `table="..."` for automatic insert or `action="Class.method"` for custom business logic.
+6.  **Translating form text**: `<odac:submit text/loading>`, `<odac:input label/placeholder/value>` and magic-login `email-label`/`submit-text` accept `{{ __('...') }}`. The `<odac:submit>` body may also hold markup (`<odac translate>Save</odac>`, icons); it becomes the button content and is restored after submit. `text` wins over the body; each `<odac:submit>` renders its own `text`/`loading`/`class`/`style`/`id`.
 
 ## Form Type Variants
 

@@ -78,3 +78,4 @@ Odac.get('/api/status', data => {
 - **Form errors**: `response.errors.{fieldName}` maps to `odac-form-error="fieldName"`
 - **Global form error**: `response.errors._odac_form`
 - **Transport failure**: the callback also runs on 5xx/timeout/dropped connection with `{result: {success: false}, errors: {_odac_form: 'Request failed'}, status, xhr}` — no watchdog needed for stuck loading state
+- **Loading state**: submit buttons with `data-loading-text` show that text while the request runs; the button's original content (markup included, e.g. icons) is restored when it finishes

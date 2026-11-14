@@ -354,6 +354,18 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 </form>
 ```
 
+ODAC form tags take translations in their attributes and in the `<odac:submit>` body:
+
+```html
+<odac:login redirect="/dashboard">
+  <odac:input name="email" type="email" label="{{ __('Email Address') }}" placeholder="{{ __('Enter your email') }}"/>
+  <odac:submit text="{{ __('Login') }}" loading="{{ __('Logging in...') }}"/>
+</odac:login>
+
+<!-- or translate the button body -->
+<odac:submit loading="{{ __('Saving...') }}"><odac translate>Save</odac></odac:submit>
+```
+
 #### Product Information
 
 ```html

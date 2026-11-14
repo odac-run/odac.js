@@ -338,6 +338,15 @@ Or use content as button text:
 <odac:submit>Create Account</odac:submit>
 ```
 
+Both `text`/`loading` and the body accept translations:
+
+```html
+<odac:submit text="{{ __('Create Account') }}" loading="{{ __('Please wait...') }}"/>
+<odac:submit><odac translate>Create Account</odac></odac:submit>
+```
+
+See [Custom Forms → Submit Button](../05-forms/01-custom-forms.md#submit-button) for all options.
+
 ## Complete Example
 
 ```html

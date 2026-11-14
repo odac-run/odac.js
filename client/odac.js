@@ -677,7 +677,7 @@ if (typeof window !== 'undefined') {
           btn.disabled = true
           const loadingText = btn.getAttribute('data-loading-text')
           if (loadingText) {
-            btn.setAttribute('data-original-text', btn.textContent)
+            btn.setAttribute('data-original-html', btn.innerHTML)
             btn.textContent = loadingText
           }
         })
@@ -836,10 +836,10 @@ if (typeof window !== 'undefined') {
           complete: () => {
             submitButtons.forEach(btn => {
               btn.disabled = false
-              const originalText = btn.getAttribute('data-original-text')
-              if (originalText) {
-                btn.textContent = originalText
-                btn.removeAttribute('data-original-text')
+              const originalHtml = btn.getAttribute('data-original-html')
+              if (originalHtml) {
+                btn.innerHTML = originalHtml
+                btn.removeAttribute('data-original-html')
               }
             })
             formElement.querySelectorAll('input:not([type="hidden"]), textarea, select').forEach(el => (el.disabled = false))
