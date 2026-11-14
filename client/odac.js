@@ -452,7 +452,7 @@ if (typeof window !== 'undefined') {
     }
 
     #applyDocumentLanguage(served) {
-      if (!served || typeof served.lang !== 'string' || !/^[a-z]{2}$/.test(served.lang)) return
+      if (!served || typeof served.lang !== 'string' || !/^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|\d{3}))?$/.test(served.lang)) return
       const root = document.documentElement
       root.lang = served.lang
       root.dir = served.dir === 'rtl' ? 'rtl' : 'ltr'

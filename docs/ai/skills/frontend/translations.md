@@ -10,13 +10,13 @@ metadata:
 Browser code in `view/js/` translates text with the application's language files.
 
 ## Architectural Approach
-The server reads the keys used in `view/js/` from the source and embeds only those, already translated into the page's language (default-language fallback applied), as `<script type="application/json" id="odac-lang">`. AJAX navigation refreshes them only when the language or their content changes (the browser reports `X-Odac-Lang: <lang>:<version>`; a language file edited on the server reaches it on the next navigation), and sets `<html lang dir>` to the served language (do not update them by hand). The browser never writes to language files; in debug mode the server adds `view/js/` keys to every language file itself.
+The server reads the keys used in `view/js/` from the source and embeds only those, already translated into the page's language (parent-language and default-language fallbacks applied), as `<script type="application/json" id="odac-lang">`. AJAX navigation refreshes them only when the language or their content changes (the browser reports `X-Odac-Lang: <lang>:<version>`; a language file edited on the server reaches it on the next navigation), and sets `<html lang dir>` to the served language (do not update them by hand). The browser never writes to language files; in debug mode the server adds `view/js/` keys to every language file itself.
 
 ## Core Rules
-1.  **API**: `__(key, ...args)`, `__x(key, context, ...args)`, `Odac.lang()` (active code or `null`). Placeholders: `%s` (in order) or `%s1`, `%s2`. The globals `__` / `__x` alias `Odac.__` / `Odac.__x`; if another script already defined a global `__`, ODAC keeps it (console warning) and only `Odac.__()` works, so use `Odac.__()` in code that shares the page with other i18n libraries.
+1.  **API**: `__(key, ...args)`, `__x(key, context, ...args)`, `Odac.lang()` (active canonical code such as `tr` or `pt-BR`, or `null`; pass it straight to `Intl`). Placeholders: `%s` (in order) or `%s1`, `%s2`. The globals `__` / `__x` alias `Odac.__` / `Odac.__x`; if another script already defined a global `__`, ODAC keeps it (console warning) and only `Odac.__()` works, so use `Odac.__()` in code that shares the page with other i18n libraries.
 2.  **Literal Keys Only**: Keys must be string literals (`__('Shipped')`); computed keys (`__(`status.${s}`)`) are never sent and come back untranslated. Map values to literal keys instead.
 3.  **Plain Text**: Insert results with `textContent` or as attribute values, never `innerHTML`; placeholder values are often user input.
-4.  **No Custom Loaders**: Do not fetch language JSON files, expose `storage/language/` or build an endpoint for translations; the built-in mechanism sends exactly the needed subset.
+4.  **No Custom Loaders**: Do not fetch language JSON files, expose the language directory (`lang/`) or build an endpoint for translations; the built-in mechanism sends exactly the needed subset.
 
 ## Reference Patterns
 ```javascript

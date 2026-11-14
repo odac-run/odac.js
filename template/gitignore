@@ -31,9 +31,8 @@ build/
 tmp/
 temp/
 
-# Storage (runtime data). Translations in storage/language/ are source files and stay tracked.
-storage/*
-!storage/language/
+# Storage (runtime data: cache, logs, uploads). Translations live in lang/ and stay tracked.
+storage/
 
 # Test Coverage
 coverage/

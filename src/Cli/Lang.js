@@ -46,7 +46,8 @@ function list(write, items, format = item => item) {
  */
 async function inspect(root) {
   const config = await readConfig(root)
-  const dir = path.join(root, 'storage', 'language')
+  const directory = await Files.resolveDirectory(root, config)
+  const dir = directory.dir
   const defaultLanguage = Catalog.defaultLanguage(config)
   const languages = [...(Catalog.configuredLanguages(config) ?? new Set([...(await Files.listLanguages(dir)), defaultLanguage]))].sort()
 
@@ -77,10 +78,15 @@ async function inspect(root) {
   unused.sort(byKey)
   seen.sort(byKey)
 
-  return {config, dir, defaultLanguage, languages, extracted, used, files, unused, seen}
+  return {config, directory, dir, defaultLanguage, languages, extracted, used, files, unused, seen}
 }
 
-function reportScanProblems(write, {extracted, files}) {
+function reportScanProblems(write, {directory, extracted, files}) {
+  if (directory.ignored) write('\n⚠️  "lang.path" in odac.json is not a non-empty string; the default directory is used.')
+  if (directory.legacy) {
+    write('\n⚠️  Language files are read from storage/language/, which is deprecated.')
+    write('    Move them to lang/ (git mv storage/language lang), or set "lang.path" in odac.json.')
+  }
   const invalid = [...files.entries()].filter(([, file]) => !file.valid).map(([code]) => code)
   if (invalid.length > 0) {
     write(`\n❌ Not valid JSON (left untouched): ${invalid.map(code => `${code}.json`).join(', ')}`)
@@ -140,8 +146,14 @@ async function check(root, write, {strict}) {
     const missing = [...state.used.values()].filter(entry => !Catalog.has(data, entry.key, entry.context)).sort(byKey)
     if (missing.length > 0) absent.push({code, missing})
     if (code === state.defaultLanguage) continue
-    const empty = Catalog.entries(data).filter(entry => Catalog.stored(data, entry.key, entry.context) === '')
-    const notYetAdded = missing.length
+    // A regional file overrides only what differs from its language (`pt-BR` -> `pt`); an
+    // entry a parent translates is served from there and is not missing.
+    const parents = Catalog.parentLanguages(code)
+      .map(parent => state.files.get(parent))
+      .filter(parent => parent?.valid)
+    const covered = entry => parents.some(parent => Catalog.lookup(parent.data, entry.key, entry.context) !== undefined)
+    const empty = Catalog.entries(data).filter(entry => Catalog.stored(data, entry.key, entry.context) === '' && !covered(entry))
+    const notYetAdded = missing.filter(entry => !covered(entry)).length
     if (empty.length + notYetAdded > 0) untranslated.push({code, count: empty.length + notYetAdded, empty})
   }
 

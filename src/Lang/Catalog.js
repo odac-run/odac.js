@@ -15,18 +15,33 @@
  * distinguishable from translations that happen to equal their key.
  */
 
-const LANGUAGE_CODE = /^[a-z]{2}$/
+// A BCP 47 subset in canonical case: language[-Script][-REGION], e.g. `tr`, `pt-BR`,
+// `zh-Hant`, `zh-Hant-TW`, `es-419`. Variants, extensions and private-use subtags are not
+// accepted: a code is a file name, so it only ever holds ASCII letters, digits and `-`.
+const LANGUAGE_CODE = /^[a-z]{2,3}(?:-[A-Z][a-z]{3})?(?:-(?:[A-Z]{2}|\d{3}))?$/
+// The same shape in any case, with `-` or `_` between subtags (`pt_br`, `ZH-hant`).
+const LANGUAGE_TAG = /^([a-z]{2,3})(?:[-_]([a-z]{4}))?(?:[-_]([a-z]{2}|\d{3}))?$/i
+// Longest code LANGUAGE_CODE accepts (`zho-Hant-419`); longer input is rejected unparsed.
+const MAX_LANGUAGE_CODE_LENGTH = 12
 // A context is part of an entry's identity and becomes a JSON key; bounded so a template
 // typo cannot produce unbounded keys.
 const MAX_CONTEXT_LENGTH = 100
-// ISO 639-1 languages written right to left.
-const RTL_LANGUAGES = new Set(['ar', 'dv', 'fa', 'he', 'ps', 'sd', 'ug', 'ur', 'yi'])
+// Languages written right to left when no script subtag says otherwise.
+const RTL_LANGUAGES = new Set(['ar', 'ckb', 'dv', 'fa', 'he', 'ps', 'sd', 'syr', 'ug', 'ur', 'yi'])
+// ISO 15924 scripts written right to left; a script subtag decides over the language
+// (`pa-Arab` is right to left, `uz-Latn` left to right).
+const RTL_SCRIPTS = new Set(['Adlm', 'Arab', 'Hebr', 'Mand', 'Nkoo', 'Rohg', 'Syrc', 'Thaa'])
+// Likely-subtag expansions memoized by language matching; candidates come from
+// Accept-Language, so the cache is bounded.
+const MAX_LIKELY_CACHE = 1000
+const likelyCache = new Map()
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key)
 
 /**
- * Validates a language code.
- * Why: codes become filesystem paths; only two lowercase ASCII letters are ever accepted.
+ * Validates a language code in canonical form.
+ * Why: codes become filesystem paths; only `language[-Script][-REGION]` in canonical case
+ * is ever accepted, so one language always maps to exactly one file name.
  * @param {*} code
  * @returns {boolean}
  */
@@ -35,14 +50,95 @@ function isLanguageCode(code) {
 }
 
 /**
+ * Converts a language tag to its canonical code, or returns null when it is not one.
+ * Why: URLs, sessions, user records and config spell tags in any case (`pt-br`, `PT_BR`);
+ * file names, `<html lang>` and comparisons need one spelling (`pt-BR`).
+ * @param {*} tag
+ * @returns {string|null}
+ */
+function normalizeLanguage(tag) {
+  if (typeof tag !== 'string' || tag.length > MAX_LANGUAGE_CODE_LENGTH) return null
+  const match = LANGUAGE_TAG.exec(tag)
+  if (!match) return null
+  const [, language, script, region] = match
+  let code = language.toLowerCase()
+  if (script) code += `-${script[0].toUpperCase()}${script.slice(1).toLowerCase()}`
+  if (region) code += `-${region.toUpperCase()}`
+  return code
+}
+
+/**
+ * Returns the more general codes a code falls back to, most specific first:
+ * `zh-Hant-TW` -> `['zh-Hant', 'zh']`, `pt-BR` -> `['pt']`, `tr` -> `[]`.
+ * Why: a regional file holds only what differs from its language; everything else is served
+ * from the more general file (RFC 4647 lookup).
+ * @param {string} code Canonical code.
+ * @returns {string[]}
+ */
+function parentLanguages(code) {
+  const parents = []
+  for (let i = code.lastIndexOf('-'); i > 0; i = code.lastIndexOf('-', i - 1)) parents.push(code.slice(0, i))
+  return parents
+}
+
+// The codes a candidate likely means once its implied script and region are added
+// (`zh-TW` -> `zh-Hant-TW`, `zh-Hant`; `pt` -> `pt-Latn-BR`, `pt-Latn`, `pt-BR`), so a
+// browser's `zh-TW` finds `zh-Hant` and a bare `en` prefers `en-US` over `en-GB`.
+function likelyLanguages(code) {
+  let likely = likelyCache.get(code)
+  if (likely) return likely
+  likely = []
+  try {
+    const {language, script, region} = new Intl.Locale(code).maximize()
+    const forms = script && region ? [`${language}-${script}-${region}`, `${language}-${script}`, `${language}-${region}`] : []
+    for (const candidate of forms) {
+      const normalized = normalizeLanguage(candidate)
+      if (normalized && normalized !== code && !likely.includes(normalized)) likely.push(normalized)
+    }
+  } catch {
+    // An ICU build without likely-subtag data: exact and parent matching still apply.
+  }
+  if (likelyCache.size >= MAX_LIKELY_CACHE) likelyCache.clear()
+  likelyCache.set(code, likely)
+  return likely
+}
+
+/**
+ * Picks the supported language that best serves a list of requested codes.
+ * Why: requests name languages more or less specifically than the files an application has
+ * (`tr-TR` for `tr.json`, `zh-TW` for `zh-Hant.json`, `pt` for `pt-BR.json`). Candidates are
+ * tried in order of preference; for each one: the exact code, its parents, its likely
+ * script/region forms, then the first supported code that specializes it. A less preferred
+ * candidate never wins over a usable match for a more preferred one.
+ * @param {Iterable<string>} candidates Canonical codes, most preferred first.
+ * @param {Set<string>} supported
+ * @returns {string|null}
+ */
+function matchLanguage(candidates, supported) {
+  for (const code of candidates) {
+    if (supported.has(code)) return code
+    for (const parent of parentLanguages(code)) if (supported.has(parent)) return parent
+    for (const likely of likelyLanguages(code)) if (supported.has(likely)) return likely
+    const prefix = `${code}-`
+    let specific = null
+    for (const option of supported) if (option.startsWith(prefix) && (specific === null || option < specific)) specific = option
+    if (specific) return specific
+  }
+  return null
+}
+
+/**
  * Returns the writing direction of a language.
  * Why: `<html dir>` has to follow the served language, or an Arabic or Hebrew page renders
- * left to right.
- * @param {string} code A two-letter language code.
+ * left to right. A script subtag decides over the language.
+ * @param {string} code Canonical code.
  * @returns {'ltr'|'rtl'}
  */
 function direction(code) {
-  return RTL_LANGUAGES.has(code) ? 'rtl' : 'ltr'
+  if (typeof code !== 'string') return 'ltr'
+  const [language, second] = code.split('-', 2)
+  if (second?.length === 4) return RTL_SCRIPTS.has(second) ? 'rtl' : 'ltr'
+  return RTL_LANGUAGES.has(language) ? 'rtl' : 'ltr'
 }
 
 /**
@@ -52,8 +148,7 @@ function direction(code) {
  * @returns {string}
  */
 function defaultLanguage(config) {
-  const configured = String(config?.lang?.default ?? 'en').toLowerCase()
-  return isLanguageCode(configured) ? configured : 'en'
+  return normalizeLanguage(String(config?.lang?.default ?? 'en')) ?? 'en'
 }
 
 /**
@@ -68,8 +163,8 @@ function configuredLanguages(config) {
   if (!Array.isArray(supported)) return null
   const codes = new Set([defaultLanguage(config)])
   for (const code of supported) {
-    const lower = typeof code === 'string' ? code.toLowerCase() : code
-    if (isLanguageCode(lower)) codes.add(lower)
+    const normalized = normalizeLanguage(code)
+    if (normalized) codes.add(normalized)
   }
   return codes
 }
@@ -286,7 +381,10 @@ module.exports = {
   has,
   isLanguageCode,
   lookup,
+  matchLanguage,
   normalizeContext,
+  normalizeLanguage,
+  parentLanguages,
   parse,
   serialize,
   stored

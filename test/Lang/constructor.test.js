@@ -17,9 +17,9 @@ describe('Lang.constructor()', () => {
     expect(lang).toBeDefined()
   })
 
-  it('should call Var if lang is provided', () => {
+  it('selects the language passed to set()', () => {
     const lang = new Lang(mockOdac)
     lang.set('en')
-    expect(mockOdac.Var).toHaveBeenCalledWith('en')
+    expect(lang.current()).toBe('en')
   })
 })

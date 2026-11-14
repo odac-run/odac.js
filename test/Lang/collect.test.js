@@ -18,7 +18,7 @@ describe('Lang key collection', () => {
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-collect-'))
-    langDir = path.join(tmpDir, 'storage/language')
+    langDir = path.join(tmpDir, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = tmpDir
     Lang.store.reset()

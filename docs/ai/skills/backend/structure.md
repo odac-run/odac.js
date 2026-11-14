@@ -20,7 +20,7 @@ ODAC uses a request-scoped container. Most logic should be encapsulated in Servi
     -   `view/`: HTML/Template files.
     -   `middleware/`: Request interceptors.
     -   `hook/`: Framework lifecycle hooks. Only `hook/auth.js` exists (`beforeLogin`, `login`, `loginFailed`); see the authentication skill. Never register framework listeners from route files.
-    -   `storage/language/`: Translation JSON files.
+    -   `lang/`: Translation JSON files (source files, commit them; `lang.path` in `odac.json` moves the directory). `storage/` is runtime data and git-ignored; never put translations there.
 2.  **Service Classes**:
     -   Place classes in the `class/` directory.
     -   They are automatically instantiated and attached to `Odac` as `Odac.ClassName`.

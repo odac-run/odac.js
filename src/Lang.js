@@ -1,4 +1,5 @@
 const fsPromises = require('node:fs').promises
+const path = require('node:path')
 const {createHash, randomUUID} = require('node:crypto')
 const Catalog = require('./Lang/Catalog.js')
 const Files = require('./Lang/Files.js')
@@ -13,6 +14,8 @@ const SAVE_DEBOUNCE_MS = 500
 // Accept-Language entries considered; the rest of an oversized header is ignored.
 const MAX_ACCEPT_LANGUAGES = 16
 const MAX_ACCEPT_LANGUAGE_LENGTH = 512
+// A language range longer than this is cut before its subtags are examined.
+const MAX_RANGE_LENGTH = 64
 // Serializes language file writes across workers (and servers sharing a Redis Ipc).
 const WRITE_LOCK = 'odac:lang:write'
 const WRITE_LOCK_TTL = 10
@@ -41,7 +44,7 @@ function warn(message, fields) {
 class LanguageStore {
   // lang -> {data, mtimeMs, checkedAt, loading, failedMtimeMs}
   #entries = new Map()
-  // Language codes that have a file in storage/language/, refreshed in the background. A
+  // Language codes that have a file in the language directory, refreshed in the background. A
   // code is added only once its file is loaded, so language selection never picks a
   // language whose translations are not in memory yet.
   #available = null
@@ -61,13 +64,35 @@ class LanguageStore {
   #seen = new Map()
   // Entries whose day changed and is not written yet: id -> {key, context, seen}.
   #seenPending = new Map()
+  // The resolved language directory: {root, config, promise}; resolved again when the
+  // project root or the config object changes (Lang used before Odac.init(), then init()).
+  #directory = null
+  #directoryWarned = false
 
+  // Resolves to the language directory (see Files.resolveDirectory).
   #dir() {
-    return `${__dir}/storage/language/`
+    const root = __dir
+    const config = this.#config
+    if (this.#directory?.root !== root || this.#directory.config !== config) {
+      const promise = Files.resolveDirectory(root, config).then(result => {
+        this.#reportDirectory(result, config)
+        return result.dir
+      })
+      this.#directory = {root, config, promise}
+    }
+    return this.#directory.promise
   }
 
-  #file(lang) {
-    return `${this.#dir()}${lang}.json`
+  // Logged once per process: both cases keep working, so nothing else would point them out.
+  #reportDirectory({legacy, ignored}, config) {
+    if (this.#directoryWarned || (!legacy && !ignored)) return
+    this.#directoryWarned = true
+    if (ignored) warn('lang.path is not a non-empty string; using the default language directory', {path: config?.lang?.path})
+    if (legacy) {
+      warn('Language files are read from the deprecated storage/language/; move them to lang/ or set lang.path', {
+        dir: path.join('storage', 'language')
+      })
+    }
   }
 
   #entry(lang) {
@@ -85,9 +110,10 @@ class LanguageStore {
   }
 
   async #refresh(lang, entry) {
+    const dir = await this.#dir()
     let mtimeMs = null
     try {
-      mtimeMs = (await fsPromises.stat(this.#file(lang))).mtimeMs
+      mtimeMs = (await fsPromises.stat(path.join(dir, `${lang}.json`))).mtimeMs
     } catch {
       // No file yet.
     }
@@ -100,7 +126,7 @@ class LanguageStore {
     // valid; the warning is logged once per version of the file.
     let file
     try {
-      file = await Files.readLanguage(this.#dir(), lang)
+      file = await Files.readLanguage(dir, lang)
     } catch (e) {
       file = {valid: false, error: e?.message ?? String(e)}
     }
@@ -136,7 +162,7 @@ class LanguageStore {
   async #scan() {
     // A scan still running when reset() is called must not touch the new state.
     const generation = this.#generation
-    const codes = await Files.listLanguages(this.#dir())
+    const codes = await Files.listLanguages(await this.#dir())
     if (generation !== this.#generation) return
     // Languages served without a file of their own (the default, lang.supported) are loaded
     // too, so a file created for them later is noticed by the regular re-check.
@@ -172,7 +198,7 @@ class LanguageStore {
   /**
    * Returns the languages a request may be served in.
    * Why: Accept-Language is client input. Without this whitelist any visitor could make the
-   * server look up, and with key collection create, a file for every two-letter code.
+   * server look up, and with key collection create, a file for every language code.
    * `lang.supported` is a strict whitelist; without it, the files on disk decide. The
    * default language is always included.
    * @param {object} [config]
@@ -192,7 +218,7 @@ class LanguageStore {
    * Why: lookups are synchronous. A stale file is re-checked in the background and its new
    * version is served from the next lookup on. A language not loaded at startup (one added
    * to the config at runtime) has no translations until its first load finishes.
-   * @param {string} lang Validated two-letter code.
+   * @param {string} lang Validated canonical code.
    * @returns {object} Null-prototype map of key -> translation.
    */
   load(lang) {
@@ -282,7 +308,7 @@ class LanguageStore {
   async #saveEntries(items) {
     if (items.length === 0) return
     try {
-      const result = await Files.sync(this.#dir(), {
+      const result = await Files.sync(await this.#dir(), {
         languages: this.languages(this.#config),
         defaultLanguage: Catalog.defaultLanguage(this.#config),
         add: items
@@ -353,14 +379,29 @@ class LanguageStore {
     this.#availableCheckedAt = 0
     this.#scanning = null
     this.#config = null
+    this.#directory = null
+    this.#directoryWarned = false
   }
 }
 
 const store = new LanguageStore()
 const frontendKeys = new FrontendKeys()
 
+// The canonical code of a language range, dropping trailing subtags ODAC does not use
+// (`de-CH-1996` -> `de-CH`, `en-US-u-ca-gregory` -> `en-US`); null for `*` or garbage.
+function rangeLanguage(range) {
+  let tag = range.slice(0, MAX_RANGE_LENGTH)
+  for (;;) {
+    const code = Catalog.normalizeLanguage(tag)
+    if (code) return code
+    const end = tag.lastIndexOf('-')
+    if (end <= 0) return null
+    tag = tag.slice(0, end)
+  }
+}
+
 /**
- * Parses an Accept-Language header into two-letter codes, most preferred first.
+ * Parses an Accept-Language header into canonical language codes, most preferred first.
  * @param {string} header
  * @returns {string[]}
  */
@@ -370,8 +411,8 @@ function parseAcceptLanguage(header) {
   const parts = header.slice(0, MAX_ACCEPT_LANGUAGE_LENGTH).split(',', MAX_ACCEPT_LANGUAGES)
   for (let i = 0; i < parts.length; i++) {
     const [range, ...params] = parts[i].trim().split(';')
-    const code = range.trim().slice(0, 2).toLowerCase()
-    if (!Catalog.isLanguageCode(code) || (range.length > 2 && range[2] !== '-')) continue
+    const code = rangeLanguage(range.trim())
+    if (!code) continue
     let q = 1
     for (const param of params) {
       const [name, value] = param.trim().split('=')
@@ -387,10 +428,17 @@ function parseAcceptLanguage(header) {
 class Lang {
   #odac
   #lang
-  // Languages asked for (explicitly or through Accept-Language), in order of preference.
+  // Languages asked for through Accept-Language, in order of preference.
   #candidates = []
-  // The code passed to set(), when it is a valid language code.
+  // The code passed to set(), canonical, when it is a valid language code.
   #explicit = null
+  // True when #lang was matched from #explicit, so it does not depend on Accept-Language.
+  #fromExplicit = false
+  // Languages a missing translation is served from, in order: the supported parents of #lang
+  // (`pt` for `pt-BR`), then the default language.
+  #fallbacks = []
+  // How many of #fallbacks are parents; a translation found past them is a missing one.
+  #parents = 0
   // Set when #lang was chosen before the language directory was listed.
   #provisional = false
 
@@ -407,7 +455,8 @@ class Lang {
   /**
    * Translates a key, replacing `%s` (sequential) or `%s1`, `%s2` (numbered) placeholders.
    * Why: one lookup path for views, mails and validators. A key without a translation in the
-   * active language falls back to the default language, then to the key itself. Untranslated
+   * active language falls back to its more general languages (`pt` for `pt-BR`), then to the
+   * default language, then to the key itself. Untranslated
    * keys are added to the language file when `lang.collect` is on (default: debug mode); every
    * key looked up is then also recorded for `odac lang:prune` (see Lang/Runtime.js).
    * Synchronous: translations are served from memory (see LanguageStore), so the result can
@@ -448,24 +497,37 @@ class Lang {
       const config = this.#odac.Config
       // Before the files are loaded every key looks missing; nothing is collected then.
       if (collect && store.ready && !Catalog.has(data, key, context)) store.collect(key, context, config)
-      const fallback = Catalog.defaultLanguage(config)
-      if (fallback !== lang) {
-        str = Catalog.lookup(store.load(fallback), key, context)
-        if (config?.debug) {
-          store.warnMissing(lang, key, context)
-          // Opt-in debug aid: makes text served from the fallback visible on the page.
-          if (config.lang?.highlightMissing) str = `⟦${str ?? key}⟧`
-        }
+      const fallbacks = this.#fallbacks
+      let found = 0
+      for (; found < fallbacks.length; found++) {
+        str = Catalog.lookup(store.load(fallbacks[found]), key, context)
+        if (str !== undefined) break
+      }
+      // A regional language leaves to its parent what it does not override (`pt-BR` -> `pt`);
+      // only text served from the default language, or not at all, is missing.
+      if (config?.debug && found >= this.#parents && lang !== Catalog.defaultLanguage(config)) {
+        store.warnMissing(lang, key, context)
+        // Opt-in debug aid: makes text served from the fallback visible on the page.
+        if (config.lang?.highlightMissing) str = `⟦${str ?? key}⟧`
       }
       if (str === undefined) str = key
     }
     return Catalog.format(str, args)
   }
 
+  // The translation of an entry in the fallback languages, or undefined.
+  #fallbackLookup(datas, key, context) {
+    for (const data of datas) {
+      const value = Catalog.lookup(data, key, context)
+      if (value !== undefined) return value
+    }
+    return undefined
+  }
+
   /**
    * Returns the translations the browser code needs, for `Odac.__()` in `view/js/`.
    * Why: only entries used under `view/js/` are included, already resolved for the active
-   * language (with the default-language fallback), so the browser gets neither the rest of
+   * language (with the same fallbacks as Odac.__()), so the browser gets neither the rest of
    * the dictionary nor a way to write to it. In debug mode, frontend entries missing from
    * the language files are collected like server-side ones.
    * `v` identifies the content: the browser reports it on AJAX navigation, so it receives
@@ -478,19 +540,25 @@ class Lang {
     if (entries.length === 0) return null
     const lang = this.#resolved()
     const data = store.load(lang)
-    const def = Catalog.defaultLanguage(config)
-    const fallback = def === lang ? null : store.load(def)
+    const fallbacks = this.#fallbacks.map(code => store.load(code))
 
     if (this.#collect() && store.ready)
       for (const {key, context} of entries) if (!Catalog.has(data, key, context)) store.collect(key, context, config)
 
     const cached = clientCache.get(lang)
-    if (cached && cached.entries === entries && cached.data === data && cached.fallback === fallback) return cached.payload
+    if (
+      cached &&
+      cached.entries === entries &&
+      cached.data === data &&
+      cached.fallbacks.length === fallbacks.length &&
+      cached.fallbacks.every((fallback, i) => fallback === fallbacks[i])
+    )
+      return cached.payload
 
     const translated = []
     const values = new Map()
     for (const entry of entries) {
-      const value = Catalog.lookup(data, entry.key, entry.context) ?? (fallback && Catalog.lookup(fallback, entry.key, entry.context))
+      const value = Catalog.lookup(data, entry.key, entry.context) ?? this.#fallbackLookup(fallbacks, entry.key, entry.context)
       if (!value) continue
       translated.push(entry)
       values.set(Catalog.entryId(entry.key, entry.context), value)
@@ -499,7 +567,7 @@ class Lang {
     // Computed only when the translations are rebuilt, never per request.
     const v = createHash('sha256').update(JSON.stringify(t)).digest('base64url').slice(0, 16)
     const payload = Object.freeze({lang, v, t})
-    clientCache.set(lang, {entries, data, fallback, payload})
+    clientCache.set(lang, {entries, data, fallbacks, payload})
     return payload
   }
 
@@ -520,9 +588,9 @@ class Lang {
   }
 
   /**
-   * Returns the active two-letter language code.
+   * Returns the active language code in canonical form (`tr`, `pt-BR`, `zh-Hant`).
    * Why: controllers need it for locale-aware formatting (dates, numbers) that must match
-   * the language the translations are served in.
+   * the language the translations are served in; it is a valid BCP 47 tag for `Intl`.
    * @returns {string}
    */
   current() {
@@ -557,35 +625,39 @@ class Lang {
     const config = this.#odac.Config
     const multilingual = store.languages(config).size > 1
     if (!multilingual && config?.lang?.default == null && !Catalog.configuredLanguages(config)) return null
-    return {lang, dir: Catalog.direction(lang), varies: multilingual && lang !== this.#explicit}
+    return {lang, dir: Catalog.direction(lang), varies: multilingual && !this.#fromExplicit}
   }
 
   /**
-   * Selects the request's language: the given code if it is supported, otherwise the most
-   * preferred supported language of the Accept-Language header, otherwise `lang.default`,
-   * then `en`.
-   * Why: the code becomes part of a filesystem path, so only two ASCII letters are accepted,
-   * and only languages the application has (see LanguageStore#languages).
+   * Selects the request's language: the given code if a supported language serves it,
+   * otherwise the most preferred Accept-Language entry one serves, otherwise `lang.default`,
+   * then `en`. A code is served by itself, its parents (`pt` for `pt-BR`), its likely forms
+   * (`zh-Hant` for `zh-TW`) or a more specific language (`pt-BR` for `pt`); see
+   * Catalog.matchLanguage.
+   * Why: the code becomes part of a filesystem path, so only `language[-Script][-REGION]`
+   * is accepted (any case, `-` or `_`), and only languages the application has (see
+   * LanguageStore#languages).
    * @param {string} [lang]
    */
   set(lang) {
-    const candidates = []
-    this.#explicit = null
-    if (lang && lang.length === 2 && this.#odac.Var(lang).is('alpha')) {
-      this.#explicit = String(lang).toLowerCase()
-      candidates.push(this.#explicit)
-    }
-    const header = this.#odac.Request?.header?.('ACCEPT-LANGUAGE')
-    for (const code of parseAcceptLanguage(header)) candidates.push(code)
-    this.#candidates = candidates
+    this.#explicit = Catalog.normalizeLanguage(lang)
+    this.#candidates = parseAcceptLanguage(this.#odac.Request?.header?.('ACCEPT-LANGUAGE'))
     this.#choose()
   }
 
   #choose() {
     const config = this.#odac.Config
     const supported = store.languages(config)
+    const def = Catalog.defaultLanguage(config)
     this.#provisional = !store.ready
-    this.#lang = this.#candidates.find(code => Catalog.isLanguageCode(code) && supported.has(code)) ?? Catalog.defaultLanguage(config)
+    const explicit = this.#explicit ? Catalog.matchLanguage([this.#explicit], supported) : null
+    this.#fromExplicit = explicit !== null
+    const lang = explicit ?? Catalog.matchLanguage(this.#candidates, supported) ?? def
+    const fallbacks = Catalog.parentLanguages(lang).filter(code => supported.has(code))
+    this.#parents = fallbacks.length
+    if (lang !== def && !fallbacks.includes(def)) fallbacks.push(def)
+    this.#lang = lang
+    this.#fallbacks = fallbacks
   }
 }
 

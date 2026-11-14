@@ -14,7 +14,7 @@ describe('Lang.get()', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-'))
-    langDir = path.join(tmpDir, 'storage/language')
+    langDir = path.join(tmpDir, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = tmpDir
     Lang.store.reset()
@@ -205,7 +205,7 @@ describe('Lang.getx()', () => {
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-ctx-'))
-    langDir = path.join(tmpDir, 'storage/language')
+    langDir = path.join(tmpDir, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = tmpDir
     Lang.store.reset()

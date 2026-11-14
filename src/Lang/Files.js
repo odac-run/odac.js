@@ -4,6 +4,46 @@ const fsPromises = require('node:fs').promises
 const path = require('node:path')
 const Catalog = require('./Catalog.js')
 
+// Where language files live when `lang.path` is not set, relative to the project root.
+const DEFAULT_DIRECTORY = 'lang'
+// Where they used to live; still read when DEFAULT_DIRECTORY does not exist.
+const LEGACY_DIRECTORY = path.join('storage', 'language')
+
+async function exists(target) {
+  try {
+    await fsPromises.stat(target)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Resolves the directory language files are read from and written to.
+ * Why: translations are source files, not runtime data, so they live outside the git-ignored
+ * `storage/` by default (`lang/`). `lang.path` moves them, e.g. to a volume that is updated
+ * in production while the application directory stays read-only; a relative path is
+ * resolved against the project root. Projects that still keep them in `storage/language/`
+ * keep working: that directory is used when `lang/` does not exist (`legacy: true`).
+ * One rule for the runtime and the CLI, so `odac lang:*` always edits the files served.
+ * @param {string} root The project root.
+ * @param {object} [config] The application config.
+ * @returns {Promise<{dir: string, legacy: boolean, ignored: boolean}>} `ignored` is true when
+ *   `lang.path` is set but not a non-empty string, so the default was used instead.
+ */
+async function resolveDirectory(root, config) {
+  const configured = config?.lang?.path
+  if (typeof configured === 'string' && configured.trim() !== '') {
+    return {dir: path.resolve(root, configured.trim()), legacy: false, ignored: false}
+  }
+  const ignored = configured !== undefined && configured !== null
+  const dir = path.join(root, DEFAULT_DIRECTORY)
+  if (await exists(dir)) return {dir, legacy: false, ignored}
+  const legacy = path.join(root, LEGACY_DIRECTORY)
+  if (await exists(legacy)) return {dir: legacy, legacy: true, ignored}
+  return {dir, legacy: false, ignored}
+}
+
 /**
  * Reads one language file.
  * @param {string} dir The language directory.
@@ -132,4 +172,4 @@ async function sync(dir, {languages, defaultLanguage, add = [], remove = []}) {
   return {written, invalid, added, removed}
 }
 
-module.exports = {listLanguages, readLanguage, sync, writeAtomic, writeLanguage}
+module.exports = {listLanguages, readLanguage, resolveDirectory, sync, writeAtomic, writeLanguage}

@@ -12,7 +12,7 @@ describe('Lang.client()', () => {
     fs.mkdirSync(path.dirname(path.join(root, file)), {recursive: true})
     fs.writeFileSync(path.join(root, file), typeof content === 'string' ? content : JSON.stringify(content))
   }
-  const readLang = code => JSON.parse(fs.readFileSync(path.join(root, 'storage/language', `${code}.json`), 'utf8'))
+  const readLang = code => JSON.parse(fs.readFileSync(path.join(root, 'lang', `${code}.json`), 'utf8'))
   const tr = () => {
     const lang = new Lang(mockOdac)
     lang.set('tr')
@@ -31,14 +31,14 @@ describe('Lang.client()', () => {
     }
     write('view/js/app.js', "Odac.__('Hello'); Odac.__x('Gül', 'verb'); Odac.__('Only English'); Odac.__('Untranslated')")
     write('controller/admin.js', "Odac.__('Admin secret')")
-    write('storage/language/en.json', {
+    write('lang/en.json', {
       Hello: 'Hello',
       Gül: {verb: 'Smile', flower: 'Rose'},
       'Only English': 'Only English',
       Untranslated: '',
       'Admin secret': 'Admin secret'
     })
-    write('storage/language/tr.json', {Hello: 'Merhaba', Gül: {verb: 'Gülümse', flower: 'Gül'}, 'Admin secret': 'Gizli'})
+    write('lang/tr.json', {Hello: 'Merhaba', Gül: {verb: 'Gülümse', flower: 'Gül'}, 'Admin secret': 'Gizli'})
     await Lang.store.init()
   })
 
@@ -64,9 +64,9 @@ describe('Lang.client()', () => {
     const first = await tr().client()
     expect(await tr().client()).toBe(first)
 
-    write('storage/language/tr.json', {Hello: 'Selam'})
+    write('lang/tr.json', {Hello: 'Selam'})
     const future = new Date(Date.now() + 5000)
-    fs.utimesSync(path.join(root, 'storage/language/tr.json'), future, future)
+    fs.utimesSync(path.join(root, 'lang/tr.json'), future, future)
     jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3000)
     await tr().client() // notices the edit; re-read in the background
     await Lang.store.settle()

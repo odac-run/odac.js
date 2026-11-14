@@ -16,6 +16,7 @@ project/
 │       └── home.js
 ├── hook/               # Framework lifecycle hooks
 │   └── auth.js         # beforeLogin, login, loginFailed
+├── lang/               # Translation files (en.json, tr.json, pt-BR.json, ...); commit these
 ├── middleware/         # Route middleware functions
 │   └── auth.js
 ├── public/             # Static assets (directly accessible)
@@ -27,9 +28,8 @@ project/
 ├── route/              # Route definitions (subdomain-based)
 │   ├── api.js          # Routes for api.example.com
 │   └── www.js          # Routes for www.example.com
-├── storage/            # App storage (logs, cache, uploads)
-│   ├── .cache/
-│   └── language/       # Translation files (en.json, tr.json, ...); commit these
+├── storage/            # Runtime data (logs, cache, uploads); git-ignored
+│   └── .cache/
 ├── view/               # HTML templates
 │   ├── content/
 │   ├── css/            # (Optional) Custom Tailwind entry points
@@ -52,7 +52,8 @@ project/
 | `route/` | Route definitions, one file per subdomain |
 | `view/` | HTML templates and partials |
 | `public/` | Static files served directly to browsers |
-| `storage/` | Runtime data (cache, logs, file uploads); `storage/language/` holds translations and is version-controlled |
+| `lang/` | Translation files, one JSON file per language; version-controlled (see Translations; `lang.path` moves it) |
+| `storage/` | Runtime data (cache, logs, file uploads); git-ignored |
 
 ### Serving `public/`
 

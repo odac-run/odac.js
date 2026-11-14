@@ -102,3 +102,60 @@ describe('Lang Files.sync()', () => {
     expect(await Files.listLanguages(path.join(dir, 'missing'))).toEqual([])
   })
 })
+
+describe('Lang Files.resolveDirectory()', () => {
+  let root
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-dir-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(root, {recursive: true, force: true})
+  })
+
+  it('defaults to lang/ in the project root, even before it exists', async () => {
+    expect(await Files.resolveDirectory(root, {})).toEqual({dir: path.join(root, 'lang'), legacy: false, ignored: false})
+  })
+
+  it('resolves a relative lang.path against the project root', async () => {
+    const result = await Files.resolveDirectory(root, {lang: {path: ' resources/i18n '}})
+    expect(result).toEqual({dir: path.join(root, 'resources/i18n'), legacy: false, ignored: false})
+  })
+
+  it('keeps an absolute lang.path as it is', async () => {
+    const dir = path.join(os.tmpdir(), 'odac-shared-translations')
+    expect((await Files.resolveDirectory(root, {lang: {path: dir}})).dir).toBe(dir)
+  })
+
+  it('uses storage/language/ when lang/ does not exist', async () => {
+    fs.mkdirSync(path.join(root, 'storage', 'language'), {recursive: true})
+    expect(await Files.resolveDirectory(root, {})).toEqual({dir: path.join(root, 'storage', 'language'), legacy: true, ignored: false})
+  })
+
+  it('prefers lang/ once it exists', async () => {
+    fs.mkdirSync(path.join(root, 'storage', 'language'), {recursive: true})
+    fs.mkdirSync(path.join(root, 'lang'))
+    expect(await Files.resolveDirectory(root, {})).toEqual({dir: path.join(root, 'lang'), legacy: false, ignored: false})
+  })
+
+  it('never falls back to storage/language/ when lang.path is set', async () => {
+    fs.mkdirSync(path.join(root, 'storage', 'language'), {recursive: true})
+    expect(await Files.resolveDirectory(root, {lang: {path: 'i18n'}})).toEqual({
+      dir: path.join(root, 'i18n'),
+      legacy: false,
+      ignored: false
+    })
+  })
+
+  it('ignores a lang.path that is not a non-empty string and says so', async () => {
+    for (const value of ['', '  ', 42, ['lang'], {}]) {
+      expect(await Files.resolveDirectory(root, {lang: {path: value}})).toEqual({
+        dir: path.join(root, 'lang'),
+        legacy: false,
+        ignored: true
+      })
+    }
+    expect((await Files.resolveDirectory(root, {lang: {path: null}})).ignored).toBe(false)
+  })
+})
