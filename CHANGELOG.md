@@ -1,3 +1,13 @@
+### 🛠️ Fixes & Improvements
+
+- **forms:** support translations in odac:submit text, loading and body
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ⚙️ Engine Tuning
 
 - **view:** drop the lazy TODO entry superseded by <c:name lazy>
