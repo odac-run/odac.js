@@ -1,3 +1,13 @@
+### ✨ What's New
+
+- **lang:** answer forms in the page language, add Mail#lang and translate framework messages
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - **forms:** support translations in odac:submit text, loading and body
