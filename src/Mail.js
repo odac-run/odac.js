@@ -4,19 +4,12 @@ const fs = require('fs')
 const fsPromises = fs.promises
 // const Form = require('./View/Form')
 
-const {cacheName, compile} = require('./View/Compiler')
+const {cacheName, compileTemplate, TemplateError} = require('./View/Compiler')
+const Component = require('./View/Component')
+const {isLocalName} = require('./View/Identifiers')
+const Template = require('./View/Template')
 
 const CACHE_DIR = 'storage/.cache'
-// Data keys that may be declared as template locals: plain identifiers that neither shadow
-// the compiled function's own names nor are reserved words.
-const IDENTIFIER = /^[A-Za-z_$][\w$]*$/
-const RESERVED = new Set(
-  (
-    'Odac data get __ html arguments await break case catch class const continue debugger default delete do else enum eval ' +
-    'export extends false finally for function if implements import in instanceof interface let new null package private ' +
-    'protected public return static super switch this throw true try typeof undefined var void while with yield'
-  ).split(' ')
-)
 // Header values and display names end up as raw header lines; CR/LF would start new headers.
 const stripLineBreaks = value => (value === undefined || value === null ? value : String(value).replace(/[\r\n]+/g, ' '))
 
@@ -41,6 +34,8 @@ class Mail {
    * the first call's keys into a cached module made later calls with other keys throw (and
    * send an empty mail), broke on keys such as `html` or `first-name`, and executed any key
    * that came from user input. Every key stays reachable through `get('key')`.
+   * Components come from view/mail/components/ (mail needs table layouts and inline styles, not
+   * the page's components), and `<odac:stack>` prints what they pushed (e.g. a `<style>`).
    * Render errors propagate, so send() fails instead of delivering an empty body.
    */
   async #render(file, data) {
@@ -53,14 +48,20 @@ class Mail {
       await handle.close()
     }
 
-    const locals = Object.keys(data)
-      .filter(key => IDENTIFIER.test(key) && !RESERVED.has(key))
-      .sort()
+    const locals = Object.keys(data).filter(isLocalName).sort()
     const variant = `${file}\u0000${locals.join(',')}`
     let compiled = Mail.#compiled.get(variant)
 
     if (compiled?.mtime !== mtime) {
-      const name = cacheName('mail', variant)
+      let code
+      try {
+        code = compileTemplate(content, {file, components: true}).code
+      } catch (e) {
+        if (e instanceof TemplateError) throw Template.failure(e, {file, line: e.line})
+        throw e
+      }
+      // One module per template version: a changed template never loads a stale module.
+      const name = cacheName('mail', variant, mtime)
       const dir = `${__dir}/${CACHE_DIR}`
       const target = `${dir}/${name}`
       const declarations = locals.map(key => `let ${key} = data[${JSON.stringify(key)}];`).join('\n')
@@ -69,21 +70,35 @@ class Mail {
       const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
       await fsPromises.writeFile(
         temp,
-        `module.exports = async (Odac, data, get, __, __x) => {\n${declarations}\nlet html = '';\n${compile(content, {file})}\nreturn html.trim()\n}`
+        `module.exports = async (Odac, data, get, __, __x, __r, slots) => {\n${declarations}\nlet html = '';\n${code}\nreturn html.trim()\n}`
       )
       await fsPromises.rename(temp, target)
       delete require.cache[require.resolve(target)]
-      compiled = {mtime, target}
+      // The superseded version is not loaded again.
+      if (compiled) fsPromises.unlink(compiled.target).catch(() => {})
+      compiled = {mtime, target, name}
       Mail.#compiled.set(variant, compiled)
     }
 
-    return require(compiled.target)(
-      Odac,
-      data,
+    const helpers = [
       key => data[key],
       (...args) => (Odac.Lang ? Odac.Lang.get(...args) : args[0]),
       (key, context, ...args) => (Odac.Lang ? Odac.Lang.getx(key, context, ...args) : key)
-    )
+    ]
+    const state = Component.createState()
+    const runtime = new Component.Runtime({
+      odac: Odac,
+      helpers,
+      file,
+      module: compiled.name,
+      chain: [],
+      seen: new Set(),
+      state,
+      directory: `${__dir}/view/mail/components`,
+      lazy: false
+    })
+    const html = await require(compiled.target)(Odac, data, ...helpers, runtime, Component.EMPTY_SLOTS)
+    return Component.fillStacks(html, state, {marker: false})
   }
 
   header(header) {

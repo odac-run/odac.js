@@ -28,8 +28,9 @@ describe('copyTemplate()', () => {
 
     const ignore = fs.readFileSync(path.join(target, '.gitignore'), 'utf8')
     expect(ignore).toMatch(/^\.env$/m)
-    expect(ignore).toMatch(/^storage\/\*$/m)
-    expect(ignore).toMatch(/^!storage\/language\/$/m)
+    // Translations live in lang/, outside the ignored runtime data.
+    expect(ignore).toMatch(/^storage\/$/m)
+    expect(ignore).not.toMatch(/^!storage/m)
     expect(fs.existsSync(path.join(target, 'gitignore'))).toBe(false)
     expect(fs.existsSync(path.join(target, 'odac.json'))).toBe(true)
   })

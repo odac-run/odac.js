@@ -95,6 +95,53 @@ describe('Mail templates and headers', () => {
     expect(body()).toContain("<p>Total: $& $' $$</p>")
   })
 
+  describe('components', () => {
+    const component = (name, html) => {
+      const file = path.join(tmpDir, 'view', 'mail', 'components', `${name}.html`)
+      fs.mkdirSync(path.dirname(file), {recursive: true})
+      fs.writeFileSync(file, html)
+    }
+
+    it('renders components from view/mail/components with props and slots', async () => {
+      component('button', `<odac:props :href label="'Open'" />\n<a href="{{ href }}" style="color:#fff">{{ label }}</a>`)
+      component('layout', '<table><tr><td><odac:slot /></td></tr></table>')
+      template('invite', `<c:layout><p>Hi {{ name }}</p><c:button :href="url" label="Join" /></c:layout>`)
+      await mail('invite').send({name: 'Ada', url: 'https://example.com/?a=1&b=2'})
+      expect(body()).toContain(
+        '<table><tr><td><p>Hi Ada</p><a href="https://example.com/?a=1&amp;b=2" style="color:#fff">Join</a></td></tr></table>'
+      )
+    })
+
+    it('prints pushed styles at the stack marker, once, without a browser marker', async () => {
+      component('badge', '<odac:push to="styles"><style>.b{color:red}</style></odac:push><span class="b">{{ props.text }}</span>')
+      template('styled', '<html><head><odac:stack name="styles" /></head><body><c:badge text="1" /><c:badge text="2" /></body></html>')
+      await mail('styled').send({})
+      expect(body()).toContain('<head><style>.b{color:red}</style></head><body><span class="b">1</span><span class="b">2</span></body>')
+    })
+
+    it('does not use the page components', async () => {
+      fs.mkdirSync(path.join(tmpDir, 'view', 'components'), {recursive: true})
+      fs.writeFileSync(path.join(tmpDir, 'view', 'components', 'page.html'), 'page')
+      template('uses-page', '<c:page />')
+      await expect(mail('uses-page').send({})).resolves.toBe(false)
+      expect(global.__mailPayloads).toHaveLength(0)
+      expect(console.error.mock.calls.flat().join('\n')).toContain('Component "page" not found')
+    })
+
+    it('fails the send for a lazy component: no browser loads it', async () => {
+      component('late', 'x')
+      template('lazy', '<c:late lazy />')
+      await expect(mail('lazy').send({})).resolves.toBe(false)
+      expect(console.error.mock.calls.flat().join('\n')).toContain('Component "late" cannot be lazy here: no browser loads it')
+    })
+
+    it('fails the send on malformed component markup, logging the line', async () => {
+      template('malformed', '<p>x</p>\n<c:a></c:b>')
+      await expect(mail('malformed').send({})).resolves.toBe(false)
+      expect(console.error.mock.calls.flat().join('\n')).toContain('</c:b> does not match <c:a> opened in line 2\n  in line 2')
+    })
+  })
+
   it('strips line breaks from the subject, display names and custom headers', async () => {
     template('plain', '<p>x</p>')
     await Mail('plain')

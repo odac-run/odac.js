@@ -76,6 +76,24 @@ Create your HTML template in `view/mail/contact_form_notification.html`:
 <p>{{ user_message }}</p>
 ```
 
+### Components in Mail Templates
+
+Reusable mail markup (buttons, layouts, footers) goes in `view/mail/components/` and is used as `<c:name>`, with props and slots like page components:
+
+```html
+<!-- view/mail/components/button.html -->
+<odac:props :href label="'Open'" />
+<a href="{{ href }}" style="background:#4f46e5;color:#fff;padding:12px 20px">{{ label }}</a>
+```
+
+```html
+<!-- view/mail/contact_form_notification.html -->
+<h1>New Contact Message</h1>
+<c:button :href="replyUrl" label="Reply" />
+```
+
+Components can push their `<style>` blocks to a `<odac:stack name="styles" />` in the mail's `<head>`. See [Components](../07-views/13-components.md) for props, slots, `once` and stacks.
+
 ### Sending Plain Text or Raw HTML (No Template)
 
 You can send emails **without creating a template file** by using the `.text()` or `.html()` methods directly. This is useful for simple notifications or dynamic content.

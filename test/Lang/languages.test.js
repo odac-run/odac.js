@@ -4,7 +4,7 @@ const path = require('node:path')
 const Lang = require('../../src/Lang')
 
 // Language selection only ever picks a language the application has: a file in
-// storage/language/ or an entry of lang.supported. Accept-Language is client input.
+// lang/ or an entry of lang.supported. Accept-Language is client input.
 describe('Lang language selection', () => {
   let tmpDir
   let langDir
@@ -16,7 +16,7 @@ describe('Lang language selection', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-select-'))
-    langDir = path.join(tmpDir, 'storage/language')
+    langDir = path.join(tmpDir, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = tmpDir
     Lang.store.reset()
@@ -69,7 +69,7 @@ describe('Lang language selection', () => {
     expect(new Lang(mockOdac).current()).toBe('fr')
   })
 
-  it('ignores ranges that are not a two-letter language', async () => {
+  it('ignores ranges that are not a language code', async () => {
     writeLang('tr', {})
     await Lang.store.init()
     header = 'turkish, *, tr'
@@ -159,8 +159,11 @@ describe('Lang language selection', () => {
   it('ignores files in the language directory that are not language files', async () => {
     writeLang('tr', {})
     fs.writeFileSync(path.join(langDir, 'tr.json.123.tmp'), '{}')
-    fs.writeFileSync(path.join(langDir, 'xyz.json'), '{}')
+    fs.writeFileSync(path.join(langDir, 'xyzw.json'), '{}')
+    fs.writeFileSync(path.join(langDir, 'e1.json'), '{}')
+    // Not canonical: one language maps to exactly one file name.
     fs.writeFileSync(path.join(langDir, 'TR.json'), '{}')
+    fs.writeFileSync(path.join(langDir, 'pt-br.json'), '{}')
     await Lang.store.init()
     expect([...Lang.store.languages(mockOdac.Config)].sort()).toEqual(['en', 'tr'])
   })
@@ -227,7 +230,7 @@ describe('Lang fallback', () => {
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-fallback-'))
-    langDir = path.join(tmpDir, 'storage/language')
+    langDir = path.join(tmpDir, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = tmpDir
     Lang.store.reset()

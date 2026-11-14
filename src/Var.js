@@ -136,6 +136,17 @@ function decryptGcm(payload, secret) {
 }
 
 class Var {
+  /**
+   * Whether `key` is the well-known default `encrypt.key` (as configured or as its digest).
+   * Why: features that sign or encrypt with the configured key must not rely on a secret every
+   * ODAC install shares; they fall back to a generated key instead (see View/Lazy.js).
+   * @param {string|Buffer} key
+   * @returns {boolean}
+   */
+  static isDefaultKey(key) {
+    return isDefaultKey(key)
+  }
+
   #value = null
   #any = false
 

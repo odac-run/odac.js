@@ -167,6 +167,26 @@ Automatically resize and convert images to modern formats:
 
 **[→ Learn more about Image Optimization](./11-image-optimization.md)**
 
+### Components
+
+Reusable markup from `view/components/`, used like HTML tags:
+
+```html
+<!-- view/components/card.html -->
+<odac:props title="'Card'" />
+<div {!! attrs.class('card') !!}>
+  <h3>{{ title }}</h3>
+  <odac:slot />
+</div>
+
+<!-- any view -->
+<c:card title="Profile" :user="user" class="mt-4">
+  <p>{{ user.bio }}</p>
+</c:card>
+```
+
+**[→ Learn more about Components](./13-components.md)**
+
 ### Accessing the Odac Object
 
 Full access to the Odac object in templates:
@@ -202,6 +222,9 @@ Full access to the Odac object in templates:
 | JavaScript | `<script:odac>...</script:odac>` | [Backend JavaScript](./08-backend-javascript.md) |
 | Comment | `<!--odac ... odac-->` | [Comments](./09-comments.md) |
 | Image | `<odac:img src="..." />` | [Image Optimization](./11-image-optimization.md) |
+| Component | `<c:name attr="x" :prop="expr" />` | [Components](./13-components.md) |
+| Component props | `<odac:props a="default" b />` | [Components](./13-components.md) |
+| Slot | `<odac:slot />`, `<odac:slot name="x">` | [Components](./13-components.md) |
 
 ### Syntax Selection Guide
 

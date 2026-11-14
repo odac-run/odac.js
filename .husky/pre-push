@@ -1,5 +1,3 @@
-#!/usr/bin/env sh
-
 # Prevent pushing code with High/Critical vulnerabilities in production dependencies
 echo "🛡️  Running Production Security Gate (npm audit)..."
 

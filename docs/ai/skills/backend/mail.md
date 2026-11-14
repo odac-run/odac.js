@@ -12,7 +12,8 @@ Sending transactional emails using the fluent `Odac.Mail` service.
 ## Core Rules
 1.  **Transport**: Mail is delivered through the ODAC Core socket (`ODAC_API_SOCKET`, default `/odac/api.sock`); there is no SMTP transport in the framework.
 2.  **Templating**: Templates live in `view/mail/<name>.html` and use the view syntax. Identifier keys of the `send()` data are locals (`{{ name }}`); any key is reachable with `get('key')`.
-3.  **Result**: `send()` resolves to the Core response or `false` (invalid addresses, template error, delivery failure). Always check it.
+3.  **Components**: reusable mail markup lives in `view/mail/components/` (not `view/components/`) and is used as `<c:name>` with props and slots, like page components. Use inline styles and tables. A component can `<odac:push to="styles">` a `<style>` to `<odac:stack name="styles" />` in the mail head.
+4.  **Result**: `send()` resolves to the Core response or `false` (invalid addresses, template error, delivery failure). Always check it.
 
 ## Reference Patterns
 ### 1. Template-based Email

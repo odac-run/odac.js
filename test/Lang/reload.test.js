@@ -35,7 +35,7 @@ describe('Lang language file reload', () => {
 
   beforeEach(async () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-lang-reload-'))
-    langDir = path.join(root, 'storage/language')
+    langDir = path.join(root, 'lang')
     fs.mkdirSync(langDir, {recursive: true})
     global.__dir = root
     Lang.store.reset()

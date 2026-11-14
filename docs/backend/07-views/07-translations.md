@@ -14,17 +14,18 @@ The text inside the tag is used as the translation key. Odac looks up this key i
 
 ### Translation Files
 
-Translation files are stored in `storage/language/`, one JSON file per two-letter language code:
+Translation files are stored in `lang/` in the project root, one JSON file per language code (`en.json`, `tr.json`, `pt-BR.json`; see [Regional Languages](#regional-languages)):
 
 ```
-storage/
-└── language/
-    ├── en.json
-    ├── tr.json
-    └── de.json
+lang/
+├── en.json
+├── tr.json
+└── de.json
 ```
 
-**Example: `storage/language/en.json`**
+They are source files: commit them with the rest of the project. (`storage/` holds runtime data and is git-ignored.) To keep them elsewhere, set [`lang.path`](#configuration).
+
+**Example: `lang/en.json`**
 ```json
 {
   "Welcome": "Welcome",
@@ -34,7 +35,7 @@ storage/
 }
 ```
 
-**Example: `storage/language/tr.json`**
+**Example: `lang/tr.json`**
 ```json
 {
   "Welcome": "Hoş Geldiniz",
@@ -53,6 +54,7 @@ Translations work without any configuration. Every setting lives under `lang` in
   "lang": {
     "default": "tr",
     "supported": ["tr", "en", "de"],
+    "path": "lang",
     "collect": false,
     "keep": ["status.*", "Some exact key"],
     "highlightMissing": true
@@ -62,24 +64,43 @@ Translations work without any configuration. Every setting lives under `lang` in
 
 | Setting | Type | Default | Purpose |
 |---------|------|---------|---------|
-| `default` | string | `"en"` | The fallback language, and the language your keys are written in. Missing translations are served from it. Set it when your site is not in English; it also makes ODAC write `<html lang>` (see [The Page Language](#the-page-language)). Case-insensitive; a value that is not a two-letter code falls back to `en`. |
-| `supported` | string[] | not set: the files in `storage/language/` | Strict whitelist of the languages a request may be served in. Other language files are ignored, `default` is always included, and entries that are not two-letter codes are dropped. See [Supported Languages](#supported-languages). |
+| `default` | string | `"en"` | The fallback language, and the language your keys are written in. Missing translations are served from it. Set it when your site is not in English; it also makes ODAC write `<html lang>` (see [The Page Language](#the-page-language)). Case-insensitive (`pt_br` means `pt-BR`); a value that is not a [language code](#regional-languages) falls back to `en`. |
+| `supported` | string[] | not set: the files in the language directory | Strict whitelist of the languages a request may be served in. Other language files are ignored, `default` is always included, and entries that are not language codes are dropped. See [Supported Languages](#supported-languages). |
+| `path` | string | `"lang"` | The directory language files are read from and written to; a relative path is resolved against the project root. For example a volume that is updated in production while the application directory stays read-only. Both the app and `odac lang:*` use it. A value that is not a non-empty string is ignored with a warning. |
 | `collect` | boolean | `debug` | Adds keys missing from the language files while the app runs. `true` enables it in production, `false` disables it in debug mode too. See [Missing Keys](#missing-keys). |
 | `keep` | string[] | `[]` | Keys `odac lang:check` and `lang:prune` must treat as used: exact keys, or prefixes ending in `*`. For keys built at runtime. See [Keys Built at Runtime](#keys-built-at-runtime). |
 | `highlightMissing` | boolean | `false` | Debug mode only: renders text served from the default language as `⟦text⟧`. See [Spotting Missing Translations](#spotting-missing-translations). |
 
-Language files themselves are not configurable: they are always `storage/language/<code>.json`.
+#### Moving From `storage/language/`
+
+Earlier versions kept language files in `storage/language/`. When `lang/` does not exist and `lang.path` is not set, ODAC still reads and writes `storage/language/`, and logs once per worker:
+
+```json
+{"level": "WARN", "message": "Language files are read from the deprecated storage/language/; move them to lang/ or set lang.path", "dir": "storage/language"}
+```
+
+`odac lang:*` prints the same notice. Move the directory and drop its exception from `.gitignore`:
+
+```bash
+git mv storage/language lang
+```
+
+```gitignore
+storage/
+```
+
+Support for `storage/language/` will be removed in a future major version.
 
 ### Missing Keys
 
 In development (`debug` mode) a key without an entry is added to **every** language file at once: the default language gets the key itself as its value, every other language gets `""` (not translated yet). Production does not write to disk; set `"lang": {"collect": true}` in `odac.json` to collect keys there too.
 
 ```json
-// storage/language/en.json (default)     // storage/language/tr.json
-{                                          {
-    "Login": "Login",                          "Login": "Giriş Yap",
-    "Logout": "Logout"                         "Logout": ""
-}                                          }
+// lang/en.json (default)     // lang/tr.json
+{                              {
+    "Login": "Login",              "Login": "Giriş Yap",
+    "Logout": "Logout"             "Logout": ""
+}                              }
 ```
 
 All language files therefore list the same entries in the same order (sorted by key), which keeps them easy to compare and keeps diffs small. Writes from several workers are serialized, and a language file that is not valid JSON (for example while you are editing it) is never overwritten; a warning is logged instead.
@@ -128,7 +149,7 @@ Odac.__x('%s1 gül', 'flower', 3)   // placeholders come after the context
 The context is part of the entry's identity. In the language file the key holds an object of context → translation, where `""` is the variant used without a context:
 
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Gül": {
     "": "Gül",
@@ -155,14 +176,14 @@ Use nested `<odac>` tags to insert dynamic values:
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Hello %s1": "Hello %s1"
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Hello %s1": "Merhaba %s1"
 }
@@ -180,14 +201,14 @@ This creates the key `%s1 %s2` and replaces both placeholders.
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "%s1 %s2": "%s1 %s2"
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "%s1 %s2": "%s1 %s2"
 }
@@ -201,14 +222,14 @@ This creates the key `%s1 %s2` and replaces both placeholders.
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Hello %s1, how are you?": "Hello %s1, how are you?"
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Hello %s1, how are you?": "Merhaba %s1, nasılsın?"
 }
@@ -230,14 +251,14 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Click <a href=\"/help\">here</a> for help": "Click <a href=\"/help\">here</a> for help"
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Click <a href=\"/help\">here</a> for help": "Yardım için <a href=\"/help\">buraya</a> tıklayın"
 }
@@ -253,14 +274,14 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Welcome <strong>%s1</strong>!": "Welcome <strong>%s1</strong>!"
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Welcome <strong>%s1</strong>!": "Hoş geldin <strong>%s1</strong>!"
 }
@@ -294,7 +315,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Welcome back, %s1!": "Welcome back, %s1!",
   "You have %s1 new notifications": "You have %s1 new notifications"
@@ -302,7 +323,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Welcome back, %s1!": "Tekrar hoş geldin, %s1!",
   "You have %s1 new notifications": "%s1 yeni bildiriminiz var"
@@ -361,7 +382,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "Price: $%s1": "Price: $%s1",
   "%s1 units in stock": "%s1 units in stock",
@@ -371,7 +392,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "Price: $%s1": "Fiyat: $%s1",
   "%s1 units in stock": "Stokta %s1 adet",
@@ -410,14 +431,14 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 **Language files:**
 ```json
-// storage/language/en.json
+// lang/en.json
 {
   "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>."
 }
 ```
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "By clicking \"Register\", you agree to our <a href=\"/terms\">Terms of Service</a> and <a href=\"/privacy\">Privacy Policy</a>.": "\"Kayıt Ol\" butonuna tıklayarak <a href=\"/terms\">Hizmet Şartlarımızı</a> ve <a href=\"/privacy\">Gizlilik Politikamızı</a> kabul etmiş olursunuz."
 }
@@ -425,7 +446,7 @@ By default, translations are HTML-escaped for security. Use `raw` attribute when
 
 ### Supported Languages
 
-A request is only ever served in a language the application has. Without configuration, these are the languages with a file in `storage/language/` plus `lang.default`. To list them explicitly, set `lang.supported` in `odac.json`. The list is then a strict whitelist: other files are ignored, and the default language is always included.
+A request is only ever served in a language the application has. Without configuration, these are the languages with a file in the language directory plus `lang.default`. To list them explicitly, set `lang.supported` in `odac.json`. The list is then a strict whitelist: other files are ignored, and the default language is always included.
 
 ```json
 {
@@ -436,14 +457,14 @@ A request is only ever served in a language the application has. Without configu
 }
 ```
 
-A visitor who asks for an unsupported language gets the default one. Key collection never creates a file for a language a client asked for. To add a language, create its file (`storage/language/fr.json` containing `{}` is enough) or add it to `lang.supported`.
+A visitor who asks for an unsupported language gets the default one. Key collection never creates a file for a language a client asked for. To add a language, create its file (`lang/fr.json` containing `{}` is enough) or add it to `lang.supported`.
 
 ### Missing Translations and Fallback
 
-A key without a translation in the active language is served in the default language, and if that has no translation either, as the key itself. An empty string in a language file means "not translated yet":
+A key without a translation in the active language is served from its [parent language](#regional-languages) (`pt` for `pt-BR`), then from the default language, and if that has no translation either, as the key itself. An empty string in a language file means "not translated yet":
 
 ```json
-// storage/language/tr.json
+// lang/tr.json
 {
   "nav.home": "Ana Sayfa",
   "nav.about": ""
@@ -456,8 +477,8 @@ Here `nav.about` is served from `en.json` until it is translated.
 
 The language is chosen in this order:
 
-1. The code passed to `Odac.Lang.set()`, if it is supported.
-2. The most preferred supported language of the `Accept-Language` header (q values respected, e.g. `de-DE,de;q=0.9,tr;q=0.8` picks `tr` when there is no `de.json`).
+1. The code passed to `Odac.Lang.set()`, if a supported language serves it.
+2. The most preferred `Accept-Language` entry a supported language serves (q values respected, e.g. `de-DE,de;q=0.9,tr;q=0.8` picks `tr` when there is no `de.json`). How a code finds its file (`tr-TR` → `tr.json`) is described in [Regional Languages](#regional-languages).
 3. `lang.default` in `odac.json`, then `en`.
 
 You can override it in your controller:
@@ -476,7 +497,43 @@ module.exports = async function(Odac) {
 }
 ```
 
-`Odac.Lang.set()` accepts only two-letter codes of supported languages; anything else falls back as described above. `Odac.Lang.current()` returns the active code, `Odac.Lang.dir()` its writing direction (`'rtl'` for Arabic, Hebrew, Persian, Urdu and a few others, `'ltr'` otherwise).
+`Odac.Lang.set()` accepts [language codes](#regional-languages) in any case and with `-` or `_` (`pt_br`, `PT-BR`); anything else falls back as described above. `Odac.Lang.current()` returns the active code in canonical form (`pt-BR`), ready for `Intl` (`new Intl.DateTimeFormat(Odac.Lang.current())`). `Odac.Lang.dir()` returns its writing direction: `'rtl'` for Arabic, Hebrew, Persian, Urdu and a few others, or for a right-to-left script subtag (`pa-Arab`), `'ltr'` otherwise.
+
+### Regional Languages
+
+A language code is `language[-Script][-REGION]`, a subset of BCP 47:
+
+| Code | Meaning |
+|------|---------|
+| `pt`, `fil` | A language (two or three letters) |
+| `pt-BR`, `es-419` | The language as used in a region (two letters, or three digits for an area) |
+| `zh-Hant`, `zh-Hans` | The language in a script (four letters) |
+| `zh-Hant-TW` | Both |
+
+File names use the canonical case: `pt-BR.json`, `zh-Hant.json`. A file named otherwise (`pt-br.json`, `pt_BR.json`) is not a language file and is ignored. Variants, extensions and private-use subtags are not supported; in `Accept-Language` they are dropped (`de-CH-1996` is read as `de-CH`).
+
+A regional file only needs what differs from its language. Everything it leaves empty is served from the parent file, then from the default language:
+
+```json
+// lang/pt.json                // lang/pt-BR.json
+{                              {
+    "Bus": "Autocarro",            "Bus": "Ônibus",
+    "Hello": "Olá"                 "Hello": ""
+}                              }
+```
+
+A Brazilian visitor gets "Ônibus" and "Olá". Text served from the parent is not a missing translation: it is not logged, not highlighted, and `odac lang:check --strict` does not report it. Key collection still adds every key to every file (`""` in `pt-BR.json`), so you can see what could be overridden.
+
+A requested code finds its file in this order, for each `Accept-Language` entry from the most preferred:
+
+1. The exact code: `pt-BR` → `pt-BR.json`.
+2. Its parents: `tr-TR` → `tr.json`, `zh-Hant-TW` → `zh-Hant.json`, then `zh.json`.
+3. The script and region it implies: `zh-TW` → `zh-Hant.json`, `zh-CN` → `zh-Hans.json`, `en` → `en-US.json`, `pt` → `pt-BR.json`.
+4. Any file for that language, alphabetically: `de` → `de-CH.json`.
+
+A less preferred entry never wins over a match for a more preferred one: `pt, en` picks `pt-BR.json` when there is no `pt.json`. `Odac.Lang.set()` matches the same way, so `Odac.Lang.set('pt-PT')` serves `pt.json` when there is no `pt-PT.json`.
+
+Browsers send region codes (`zh-TW`, `zh-CN`) rather than script codes, and step 3 maps them, so naming Chinese files by script (`zh-Hant.json`, `zh-Hans.json`) serves Taiwan, Hong Kong and mainland visitors correctly.
 
 ### The Page Language
 

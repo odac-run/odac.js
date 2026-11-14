@@ -11,6 +11,8 @@ const cluster = require('node:cluster')
 
 let Ipc
 let originalSend
+// node:cluster is shared by every test file in a Jest worker, and net.Server#listen reads it.
+const originalPrimary = Object.getOwnPropertyDescriptor(cluster, 'isPrimary')
 
 beforeEach(async () => {
   jest.resetModules()
@@ -28,6 +30,7 @@ afterEach(async () => {
   await Ipc.close()
   process.removeAllListeners('message')
   process.send = originalSend
+  Object.defineProperty(cluster, 'isPrimary', originalPrimary)
   delete global.Odac
 })
 

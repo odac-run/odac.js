@@ -225,7 +225,7 @@ Odac.Route.ws('/path', handler, {
 - **Routes are per site:** a socket defined in `route/api.js` answers only on the `api` host, like HTTP routes.
 - **Origin check:** browser handshakes from another origin are refused with `403` unless listed in `origins`; clients that send no `Origin` (servers, mobile apps) are unaffected.
 - **Subprotocol:** the handshake answers with exactly one protocol: one listed in `protocols`, otherwise the ODAC token, otherwise the client's first offer.
-- **Heartbeat:** the server pings every 30 seconds and drops a client that sends nothing for two intervals. Set `"websocket": {"heartbeat": 60000}` in `odac.json` to change it, `0` to disable.
+- **Heartbeat:** the server pings every 30 seconds and drops a client that sends nothing for two intervals. Set `"websocket": {"heartbeat": 60000}` in `odac.json` to change it, `0` to disable. A client that closes its connection without a close frame is dropped at once rather than at the next heartbeat.
 - **Slow clients:** a client that stops reading is dropped once `maxBuffered` bytes are queued, so broadcasts cannot grow worker memory without bound.
 - **Protocol errors:** reserved bits, unknown opcodes and invalid control frames close the connection with `1002`, invalid UTF-8 text with `1007`.
 
