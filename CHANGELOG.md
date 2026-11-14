@@ -1,3 +1,36 @@
+### ⚙️ Engine Tuning
+
+- **view:** drop the lazy TODO entry superseded by <c:name lazy>
+
+### ✨ What's New
+
+- **lang:** move language files to lang/ and support regional languages
+- **request:** verify signed proxy connection headers
+- **server:** print a Turbo Mode banner when the proxy socket is live
+- **server:** serve the ODAC proxy unix socket next to the TCP port
+- **view:** add components with props, pass-through attributes and slots
+- **view:** add lazy components rendered after the page loads
+- **view:** add once blocks, push stacks, dynamic and mail components
+
+### 📚 Documentation
+
+- **server:** document ODAC_PROXY_SOCKET and its trust rule
+
+### 🛠️ Fixes & Improvements
+
+- **deps:** patch vulnerable transitive dev dependencies
+- **request:** trust X-Odac-Connection-* by default only under ODAC
+- **server:** never remove a proxy socket another process still serves
+- **view:** bound compiled view variants and fix two component edge cases
+- **view:** read Odac.set() values by name in views
+- **websocket:** drop a client whose peer ends without a close frame
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - **lang:** declare the served language on the page and survive broken language files
