@@ -30,7 +30,7 @@ Do not invent other `lang` keys. Never put new language files in `storage/langua
 
 ## Core Rules
 1.  **Storage**: Place translation files in `lang/`, one per language code in canonical case (`en.json`, `tr.json`, `pt-BR.json`, `zh-Hant.json`; `pt-br.json` / `pt_BR.json` are ignored). In debug mode a missing key is added to every language file at once (default language: the key, others: `""`), sorted by key; production only does so with `lang.collect: true`. Never hand-edit key order or add a key to only one file; files are kept in sync automatically. A file that is not valid JSON is never overwritten.
-2.  **Tag Usage**: Use `<odac translate>Key</odac>` in views.
+2.  **Tag Usage**: Use `<odac translate>Key</odac>` in views. Inside attributes of ODAC form tags (`<odac:submit text loading>`, `<odac:input label placeholder>`) use `{{ __('Key') }}`; `<odac:submit>` also takes `<odac translate>` in its body.
 3.  **Placeholders**: Use `%s1`, `%s2` in JSON and nested `<odac var="...">` tags in views.
 4.  **Backend Access**: Use `Odac.__(key, ...args)` in controllers. It is synchronous and returns a string (language files are loaded into memory at startup), so use the result directly; no `await` is needed. Code that runs before `Odac.init()` gets the key back untranslated (debug: `WARN "Translation requested before the language files were loaded; serving the key"`).
 5.  **Context**: When the same source text needs different translations (e.g. "Gül" = Rose / Smile, "Open" = button / status), use `<odac translate context="verb">Gül</odac>` in views and `Odac.__x(key, context, ...args)` in controllers. Do not invent suffixed keys like `"Gül (verb)"` for this.

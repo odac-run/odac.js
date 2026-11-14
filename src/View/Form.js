@@ -82,6 +82,57 @@ class Form {
     return result
   }
 
+  // Matches <odac:submit .../>, <odac:submit ...>body</odac:submit> and a bare
+  // <odac:submit ...>, in that order. The paired form must be tried before the
+  // bare one, otherwise the body is never captured.
+  static SUBMIT_TAG_SOURCE = '<odac:submit\\b([^>]*?)(?:\\/>|>([\\s\\S]*?)<\\/odac:submit>|>)'
+
+  static TEMPLATE_TOKEN_REGEX = /\{\{[\s\S]*?\}\}|\{!![\s\S]*?!!\}/g
+
+  /**
+   * Reads one attribute value from a raw tag attribute string.
+   * Why: values commonly embed translation expressions such as
+   * a quoted translation call inside text="{{ ... }}". A backreference on the opening quote keeps the
+   * opposite quote type inside the value, and the leading whitespace anchor
+   * stops `text` from matching inside `loading-text` or `data-text`.
+   * @param {string} attrs Raw attribute string of the tag.
+   * @param {string} name Attribute name.
+   * @returns {string|null} The value, or null when the attribute is absent.
+   */
+  static readAttr(attrs, name) {
+    const match = (attrs || '').match(new RegExp(`(?:^|\\s)${name}=(["'])([\\s\\S]*?)\\1`))
+    return match ? match[2] : null
+  }
+
+  /**
+   * Parses a single <odac:submit> tag into its button settings.
+   * Why: one parser serves both the stored form config and the rendered
+   * <button>, so translation expressions in text/loading and in the tag body
+   * behave identically everywhere. A body that contains markup (for example
+   * <odac translate>Login</odac> or an icon) is returned as `html` and kept
+   * verbatim, so the view engine compiles it like any other template markup.
+   * @param {string} attrs Raw attribute string of the tag.
+   * @param {string|undefined} body Content between the opening and closing tags.
+   * @returns {{text: (string|null), loading: (string|null), class: (string|null), style: (string|null), id: (string|null), html: (string|null)}}
+   */
+  static parseSubmit(attrs, body) {
+    const submit = {
+      text: this.readAttr(attrs, 'text'),
+      loading: this.readAttr(attrs, 'loading'),
+      class: this.readAttr(attrs, 'class'),
+      style: this.readAttr(attrs, 'style'),
+      id: this.readAttr(attrs, 'id'),
+      html: null
+    }
+
+    const content = typeof body === 'string' ? body.trim() : ''
+    if (submit.text !== null || !content) return submit
+
+    if (content.replace(this.TEMPLATE_TOKEN_REGEX, '').includes('<')) submit.html = content
+    else submit.text = content
+    return submit
+  }
+
   static parse(content, Odac) {
     for (const type of this.FORM_TYPES) {
       content = this.parseFormType(content, Odac, type)
@@ -120,9 +171,9 @@ class Form {
 
       // Pre-render <odac:submit>...</odac:submit> (or self-closing) into <button>
       let submitRendered = false
-      innerContent = innerContent.replace(/<odac:submit([^>]*?)(?:\/>|>(.*?)<\/odac:submit>)/g, () => {
+      innerContent = innerContent.replace(new RegExp(this.SUBMIT_TAG_SOURCE, 'g'), (_, attrs, body) => {
         submitRendered = true
-        return this.generateSubmitButton(formConfig, meta)
+        return this.generateSubmitButton(this.submitButtonConfig(this.parseSubmit(attrs, body), formConfig), meta)
       })
 
       // magic-login convenience: if the author didn't write any <odac:input>,
@@ -228,17 +279,49 @@ class Form {
     if (type === 'form') return this.extractFormConfig(html, formToken)
   }
 
+  /**
+   * Builds the render settings for one <odac:submit> tag.
+   * Why: every submit tag in a form renders its own text, loading, class,
+   * style and id. The form config only supplies fallbacks, such as the
+   * per-type default text or a magic-login `submit-text` attribute.
+   * @param {object} submit Result of parseSubmit().
+   * @param {object} formConfig Config extracted for the surrounding form.
+   * @returns {object}
+   */
+  static submitButtonConfig(submit, formConfig) {
+    return {
+      submitText: submit.text ?? formConfig.submitText,
+      submitLoading: submit.loading ?? formConfig.submitLoading,
+      submitClass: submit.class,
+      submitStyle: submit.style,
+      submitId: submit.id,
+      submitHtml: submit.html
+    }
+  }
+
+  /**
+   * Renders the <button type="submit"> for a form.
+   * Why: text and loading values may hold {{ }} / {!! !!} expressions (for
+   * example a translation call inside {{ }}). They are escaped around those tokens only, so
+   * the view engine still evaluates them per request in the active language.
+   * A markup body (config.submitHtml) is template-author content and is
+   * emitted unescaped for the view engine to compile.
+   * @param {object} config Button settings (submitText, submitLoading, submitClass, submitStyle, submitId, submitHtml).
+   * @param {object} meta FORM_META entry for the form type.
+   * @returns {string}
+   */
   static generateSubmitButton(config, meta) {
     const submitText = config.submitText || meta.defaultSubmitText
     const submitLoading = config.submitLoading || meta.defaultSubmitLoading
+    const body = config.submitHtml || this.escapeHtmlPreservingTemplates(submitText)
 
     let attrs = `type="submit"`
-    attrs += ` data-submit-text="${this.escapeHtml(submitText)}"`
-    attrs += ` data-loading-text="${this.escapeHtml(submitLoading)}"`
-    if (config.submitClass) attrs += ` class="${this.escapeHtml(config.submitClass)}"`
-    if (config.submitStyle) attrs += ` style="${this.escapeHtml(config.submitStyle)}"`
-    if (config.submitId) attrs += ` id="${this.escapeHtml(config.submitId)}"`
-    return `<button ${attrs}>${this.escapeHtml(submitText)}</button>`
+    if (!config.submitHtml) attrs += ` data-submit-text="${this.escapeHtmlPreservingTemplates(submitText)}"`
+    attrs += ` data-loading-text="${this.escapeHtmlPreservingTemplates(submitLoading)}"`
+    if (config.submitClass) attrs += ` class="${this.escapeHtmlPreservingTemplates(config.submitClass)}"`
+    if (config.submitStyle) attrs += ` style="${this.escapeHtmlPreservingTemplates(config.submitStyle)}"`
+    if (config.submitId) attrs += ` id="${this.escapeHtmlPreservingTemplates(config.submitId)}"`
+    return `<button ${attrs}>${body}</button>`
   }
 
   static extractRegisterConfig(html, formToken) {
@@ -306,7 +389,7 @@ class Form {
     const tag = tagMatch[0]
     const redirectMatch = tag.match(/\sredirect=["']([^"']+)["']/)
     const errorRedirectMatch = tag.match(/\serror-redirect=["']([^"']+)["']/)
-    const emailLabelMatch = tag.match(/email-label=["']([^"']+)["']/)
+    const emailLabel = this.readAttr(tag, 'email-label')
     if (redirectMatch) config.redirect = redirectMatch[1]
     if (errorRedirectMatch) config.errorRedirect = errorRedirectMatch[1]
 
@@ -321,7 +404,7 @@ class Form {
         name: 'email',
         type: 'email',
         placeholder: 'e.g. user@example.com',
-        label: emailLabelMatch ? emailLabelMatch[1] : 'Email Address',
+        label: emailLabel || 'Email Address',
         class: '',
         id: null,
         unique: false,
@@ -336,8 +419,8 @@ class Form {
 
     const applied = this.applySubmitConfig(html, config)
     if (!applied) {
-      const submitTextAttr = tag.match(/submit-text=["']([^"']+)["']/)
-      if (submitTextAttr) config.submitText = submitTextAttr[1]
+      const submitTextAttr = this.readAttr(tag, 'submit-text')
+      if (submitTextAttr) config.submitText = submitTextAttr
     }
 
     return config
@@ -394,23 +477,15 @@ class Form {
   }
 
   static applySubmitConfig(html, config) {
-    const submitMatch = html.match(/<odac:submit([^>]*?)(?:\/?>|>(.*?)<\/odac:submit>)/)
+    const submitMatch = html.match(new RegExp(this.SUBMIT_TAG_SOURCE))
     if (!submitMatch) return false
 
-    const submitTag = submitMatch[1]
-    const textMatch = submitTag.match(/text=["']([^"']+)["']/)
-    const loadingMatch = submitTag.match(/loading=["']([^"']+)["']/)
-    const classMatch = submitTag.match(/class=["']([^"']+)["']/)
-    const styleMatch = submitTag.match(/style=["']([^"']+)["']/)
-    const idMatch = submitTag.match(/id=["']([^"']+)["']/)
-
-    if (textMatch) config.submitText = textMatch[1]
-    else if (submitMatch[2]) config.submitText = submitMatch[2].trim()
-
-    if (loadingMatch) config.submitLoading = loadingMatch[1]
-    if (classMatch) config.submitClass = classMatch[1]
-    if (styleMatch) config.submitStyle = styleMatch[1]
-    if (idMatch) config.submitId = idMatch[1]
+    const submit = this.parseSubmit(submitMatch[1], submitMatch[2])
+    if (submit.text) config.submitText = submit.text
+    if (submit.loading) config.submitLoading = submit.loading
+    if (submit.class) config.submitClass = submit.class
+    if (submit.style) config.submitStyle = submit.style
+    if (submit.id) config.submitId = submit.id
 
     return true
   }

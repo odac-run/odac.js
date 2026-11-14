@@ -222,7 +222,34 @@ Automatically set field values without user input:
 
 <!-- With styling -->
 <odac:submit text="Save" loading="Saving..." class="btn btn-primary" id="save-btn"/>
+
+<!-- Content as button text -->
+<odac:submit>Save</odac:submit>
 ```
+
+| Attribute | Description |
+|-----------|-------------|
+| `text` | Button text. Takes precedence over the tag body. |
+| `loading` | Text shown while the form is submitting. |
+| `class`, `style`, `id` | Passed to the generated `<button>`. |
+
+Every `<odac:submit>` in a form renders with its own attributes. Without `text` or a body, the button uses the form type's default text (`Submit`, `Login`, `Register`, `Send Magic Link`).
+
+#### Translating the Button
+
+`text` and `loading` accept `{{ }}` expressions, so translation calls work there and are resolved per request in the visitor's language:
+
+```html
+<odac:submit text="{{ __('Save') }}" loading="{{ __('Saving...') }}"/>
+```
+
+The tag body can also hold markup, such as `<odac translate>` or an icon. It is rendered as the button's content and compiled like any other view markup:
+
+```html
+<odac:submit loading="{{ __('Saving...') }}"><i class="icon-save"></i> <odac translate>Save</odac></odac:submit>
+```
+
+When the request finishes, the button's original content (markup included) is restored.
 
 ## Client-Side Callbacks (Optional)
 
