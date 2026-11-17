@@ -395,8 +395,25 @@ class Auth {
     return Number(account ?? 0) >= throttle.maxAccount || Number(ip ?? 0) >= throttle.maxIp
   }
 
-  async #recordLoginFailure(throttle) {
-    await Promise.all([Odac.Ipc.incrBy(throttle.account, 1, throttle.window), Odac.Ipc.incrBy(throttle.ip, 1, throttle.window)])
+  // An attempt is counted before its password is checked. Reading the counters first and
+  // counting the failure after the check let concurrent requests all pass the limit while
+  // their scrypt checks were still running. Resolves false when the attempt is over the limit.
+  async #reserveLoginAttempt(throttle) {
+    const [account, ip] = await Promise.all([
+      Odac.Ipc.incrBy(throttle.account, 1, throttle.window),
+      Odac.Ipc.incrBy(throttle.ip, 1, throttle.window)
+    ])
+    return account <= throttle.maxAccount && ip <= throttle.maxIp
+  }
+
+  // Returns a reserved attempt that did not end as a wrong password (refused for the limit,
+  // a lookup that threw, or a success), so only failures fill the window. The ttl keeps the
+  // counter expiring even when the window ended between reserving and releasing.
+  async #releaseLoginAttempt(throttle, {success = false} = {}) {
+    await Promise.all([
+      success ? Odac.Ipc.del(throttle.account) : Odac.Ipc.incrBy(throttle.account, -1, throttle.window),
+      Odac.Ipc.incrBy(throttle.ip, -1, throttle.window)
+    ]).catch(() => {})
   }
 
   /**
@@ -477,18 +494,24 @@ class Auth {
     where = await Auth.#resolveCriteria(where)
     method ??= Auth.#hasSecret(where) ? 'password' : 'direct'
     const throttle = this.#loginThrottleKeys(where)
-    if (throttle && (await this.#isThrottled(throttle))) {
+    if (throttle && !(await this.#reserveLoginAttempt(throttle))) {
+      await this.#releaseLoginAttempt(throttle)
       await this.#loginFailed(where, method, 'throttled')
       return {success: false, reason: 'throttled'}
     }
 
-    let user = await this.check(where)
+    let user
+    try {
+      user = await this.check(where)
+    } catch (e) {
+      if (throttle) await this.#releaseLoginAttempt(throttle)
+      throw e
+    }
     if (!user) {
-      if (throttle) await this.#recordLoginFailure(throttle)
       await this.#loginFailed(where, method, 'invalid')
       return {success: false, reason: 'invalid'}
     }
-    if (throttle) await Odac.Ipc.del(throttle.account).catch(() => {})
+    if (throttle) await this.#releaseLoginAttempt(throttle, {success: true})
 
     if (!(await this.#allowLogin(user, method))) {
       await this.#loginFailed(where, method, 'denied')

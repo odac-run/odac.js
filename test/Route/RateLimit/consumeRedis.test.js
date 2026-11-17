@@ -4,13 +4,15 @@
 // holds across hosts. The mock keeps counters in a Map like INCRBYFLOAT would.
 
 const counters = new Map()
+const expiries = new Map()
 const mockClient = {
   connect: jest.fn().mockResolvedValue(undefined),
   duplicate: jest.fn(() => ({connect: jest.fn().mockResolvedValue(undefined), quit: jest.fn().mockResolvedValue(undefined)})),
-  expire: jest.fn().mockResolvedValue(1),
-  incrByFloat: jest.fn(async (key, delta) => {
-    const value = (counters.get(key) ?? 0) + delta
+  // Runs the increment-with-expiry script on the Map; `expiries` records each EXPIRE it applies.
+  eval: jest.fn(async (script, {keys: [key], arguments: [delta, ttl]}) => {
+    const value = (counters.get(key) ?? 0) + Number(delta)
     counters.set(key, value)
+    if (!expiries.has(key)) expiries.set(key, Number(ttl))
     return String(value)
   }),
   quit: jest.fn().mockResolvedValue(undefined)
@@ -25,6 +27,7 @@ const makeOdac = () => ({Ipc, Request: {ip: '203.0.113.7', header: jest.fn(), ab
 
 beforeEach(async () => {
   counters.clear()
+  expiries.clear()
   jest.clearAllMocks()
   jest.resetModules()
   Ipc = require('../../../src/Ipc')
@@ -54,7 +57,8 @@ describe('RateLimit.consume() on the Redis driver', () => {
     await RateLimit.consume(makeOdac(), limit)
     await RateLimit.consume(makeOdac(), limit)
 
-    expect(mockClient.expire).toHaveBeenCalledTimes(1)
-    expect(mockClient.expire).toHaveBeenCalledWith(expect.stringMatching(/^odac:ratelimit:/), 60)
+    expect(expiries.size).toBe(1)
+    expect([...expiries.keys()][0]).toMatch(/^odac:ratelimit:/)
+    expect([...expiries.values()][0]).toBe(60)
   })
 })

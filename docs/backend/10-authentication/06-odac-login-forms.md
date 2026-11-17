@@ -64,7 +64,9 @@ If you want to customize table names or primary key:
 }
 ```
 
-Wrong passwords are throttled: after 5 failures for the same account from one IP, or 50 failures from one IP across all accounts, logins from that IP are refused for 15 minutes and the form shows "Too many failed attempts". Tune it with `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP` and `auth.loginWindow` (milliseconds). The same limit applies to `Odac.Auth.login()` in your own controllers; `Odac.Auth.loginThrottled(credentials)` tells you whether a login would be refused.
+Wrong passwords are throttled: after 5 failures for the same account from one IP, or 50 failures from one IP across all accounts, logins from that IP are refused for 15 minutes and the form shows "Too many failed attempts". Tune it with `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP` and `auth.loginWindow` (milliseconds). The same limit applies to `Odac.Auth.login()` in your own controllers; `Odac.Auth.loginThrottled(credentials)` tells you whether a login would be refused. An attempt is counted before its password is checked and given back if it succeeds, so sending many guesses at once does not get more of them checked than the limit allows.
+
+The per-IP limit needs the real visitor address. Behind a reverse proxy of your own that the app does not trust, every visitor has the proxy's address, and 50 failed logins would lock everyone out; ODAC logs a `WARN` the first time it sees such a proxy. See [Client IP behind a proxy](../06-request-and-response/01-the-request-object-what-is-the-user-asking-for.md#client-ip-behind-a-proxy).
 
 Columns listed in `passwordField` are verified only against their stored scrypt hash and are never sent to the database; the user is looked up by the remaining fields (e.g. `email`), all of which must match. Accounts that still have an MD5 password are upgraded to scrypt on their next successful login.
 

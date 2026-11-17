@@ -90,6 +90,18 @@ describe('Ipc - incrBy()', () => {
     }
   })
 
+  it('gives a counter without an expiry the window of a later ttl increment', async () => {
+    jest.useFakeTimers({now: 4_000_000, doNotFake: ['nextTick', 'setImmediate']})
+    try {
+      await Ipc.incrBy('counter:repair', 3)
+      await Ipc.incrBy('counter:repair', 1, 60)
+      jest.setSystemTime(4_000_000 + 61_000)
+      expect(await Ipc.get('counter:repair')).toBeNull()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   it('keeps counters without a ttl forever', async () => {
     jest.useFakeTimers({now: 3_000_000, doNotFake: ['nextTick', 'setImmediate']})
     try {

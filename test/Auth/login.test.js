@@ -127,6 +127,34 @@ describe('Auth.login() throttling', () => {
     sync.mockRestore()
   })
 
+  it('lets no more concurrent wrong passwords reach the password check than the limit', async () => {
+    const results = await Promise.all(Array.from({length: 20}, () => fail()))
+
+    expect(results.every(result => result === false)).toBe(true)
+    expect(lookups).toBe(5)
+    // Refused attempts give their reservation back: only real failures are counted.
+    expect(store.get('auth:login:ip:203.0.113.9')).toBe(5)
+  })
+
+  it('does not count a successful login against the IP limit', async () => {
+    for (let i = 0; i < 3; i++) await fail(makeAuth(), `user${i}@example.com`)
+    await expect(makeAuth().login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)
+
+    expect(store.get('auth:login:ip:203.0.113.9')).toBe(3)
+    expect(store.get('auth:login:ip:203.0.113.9#ttl')).toBeGreaterThan(0)
+  })
+
+  it('gives the attempt back when the lookup throws', async () => {
+    Object.defineProperty(global.Odac.DB, 'users', {
+      get: () => {
+        throw new Error('db down')
+      }
+    })
+
+    await expect(fail()).rejects.toThrow('db down')
+    expect([...store.entries()].filter(([key]) => !key.endsWith('#ttl')).map(([, value]) => value)).toEqual([0, 0])
+  })
+
   it('does not throttle logins without a password (auto-login, magic link)', async () => {
     const auth = makeAuth()
     await expect(auth.loginThrottled({id: 1})).resolves.toBe(false)

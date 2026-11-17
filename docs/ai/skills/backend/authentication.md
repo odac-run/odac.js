@@ -112,5 +112,5 @@ Odac.Ipc.subscribe('lobby', (msg) => {
 
 ## Security Best Practices
 -   **CSRF Protection**: Native `Odac.form` and `Odac.post` handle CSRF tokens automatically using `{{ TOKEN }}` in views.
--   **Brute Force**: `Odac.Auth.login()` throttles wrong passwords (5 per account+IP, 50 per IP, 15 min window; `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP`, `auth.loginWindow` in ms). Use `Odac.Auth.loginThrottled(credentials)` to show a lockout message, and `validator.brute()` for other sensitive forms.
+-   **Brute Force**: `Odac.Auth.login()` throttles wrong passwords (5 per account+IP, 50 per IP, 15 min window; `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP`, `auth.loginWindow` in ms). Use `Odac.Auth.loginThrottled(credentials)` to show a lockout message, and `validator.brute()` for other sensitive forms. Attempts are reserved atomically before the password check, so concurrent guesses cannot exceed the limit; never add a read-then-increment limiter around `login()`. The per-IP limit needs the real client IP: behind an untrusted reverse proxy all visitors share one IP (ODAC logs a WARN once) — configure `request.trustedProxies`.
 -   **Passwordless Preference**: Consider using Magic Links for enhanced security and better user experience.

@@ -15,6 +15,13 @@ function sendToWorker(worker, message) {
   })
 }
 
+// INCRBYFLOAT and its window expiry in one atomic step. TTL -1 means the key has no expiry: a new
+// key, or one left without it.
+const INCR_WITH_TTL =
+  "local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1]) " +
+  "if redis.call('TTL', KEYS[1]) == -1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end " +
+  'return v'
+
 class Ipc extends EventEmitter {
   constructor() {
     super()
@@ -88,7 +95,12 @@ class Ipc extends EventEmitter {
    *
    * A `ttl` makes the counter a fixed window: the expiry is set when the key is created and
    * not extended by later increments, so short-lived counters (rate limits) clean themselves up
-   * instead of accumulating one key per client forever.
+   * instead of accumulating one key per client forever. A counter found without an expiry gets
+   * one, so a key left behind without it (e.g. by an older version) still expires.
+   *
+   * On Redis the increment and the expiry run as one script: as two commands, a crash or a
+   * failed EXPIRE between them left a counter that never expired, which turned a login
+   * throttle window into a permanent lockout.
    *
    * @param {string} key
    * @param {number} delta - Amount to add (can be negative)
@@ -97,10 +109,8 @@ class Ipc extends EventEmitter {
    */
   async incrBy(key, delta, ttl = 0) {
     if (this.config.driver === 'redis') {
-      const value = Number(await this.redis.incrByFloat(key, delta))
-      // The first increment is the one that created the key.
-      if (ttl > 0 && value === delta) await this.redis.expire(key, ttl)
-      return value
+      if (!(ttl > 0)) return Number(await this.redis.incrByFloat(key, delta))
+      return Number(await this.redis.eval(INCR_WITH_TTL, {keys: [key], arguments: [String(delta), String(Math.ceil(ttl))]}))
     }
     return this._sendMemory('incrBy', {key, delta, ttl})
   }
@@ -619,8 +629,10 @@ class Ipc extends EventEmitter {
       case 'incrBy': {
         let data = this._memoryStore.get(msg.key)
         if (!data || (data.expireAt !== Infinity && Date.now() > data.expireAt)) {
-          data = {value: 0, expireAt: msg.ttl > 0 ? Date.now() + msg.ttl * 1000 : Infinity}
+          data = {value: 0, expireAt: Infinity}
         }
+        // Same rule as the Redis script: a counter without an expiry gets the window's.
+        if (msg.ttl > 0 && data.expireAt === Infinity) data.expireAt = Date.now() + msg.ttl * 1000
         data.value = (typeof data.value === 'number' ? data.value : 0) + msg.delta
         this._memoryStore.set(msg.key, data)
         return data.value
