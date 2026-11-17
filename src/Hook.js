@@ -55,9 +55,10 @@ class Hook {
         delete require.cache[require.resolve(filePath)]
         Hook.#modules[name] = {path: filePath, mtime, handlers: Hook.#handlers(name, filePath, require(filePath))}
       } catch (err) {
-        // Recorded so the same broken save is not retried every cycle.
+        // Recorded so the same broken save is not retried every cycle. Without earlier
+        // handlers to keep, the file is marked failed so veto hooks it may define fail closed.
         if (current) current.mtime = mtime
-        else Hook.#modules[name] = {path: filePath, mtime, handlers: {}}
+        else Hook.#modules[name] = {path: filePath, mtime, handlers: {}, failed: true}
         console.error(`\x1b[31m[ODAC]\x1b[0m Failed to load hook: \x1b[33m${filePath}\x1b[0m`)
         console.error(`\x1b[31m[ODAC]\x1b[0m ${err.message}`)
       }
@@ -89,6 +90,18 @@ class Hook {
    */
   static has(module, event) {
     return typeof Hook.#modules[module]?.handlers[event] === 'function'
+  }
+
+  /**
+   * Whether a hook file exists but none of its handlers could be loaded.
+   * Why: a file that fails on first load (syntax error, missing module) registers no handlers,
+   * so has() reports false and a veto hook such as `beforeLogin` would be skipped, letting in
+   * the accounts it exists to block. Veto callers check this to fail closed instead.
+   * @param {string} module Hook file name (e.g. 'auth').
+   * @returns {boolean}
+   */
+  static failed(module) {
+    return Hook.#modules[module]?.failed === true
   }
 
   /**

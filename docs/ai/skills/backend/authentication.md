@@ -48,7 +48,8 @@ await Odac.Auth.logout()
 // hook/auth.js — every handler gets the request's Odac instance first
 module.exports = {
   // Credentials verified, nothing issued yet. Only an explicit `false` refuses.
-  // Throwing also refuses (fails closed). A refusal does not count toward throttling.
+  // Throwing also refuses (fails closed), and so does a hook/auth.js that fails to load:
+  // every sign-in is denied until it loads. A refusal does not count toward throttling.
   async beforeLogin(Odac, {user, method}) {
     if (user.suspended) return false
   },

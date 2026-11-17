@@ -62,7 +62,7 @@ Every handler gets the request's `Odac` instance first, the same one controllers
 ### Rules
 
 - **`beforeLogin` refuses only with an explicit `false`.** Any other return value, including none, lets the user in.
-- **`beforeLogin` fails closed.** If it throws, the sign-in is refused and the error is logged. A check that is meant to keep an account out must not let it in because the check itself broke.
+- **`beforeLogin` fails closed.** If it throws, the sign-in is refused and the error is logged. A check that is meant to keep an account out must not let it in because the check itself broke. The same holds when `hook/auth.js` cannot be loaded at all (a syntax error, a missing module): every sign-in is refused with `denied` until a working version loads. A broken save over a file that already loaded keeps the previous handlers instead.
 - **`login` and `loginFailed` never change the outcome.** An error in them is logged, and the sign-in result stays as it was. The session is already issued when `login` runs.
 - **`user` never contains password hashes.** Every configured `auth.passwordField` is removed from the copy the hooks get. `identity` holds only the identity fields of the attempt (e.g. `email`), never the password.
 - **A refusal is not a failed password.** It does not count toward login throttling, because the credentials were correct.

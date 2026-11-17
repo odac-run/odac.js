@@ -599,8 +599,13 @@ class Auth {
   }
 
   // A veto hook fails closed: if the check that would block an account cannot run, the
-  // account is not let in. Only an explicit `false` denies; any other return value allows.
+  // account is not let in. That includes a hook/auth.js that failed to load, which may define
+  // beforeLogin. Only an explicit `false` denies; any other return value allows.
   async #allowLogin(user, method) {
+    if (Hook.failed('auth')) {
+      console.error('\x1b[31m[ODAC]\x1b[0m Login denied: hook/auth.js failed to load, so beforeLogin cannot run')
+      return false
+    }
     if (!Hook.has('auth', 'beforeLogin')) return true
     const result = await Hook.run('auth', 'beforeLogin', this.#hookContext(), {user: Auth.#publicUser(user), method})
     return !result.error && result.value !== false
