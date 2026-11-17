@@ -158,7 +158,13 @@ function source(loaded, locals) {
   )
 }
 
-// The locals of the scoped module: the keys an exact variant would have declared.
+/**
+ * The locals of a scoped module: the keys an exact variant would have declared.
+ * Why: shared with mail templates, which bound their compiled variants the same way.
+ * @param {object} props Values by key.
+ * @param {Set<string>} tokens Identifier-like tokens of the compiled code.
+ * @returns {object} A prototype-less object, so `with` never resolves inherited names.
+ */
 function scopeOf(props, tokens) {
   const scope = Object.create(null)
   for (const key of Object.keys(props)) if (tokens.has(key) && isLocalName(key)) scope[key] = props[key]
@@ -230,4 +236,4 @@ async function load(file, odac, {component = false, locals = [], seen, chain = [
   return result
 }
 
-module.exports = {RenderError, failure, load}
+module.exports = {MAX_VARIANTS, RenderError, TOKEN, failure, load, scopeOf}

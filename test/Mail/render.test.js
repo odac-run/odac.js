@@ -77,6 +77,29 @@ describe('Mail templates and headers', () => {
     expect(body()).toContain('<p>ok</p>')
   })
 
+  const cachedModules = () => fs.readdirSync(path.join(tmpDir, 'storage', '.cache')).filter(file => !file.endsWith('.tmp'))
+
+  it('compiles no module for data keys the template does not mention', async () => {
+    template('contact', '<p>{{ name }}</p>')
+    for (let i = 0; i < 50; i++) await mail('contact').send({name: 'Ada', [`field${i}`]: i})
+
+    expect(body()).toContain('<p>Ada</p>')
+    expect(cachedModules()).toHaveLength(1)
+  })
+
+  it('serves key sets past the variant limit from one scoped module', async () => {
+    const names = Array.from({length: 40}, (_, i) => `k${i}`)
+    template('many', `<p>${names.map(name => `{{ typeof ${name} === 'undefined' ? '' : ${name} }}`).join('')}</p>`)
+    for (const name of names) {
+      await mail('many').send({[name]: name.toUpperCase()})
+      expect(body()).toContain(`<p>${name.toUpperCase()}</p>`)
+    }
+    await mail('many').send({k3: 'a', k39: 'b', toString: 'c'})
+    expect(body()).toContain('<p>ab</p>')
+
+    expect(cachedModules()).toHaveLength(33)
+  })
+
   it('fails the send instead of mailing an empty body when the template throws', async () => {
     template('broken', '<p>{{ missing.value }}</p>')
     await expect(mail('broken').send({})).resolves.toBe(false)
