@@ -87,3 +87,36 @@ describe('Ipc - llen()', () => {
     }
   })
 })
+
+describe('Ipc - ltrim()', () => {
+  it('keeps the newest n items with negative indexes', async () => {
+    await Ipc.rpush('list:trim', 1, 2, 3, 4, 5)
+    await Ipc.ltrim('list:trim', -2, -1)
+    expect(await Ipc.lrange('list:trim', 0, -1)).toEqual([4, 5])
+  })
+
+  it('keeps a positive range and clamps it to the list', async () => {
+    await Ipc.rpush('list:trim2', 'a', 'b', 'c')
+    await Ipc.ltrim('list:trim2', 1, 10)
+    expect(await Ipc.lrange('list:trim2', 0, -1)).toEqual(['b', 'c'])
+  })
+
+  it('removes the list when the range is empty and ignores a missing key', async () => {
+    await Ipc.rpush('list:trim3', 'a')
+    await Ipc.ltrim('list:trim3', 5, 10)
+    expect(await Ipc.llen('list:trim3')).toBe(0)
+    await expect(Ipc.ltrim('list:none', 0, -1)).resolves.toBe(true)
+  })
+
+  it('uses LTRIM on the redis driver', async () => {
+    Ipc.config.driver = 'redis'
+    Ipc.redis = {lTrim: jest.fn().mockResolvedValue('OK')}
+    try {
+      await expect(Ipc.ltrim('list:r', -1000, -1)).resolves.toBe(true)
+      expect(Ipc.redis.lTrim).toHaveBeenCalledWith('list:r', -1000, -1)
+    } finally {
+      Ipc.config.driver = 'memory'
+      Ipc.redis = null
+    }
+  })
+})

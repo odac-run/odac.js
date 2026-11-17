@@ -213,6 +213,7 @@ try {
 | `hgetall(key)` | Retrieve all fields of a hash map |
 | `rpush(key, ...items)` | Append items to a list |
 | `lrange(key, start, stop)` | Read a range of list items |
+| `ltrim(key, start, stop)` | Keep only a range of list items; `ltrim(key, -n, -1)` keeps the newest `n` |
 | `sadd(key, ...members)` | Add members to a set |
 | `smembers(key)` | Get all members of a set |
 | `srem(key, ...members)` | Remove members from a set |

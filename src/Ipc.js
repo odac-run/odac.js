@@ -210,6 +210,23 @@ class Ipc extends EventEmitter {
   }
 
   /**
+   * Keeps only the elements from `start` to `stop` (inclusive; negative counts from the end).
+   * Why: bounds lists that only grow, such as the write buffer's dead letters: `ltrim(key, -n, -1)`
+   * keeps the newest n. Redis: LTRIM. Memory: slice on Primary.
+   * @param {string} key
+   * @param {number} start
+   * @param {number} stop
+   * @returns {Promise<boolean>}
+   */
+  async ltrim(key, start, stop) {
+    if (this.config.driver === 'redis') {
+      await this.redis.lTrim(key, start, stop)
+      return true
+    }
+    return this._sendMemory('ltrim', {key, start, stop})
+  }
+
+  /**
    * Why: Atomic read-and-clear for queue flush. Prevents data loss caused by
    * non-atomic lrange() + del() where new rpush() arrivals between the two
    * calls would be silently deleted. Redis: MULTI/EXEC pipeline.
@@ -670,6 +687,16 @@ class Ipc extends EventEmitter {
       case 'llen': {
         const data = this._memoryStore.get(msg.key)
         return data && Array.isArray(data.value) ? data.value.length : 0
+      }
+      case 'ltrim': {
+        const data = this._memoryStore.get(msg.key)
+        if (!data || !Array.isArray(data.value)) return true
+        const length = data.value.length
+        const start = Math.max(0, msg.start < 0 ? length + msg.start : msg.start)
+        const stop = Math.min(length - 1, msg.stop < 0 ? length + msg.stop : msg.stop)
+        if (start > stop) this._memoryStore.delete(msg.key)
+        else data.value = data.value.slice(start, stop + 1)
+        return true
       }
       case 'lrangeAndDel': {
         const data = this._memoryStore.get(msg.key)

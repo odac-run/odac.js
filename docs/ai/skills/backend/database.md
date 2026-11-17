@@ -246,6 +246,7 @@ Rows accumulate in memory; flushed in chunks of 1000. Auto-flushes when `maxQueu
 ```javascript
 await Odac.DB.activity_log.buffer.insert({user_id: userId, action: 'page_view', meta: url})
 ```
+Rows the DB keeps rejecting (after `maxInsertAttempts` flush cycles) move to a dead-letter list capped at `maxDeadLetters` per table (default 1000, oldest dropped with a WARN log; `0` = no cap). Inspect with `buffer.deadLetters()`; remove after handling with `buffer.clearDeadLetters()` (atomic, returns the removed `{row, error, at}` entries).
 
 ### Manual Flush
 ```javascript
@@ -271,6 +272,8 @@ await Odac.DB.buffer.flush()         // flush everything
     "checkpointInterval": 30000,
     "maxQueueSize": 10000,
     "maxQueueLength": 100000,
+    "maxInsertAttempts": 3,
+    "maxDeadLetters": 1000,
     "primaryKey": "id"
   }
 }

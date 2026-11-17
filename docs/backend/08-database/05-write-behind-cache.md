@@ -152,6 +152,7 @@ Add a `buffer` section to your `odac.json`:
     "maxQueueSize": 10000,
     "maxQueueLength": 100000,
     "maxInsertAttempts": 3,
+    "maxDeadLetters": 1000,
     "baseTtl": 300,
     "primaryKey": "id"
   }
@@ -165,12 +166,20 @@ Add a `buffer` section to your `odac.json`:
 | `maxQueueSize` | `10000` | Auto-flush the insert queue when it reaches this many rows |
 | `maxQueueLength` | `10 × maxQueueSize` | Hard cap on queued rows per table. Past it, `buffer.insert()` writes directly to the database and rejects if that fails. `0` disables the cap |
 | `maxInsertAttempts` | `3` | Flush cycles a queued row may be rejected by the database (while other rows or a probe query succeed) before it is moved to the dead-letter list |
+| `maxDeadLetters` | `1000` | Dead-letter rows kept per table. Past it, the oldest are dropped and a `WARN` log line reports how many. `0` keeps all of them |
 | `baseTtl` | `300` | Seconds a counter's base value read from the database is cached |
 | `primaryKey` | `"id"` | Default primary key column name for scalar `where()` values |
 
 ### Rejected rows
 
 If a batch insert fails, ODAC retries its rows one by one so a single bad row (constraint violation, wrong type) does not hold back the rest. A row that keeps failing is moved to a dead-letter list instead of blocking the queue; read it with `await Odac.DB.posts.buffer.deadLetters()`. While the database is unreachable, rows are kept and their attempts are not counted.
+
+The list keeps the newest `maxDeadLetters` rows per table, so input that keeps breaking a constraint cannot grow memory and checkpoints without limit. Once you have handled the rows (replayed, fixed at the source, or logged), remove them with `clearDeadLetters()`, which returns what it removed:
+
+```javascript
+const rows = await Odac.DB.posts.buffer.clearDeadLetters()
+for (const {row, error} of rows) await reportRejectedRow(row, error)
+```
 
 ---
 

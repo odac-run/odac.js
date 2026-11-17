@@ -88,6 +88,33 @@ describe('WriteBuffer - poison rows', () => {
     expect(await db('events').where('type', 'later')).toHaveLength(1)
   })
 
+  it('keeps only the newest maxDeadLetters rows', async () => {
+    WriteBuffer._config.maxDeadLetters = 2
+    for (const id of [1, 2, 3]) await WriteBuffer.insert('default', 'events', {id, type: null})
+
+    for (let i = 0; i < 3; i++) await WriteBuffer.flush()
+
+    const dead = await WriteBuffer.deadLetters('default', 'events')
+    expect(dead.map(letter => letter.row.id)).toEqual([2, 3])
+    expect(console.error.mock.calls.flat().join('\n')).toContain('"dropped":1')
+  })
+
+  it('clears the dead letters of a table and their checkpoint', async () => {
+    await WriteBuffer.insert('default', 'events', {type: null})
+    for (let i = 0; i < 3; i++) await WriteBuffer.flush()
+    expect(storageData.has('wb:d:default:events')).toBe(true)
+
+    const DB = require('../../../src/Database')
+    DB.connections = {default: db}
+    db._odacConnectionKey = 'default'
+    DB._nanoidColumns = {}
+    const cleared = await DB.events.buffer.clearDeadLetters()
+
+    expect(cleared.map(letter => letter.row)).toEqual([{type: null}])
+    expect(await WriteBuffer.deadLetters('default', 'events')).toEqual([])
+    expect(storageData.has('wb:d:default:events')).toBe(false)
+  })
+
   it('does not use up attempts while the database is unreachable', async () => {
     await WriteBuffer.insert('default', 'missing_table', {type: 'x'})
     jest.spyOn(WriteBuffer, '_reachable').mockResolvedValue(false)

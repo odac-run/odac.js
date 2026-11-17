@@ -50,6 +50,8 @@ const DEFAULT_CONFIG = {
   // Flush cycles a row may fail on its own (while the database is reachable) before it is
   // moved to the dead-letter list instead of blocking its queue.
   maxInsertAttempts: 3,
+  // Dead letters kept per table; past it the oldest are dropped. 0 keeps all of them.
+  maxDeadLetters: 1000,
   // Seconds a cached counter base stays valid before it is re-read from the database.
   baseTtl: 300
 }
@@ -263,6 +265,42 @@ class WriteBuffer {
     return Odac.Ipc.lrange(`wb:dlq:${connection}:${table}`, 0, -1)
   }
 
+  /**
+   * Removes a table's dead letters and returns them.
+   * Why: once inspected, replayed or fixed at the source, dead letters would otherwise stay in
+   * the primary's memory (or Redis) and in every checkpoint until `maxDeadLetters` pushed them
+   * out. Reading and removing is one atomic step, so a letter added meanwhile is never lost.
+   * @returns {Promise<Array<{row: object, error: string, at: number}>>} The removed rows.
+   */
+  async clearDeadLetters(connection, table) {
+    const queueKey = `${connection}:${table}`
+    const letters = await Odac.Ipc.lrangeAndDel(`wb:dlq:${queueKey}`)
+    this._dropCheckpoint([`wb:d:${queueKey}`])
+    return letters
+  }
+
+  // Appends dead letters and keeps the newest maxDeadLetters. Why: rows the database keeps
+  // rejecting (input that breaks a constraint) would otherwise grow the list, and with the
+  // memory driver the primary's heap and every checkpoint, for as long as the app runs.
+  async _pushDeadLetters(queueKey, letters) {
+    if (letters.length === 0) return
+    const key = `wb:dlq:${queueKey}`
+    const length = await Odac.Ipc.rpush(key, ...letters)
+    await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
+    const max = this._config.maxDeadLetters
+    if (!(max > 0) || length <= max) return
+    await Odac.Ipc.ltrim(key, -max, -1)
+    console.error(
+      JSON.stringify({
+        level: 'WARN',
+        message: 'WriteBuffer dropped the oldest dead letters',
+        queue: queueKey,
+        dropped: length - max,
+        maxDeadLetters: max
+      })
+    )
+  }
+
   // ─── Flush Logic ───────────────────────────────────────────
 
   async _flushCounters(filterConnection, filterTable, guard = {lost: false}) {
@@ -438,8 +476,7 @@ class WriteBuffer {
       }
 
       if (dead.length > 0) {
-        for (const letter of dead) await Odac.Ipc.rpush(`wb:dlq:${queueKey}`, letter)
-        await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
+        await this._pushDeadLetters(queueKey, dead)
         console.error(
           `\x1b[31m[WriteBuffer]\x1b[0m ${dead.length} row(s) for ${table} failed ${this._config.maxInsertAttempts} times and were moved to the dead-letter list (wb:dlq:${queueKey}). Last error: ${dead[dead.length - 1].error}`
         )
@@ -680,9 +717,7 @@ class WriteBuffer {
     // Recover dead letters
     for (const {key, value} of Odac.Storage.getRange({start: 'wb:d:', end: 'wb:d:~'})) {
       if (!Array.isArray(value)) continue
-      const queueKey = key.slice(5)
-      for (const letter of value) await Odac.Ipc.rpush(`wb:dlq:${queueKey}`, letter)
-      await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
+      await this._pushDeadLetters(key.slice(5), value)
     }
 
     if (counterCount > 0 || updateCount > 0 || queueCount > 0) {

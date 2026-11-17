@@ -67,6 +67,9 @@ await Odac.Ipc.rpush('events', {type: 'click'}, {type: 'view'})  // → 2
 
 // Read range (inclusive, -1 = last item)
 const items = await Odac.Ipc.lrange('events', 0, -1)
+
+// Bound a list that only grows: keep the newest 1000
+await Odac.Ipc.ltrim('events', -1000, -1)
 ```
 
 ### 5. Sets
