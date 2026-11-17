@@ -3,7 +3,7 @@ const fs = require('fs')
 const fsPromises = fs.promises
 const path = require('path')
 const os = require('os')
-const {isFromOdacProxy} = require('./Request/TrustedProxy')
+const {isFromOdacProxy, reportUntrustedProxy} = require('./Request/TrustedProxy')
 
 // decodeURIComponent throws a URIError on malformed percent-encoding (e.g. `%`
 // or `%ZZ`). A single crafted query/body/path would otherwise bubble out and
@@ -96,6 +96,7 @@ class OdacRequest {
     // Whether the peer is a trusted proxy. Only then has the Host header passed
     // through something that routes configured domains; a direct client can send any Host.
     this.fromTrustedProxy = fromProxy
+    if (!fromProxy) reportUntrustedProxy(req, peer)
     this.ssl = fromProxy ? this.header('x-odac-connection-ssl') === 'true' : !!socket?.encrypted
     this.ip = ((fromProxy && this.header('x-odac-connection-remoteaddress')) || peer || '').replace('::ffff:', '')
     this.language = req.headers['accept-language']?.split(',')[0] ?? 'en'

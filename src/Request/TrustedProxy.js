@@ -168,4 +168,37 @@ function isFromOdacProxy(req, socket, configured, {underOdac = UNDER_ODAC, key =
   return isTrustedProxy(socket?.remoteAddress, configured, underOdac)
 }
 
-module.exports = {hasProxySignature, isFromOdacProxy, isProxySocket, isTrustedProxy, markProxySocket}
+// Headers a reverse proxy adds for the client it forwards.
+const FORWARDING_HEADERS = ['x-forwarded-for', 'x-real-ip', 'forwarded', 'x-odac-connection-remoteaddress']
+let untrustedProxyReported = false
+
+/**
+ * Warns once per process when requests come through a reverse proxy the app does not trust.
+ * Why: the client address is then the proxy's for every visitor, so IP-keyed limits (login
+ * throttling, rate limits) count all visitors as one client and a few failed logins lock
+ * everybody out. Nothing else fails, so without this the setup looks healthy until then.
+ * Only a loopback or private peer that sends forwarding headers is reported; a public peer is a
+ * direct client, whose headers mean nothing.
+ * @param {import('http').IncomingMessage} req Request as received; headers not yet stripped.
+ * @param {string|undefined} peer Socket peer address.
+ * @returns {boolean} Whether this call reported it.
+ */
+function reportUntrustedProxy(req, peer) {
+  if (untrustedProxyReported || !peer) return false
+  if (!FORWARDING_HEADERS.some(name => req.headers[name] !== undefined)) return false
+  if (!isTrustedProxy(peer, DEFAULT_TRUSTED, true)) return false
+  untrustedProxyReported = true
+  console.error(
+    JSON.stringify({
+      level: 'WARN',
+      message:
+        'ODAC: requests arrive through a reverse proxy that is not trusted, so every visitor has the proxy address and ' +
+        'IP-based limits (login throttling, rate limits) count all visitors as one client. Make the proxy overwrite ' +
+        'X-Odac-Connection-RemoteAddress and list it in request.trustedProxies.',
+      peer
+    })
+  )
+  return true
+}
+
+module.exports = {hasProxySignature, isFromOdacProxy, isProxySocket, isTrustedProxy, markProxySocket, reportUntrustedProxy}
