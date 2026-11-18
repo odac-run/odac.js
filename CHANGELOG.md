@@ -1,3 +1,17 @@
+### 🛠️ Fixes & Improvements
+
+- **auth:** refuse sign-ins when hook/auth.js fails to load
+- **auth:** reserve login attempts before the password check
+- **database:** cap write-buffer dead letters and add clearDeadLetters()
+- **mail:** bound compiled mail template variants like views
+- **request:** warn once when an untrusted reverse proxy forwards requests
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### ✨ What's New
 
 - **lang:** answer forms in the page language, add Mail#lang and translate framework messages
