@@ -1,10 +1,19 @@
 'use strict'
 
-// incrBy on the redis driver: a ttl must be applied once, when the counter is created.
+// incrBy on the redis driver: a ttl must be applied in the same atomic step as the increment,
+// once, when the counter has no expiry yet. The eval mock runs the script's logic on a Map.
 
+const store = new Map()
 const mockClient = {
   connect: jest.fn().mockResolvedValue(undefined),
   duplicate: jest.fn(() => ({connect: jest.fn().mockResolvedValue(undefined), quit: jest.fn().mockResolvedValue(undefined)})),
+  eval: jest.fn(async (script, {keys: [key], arguments: [delta, ttl]}) => {
+    const entry = store.get(key) ?? {value: 0, ttl: -1}
+    entry.value += Number(delta)
+    if (entry.ttl === -1) entry.ttl = Number(ttl)
+    store.set(key, entry)
+    return String(entry.value)
+  }),
   expire: jest.fn().mockResolvedValue(1),
   incrByFloat: jest.fn(),
   quit: jest.fn().mockResolvedValue(undefined),
@@ -16,6 +25,7 @@ jest.mock('redis', () => ({createClient: jest.fn(() => mockClient)}), {virtual: 
 let Ipc
 
 beforeEach(async () => {
+  store.clear()
   jest.clearAllMocks()
   jest.resetModules()
   Ipc = require('../../src/Ipc')
@@ -29,21 +39,35 @@ afterEach(async () => {
 })
 
 describe('Ipc redis - incrBy()', () => {
-  it('sets the expiry when the increment creates the counter', async () => {
-    mockClient.incrByFloat.mockResolvedValue('1')
+  it('increments and sets the expiry in one script when the counter is created', async () => {
     await expect(Ipc.incrBy('rate', 1, 60)).resolves.toBe(1)
-    expect(mockClient.expire).toHaveBeenCalledWith('rate', 60)
+    expect(mockClient.eval).toHaveBeenCalledWith(expect.stringContaining('INCRBYFLOAT'), {keys: ['rate'], arguments: ['1', '60']})
+    expect(mockClient.expire).not.toHaveBeenCalled()
+    expect(store.get('rate').ttl).toBe(60)
   })
 
   it('does not extend the expiry on later increments', async () => {
-    mockClient.incrByFloat.mockResolvedValue('3')
+    store.set('rate', {value: 2, ttl: 42})
+    await expect(Ipc.incrBy('rate', 1, 60)).resolves.toBe(3)
+    expect(store.get('rate').ttl).toBe(42)
+  })
+
+  it('gives a counter left without an expiry the window', async () => {
+    store.set('rate', {value: 7, ttl: -1})
     await Ipc.incrBy('rate', 1, 60)
-    expect(mockClient.expire).not.toHaveBeenCalled()
+    expect(store.get('rate').ttl).toBe(60)
+  })
+
+  it('keeps the window on a negative delta', async () => {
+    await expect(Ipc.incrBy('rate', -1, 60)).resolves.toBe(-1)
+    expect(store.get('rate').ttl).toBe(60)
   })
 
   it('never sets an expiry without a ttl', async () => {
     mockClient.incrByFloat.mockResolvedValue('1')
-    await Ipc.incrBy('counter', 1)
+    await expect(Ipc.incrBy('counter', 1)).resolves.toBe(1)
+    expect(mockClient.incrByFloat).toHaveBeenCalledWith('counter', 1)
+    expect(mockClient.eval).not.toHaveBeenCalled()
     expect(mockClient.expire).not.toHaveBeenCalled()
   })
 })

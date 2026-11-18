@@ -20,7 +20,7 @@ await Odac.Mail('template_name')
 ```
 
 *   **Template**: The constructor takes the name of the HTML template file located in `view/mail/`.
-*   **Data**: The object passed to `send()` is available in the template. Keys that are plain identifiers (`user_name`, not `first-name` or reserved words such as `class`) are local variables: `{{ user_name }}`. Every key, including the others, is reachable with `get('key')`.
+*   **Data**: The object passed to `send()` is available in the template. Keys that are plain identifiers (`user_name`, not `first-name` or reserved words such as `class`) are local variables: `{{ user_name }}`. Every key, including the others, is reachable with `get('key')`. Only keys the template mentions become locals, and the number of compiled versions per template is bounded, so data built from request input with arbitrary field names cannot grow the compile cache.
 *   **Templates** use the same syntax as views (`{{ }}`, `{!! !!}`, `<odac:if>`, `<odac:for in="...">`, `<script:odac>`).
 *   **Result**: `send()` resolves to the ODAC Core response, or `false` when the mail could not be built or delivered (including a template error — an empty mail is never sent).
 

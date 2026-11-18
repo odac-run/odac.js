@@ -198,6 +198,26 @@ describe('Auth hooks (hook/auth.js)', () => {
       await expect(new Auth(makeRequest()).login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)
     })
 
+    it('denies the sign-in when hook/auth.js failed to load (fails closed)', async () => {
+      const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {})
+      const brokenDir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-auth-hook-broken-'))
+      fs.writeFileSync(path.join(brokenDir, 'auth.js'), 'module.exports = {beforeLogin: (')
+      try {
+        // A first load: no earlier handlers to keep.
+        await Hook.load(path.join(os.tmpdir(), 'odac-auth-hook-missing'))
+        await Hook.load(brokenDir)
+        expect(Hook.has('auth', 'beforeLogin')).toBe(false)
+
+        await expect(new Auth(makeRequest()).login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(false)
+        expect(tokens).toHaveLength(0)
+      } finally {
+        await Hook.load(hookDir)
+        fs.rmSync(brokenDir, {recursive: true, force: true})
+        errorSpy.mockRestore()
+      }
+      await expect(new Auth(makeRequest()).login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)
+    })
+
     it('does not count a denial as a wrong password', async () => {
       behavior.beforeLogin = () => false
       for (let i = 0; i < 6; i++) await new Auth(makeRequest()).login({email: 'a@example.com', password: 's3cret'})

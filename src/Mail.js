@@ -11,6 +11,8 @@ const Template = require('./View/Template')
 const Lang = require('./Lang.js')
 
 const CACHE_DIR = 'storage/.cache'
+// The variant key of the scoped module. No list of identifiers equals it.
+const SCOPED = '\u0000'
 // Header values and display names end up as raw header lines; CR/LF would start new headers.
 const stripLineBreaks = value => (value === undefined || value === null ? value : String(value).replace(/[\r\n]+/g, ' '))
 
@@ -66,37 +68,9 @@ class Mail {
       await handle.close()
     }
 
-    const locals = Object.keys(data).filter(isLocalName).sort()
-    const variant = `${file}\u0000${locals.join(',')}`
-    let compiled = Mail.#compiled.get(variant)
-
-    if (compiled?.mtime !== mtime) {
-      let code
-      try {
-        code = compileTemplate(content, {file, components: true}).code
-      } catch (e) {
-        if (e instanceof TemplateError) throw Template.failure(e, {file, line: e.line})
-        throw e
-      }
-      // One module per template version: a changed template never loads a stale module.
-      const name = cacheName('mail', variant, mtime)
-      const dir = `${__dir}/${CACHE_DIR}`
-      const target = `${dir}/${name}`
-      const declarations = locals.map(key => `let ${key} = data[${JSON.stringify(key)}];`).join('\n')
-      await fsPromises.mkdir(dir, {recursive: true})
-      // Written to a temporary file and renamed so a concurrent render never loads half a module.
-      const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
-      await fsPromises.writeFile(
-        temp,
-        `module.exports = async (Odac, data, get, __, __x, __r, slots) => {\n${declarations}\nlet html = '';\n${code}\nreturn html.trim()\n}`
-      )
-      await fsPromises.rename(temp, target)
-      delete require.cache[require.resolve(target)]
-      // The superseded version is not loaded again.
-      if (compiled) fsPromises.unlink(compiled.target).catch(() => {})
-      compiled = {mtime, target, name}
-      Mail.#compiled.set(variant, compiled)
-    }
+    const entry = Mail.#entry(file, mtime, content)
+    const compiled = await Mail.#variant(entry, file, Object.keys(data))
+    const scope = compiled.scoped ? Template.scopeOf(data, entry.tokens) : undefined
 
     const lang = this.#lang ?? Odac.Lang
     // `Odac.__()` and `Odac.Lang` inside the template translate in the mail's language too.
@@ -124,8 +98,75 @@ class Mail {
       directory: `${__dir}/view/mail/components`,
       lazy: false
     })
-    const html = await require(compiled.target)(odac, data, ...helpers, runtime, Component.EMPTY_SLOTS)
+    const html = await require(compiled.target)(odac, data, ...helpers, runtime, Component.EMPTY_SLOTS, scope)
     return Component.fillStacks(html, state, {marker: false})
+  }
+
+  // The compiled code of a template version. Compiled once per version; a changed template
+  // drops the modules of the previous one.
+  static #entry(file, mtime, content) {
+    const known = Mail.#compiled.get(file)
+    if (known?.mtime === mtime) return known
+
+    let code
+    try {
+      code = compileTemplate(content, {file, components: true}).code
+    } catch (e) {
+      if (e instanceof TemplateError) throw Template.failure(e, {file, line: e.line})
+      throw e
+    }
+    if (known) {
+      for (const {target} of known.modules.values()) {
+        delete require.cache[target]
+        fsPromises.unlink(target).catch(() => {})
+      }
+    }
+    const entry = {mtime, code, tokens: new Set(code.match(Template.TOKEN)), modules: new Map()}
+    Mail.#compiled.set(file, entry)
+    return entry
+  }
+
+  // The module for a set of data keys. Only keys the template mentions are declared, and past
+  // MAX_VARIANTS sets one scoped module (`with`) serves the rest, exactly like views: data
+  // built from input (`send(await Odac.request())`) otherwise compiled and loaded a new module
+  // for every combination of field names, growing storage/.cache and the worker's memory.
+  static async #variant(entry, file, keys) {
+    let locals = keys.filter(key => entry.tokens.has(key) && isLocalName(key)).sort()
+    let variant = locals.join(',')
+    let known = entry.modules.get(variant)
+    if (known) return known
+    if (entry.modules.size >= Template.MAX_VARIANTS) {
+      locals = null
+      variant = SCOPED
+      known = entry.modules.get(variant)
+      if (known) return known
+    }
+
+    // One module per template version and key set: a changed template never loads a stale module.
+    const name = cacheName('mail', file, variant, entry.mtime)
+    const dir = `${__dir}/${CACHE_DIR}`
+    const target = `${dir}/${name}`
+    // Exactly three lines before the template, like views, so errors report template lines.
+    const declarations = locals === null ? '' : locals.map(key => `let ${key} = data[${JSON.stringify(key)}];`).join(' ')
+    const header = `${declarations}\nlet html = ''; ${locals === null ? 'with (__scope) ' : ''}{`
+    await fsPromises.mkdir(dir, {recursive: true})
+    // Written to a temporary file and renamed so a concurrent render never loads half a module.
+    const temp = `${target}.${process.pid}.${nodeCrypto.randomBytes(4).toString('hex')}.tmp`
+    try {
+      await fsPromises.writeFile(
+        temp,
+        `module.exports = async (Odac, data, get, __, __x, __r, slots, __scope) => {\n${header}\n${entry.code}\n}\nreturn html.trim()\n}`
+      )
+      await fsPromises.rename(temp, target)
+    } catch (e) {
+      await fsPromises.unlink(temp).catch(() => {})
+      throw e
+    }
+    const resolved = require.resolve(target)
+    delete require.cache[resolved]
+    const compiled = {target: resolved, name, scoped: locals === null}
+    entry.modules.set(variant, compiled)
+    return compiled
   }
 
   header(header) {

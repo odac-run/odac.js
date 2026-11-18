@@ -114,6 +114,13 @@ const views = await Odac.Ipc.get('page:views')  // → 4
 > [!NOTE]
 > Keys that don't exist yet are initialised to `0` before the operation.
 
+Pass a TTL in seconds as the third argument to make the counter a fixed window, as rate limits do: the expiry is set when the counter is created and later increments do not extend it. A counter found without an expiry gets one. On Redis the increment and the expiry are a single atomic script, so a crash between them cannot leave a counter that never expires.
+
+```javascript
+const attempts = await Odac.Ipc.incrBy(`signup:${Odac.Request.ip}`, 1, 3600)
+if (attempts > 10) return Odac.Request.abort(429)
+```
+
 ---
 
 ### Hash Maps
@@ -200,12 +207,13 @@ try {
 | `set(key, value, ttl?)` | Store a value, with optional TTL in seconds |
 | `get(key)` | Retrieve a value |
 | `del(key)` | Delete a key |
-| `incrBy(key, delta)` | Atomically increment a numeric key |
+| `incrBy(key, delta, ttl?)` | Atomically increment a numeric key; `ttl` (seconds) makes it a fixed window |
 | `decrBy(key, delta)` | Atomically decrement a numeric key |
 | `hset(key, fields)` | Merge fields into a hash map |
 | `hgetall(key)` | Retrieve all fields of a hash map |
 | `rpush(key, ...items)` | Append items to a list |
 | `lrange(key, start, stop)` | Read a range of list items |
+| `ltrim(key, start, stop)` | Keep only a range of list items; `ltrim(key, -n, -1)` keeps the newest `n` |
 | `sadd(key, ...members)` | Add members to a set |
 | `smembers(key)` | Get all members of a set |
 | `srem(key, ...members)` | Remove members from a set |

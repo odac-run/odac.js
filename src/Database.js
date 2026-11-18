@@ -287,7 +287,8 @@ const buildQueryBuilder = (knexInstance, tableName) => {
     }),
     insert: row => writeBuffer.insert(connectionKey, prop, row),
     flush: () => writeBuffer.flush(connectionKey, prop),
-    deadLetters: () => writeBuffer.deadLetters(connectionKey, prop)
+    deadLetters: () => writeBuffer.deadLetters(connectionKey, prop),
+    clearDeadLetters: () => writeBuffer.clearDeadLetters(connectionKey, prop)
   }
 
   // Read-Through Cache: Odac.DB.posts.cache(60).where({active: true}).select('id', 'title')
@@ -441,7 +442,8 @@ const buildClickHouseTable = (adapter, tableName) => {
   query.buffer = {
     insert: row => writeBuffer.insert(connectionKey, tableName, row),
     flush: () => writeBuffer.flush(connectionKey, tableName),
-    deadLetters: () => writeBuffer.deadLetters(connectionKey, tableName)
+    deadLetters: () => writeBuffer.deadLetters(connectionKey, tableName),
+    clearDeadLetters: () => writeBuffer.clearDeadLetters(connectionKey, tableName)
   }
 
   return query

@@ -41,6 +41,10 @@ await Odac.Ipc.incrBy('page:views', 1)    // → 1
 await Odac.Ipc.incrBy('page:views', 5)    // → 6
 await Odac.Ipc.decrBy('page:views', 2)    // → 4
 
+// Fixed window: ttl (seconds) is set when the counter is created, never extended.
+// Atomic with the increment on Redis, so a window can never become permanent.
+await Odac.Ipc.incrBy(`signup:${Odac.Request.ip}`, 1, 3600)
+
 // Read current value
 const views = await Odac.Ipc.get('page:views')  // → 4
 ```
@@ -63,6 +67,9 @@ await Odac.Ipc.rpush('events', {type: 'click'}, {type: 'view'})  // → 2
 
 // Read range (inclusive, -1 = last item)
 const items = await Odac.Ipc.lrange('events', 0, -1)
+
+// Bound a list that only grows: keep the newest 1000
+await Odac.Ipc.ltrim('events', -1000, -1)
 ```
 
 ### 5. Sets

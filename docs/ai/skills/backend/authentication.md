@@ -48,7 +48,8 @@ await Odac.Auth.logout()
 // hook/auth.js — every handler gets the request's Odac instance first
 module.exports = {
   // Credentials verified, nothing issued yet. Only an explicit `false` refuses.
-  // Throwing also refuses (fails closed). A refusal does not count toward throttling.
+  // Throwing also refuses (fails closed), and so does a hook/auth.js that fails to load:
+  // every sign-in is denied until it loads. A refusal does not count toward throttling.
   async beforeLogin(Odac, {user, method}) {
     if (user.suspended) return false
   },
@@ -112,5 +113,5 @@ Odac.Ipc.subscribe('lobby', (msg) => {
 
 ## Security Best Practices
 -   **CSRF Protection**: Native `Odac.form` and `Odac.post` handle CSRF tokens automatically using `{{ TOKEN }}` in views.
--   **Brute Force**: `Odac.Auth.login()` throttles wrong passwords (5 per account+IP, 50 per IP, 15 min window; `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP`, `auth.loginWindow` in ms). Use `Odac.Auth.loginThrottled(credentials)` to show a lockout message, and `validator.brute()` for other sensitive forms.
+-   **Brute Force**: `Odac.Auth.login()` throttles wrong passwords (5 per account+IP, 50 per IP, 15 min window; `auth.loginMaxAttempts`, `auth.loginMaxAttemptsPerIP`, `auth.loginWindow` in ms). Use `Odac.Auth.loginThrottled(credentials)` to show a lockout message, and `validator.brute()` for other sensitive forms. Attempts are reserved atomically before the password check, so concurrent guesses cannot exceed the limit; never add a read-then-increment limiter around `login()`. The per-IP limit needs the real client IP: behind an untrusted reverse proxy all visitors share one IP (ODAC logs a WARN once) — configure `request.trustedProxies`.
 -   **Passwordless Preference**: Consider using Magic Links for enhanced security and better user experience.

@@ -112,7 +112,7 @@ let offset = 0
       }
     }
     await Hook.load(hookDir)
-    results.push({has: Hook.has('auth', 'login'), value: (await Hook.run('auth', 'login')).value ?? null})
+    results.push({has: Hook.has('auth', 'login'), failed: Hook.failed('auth'), value: (await Hook.run('auth', 'login')).value ?? null})
     offset += 5
   }
   process.stdout.write(JSON.stringify({results, errors}))
@@ -142,13 +142,27 @@ let offset = 0
     ])
 
     expect(results).toEqual([
-      {has: true, value: 'v1'},
-      {has: true, value: 'v2'},
-      {has: true, value: 'v2'},
-      {has: true, value: 'v2'},
-      {has: false, value: null}
+      {has: true, failed: false, value: 'v1'},
+      {has: true, failed: false, value: 'v2'},
+      {has: true, failed: false, value: 'v2'},
+      {has: true, failed: false, value: 'v2'},
+      {has: false, failed: false, value: null}
     ])
     // The broken save is reported once, not on every reload cycle.
     expect(errors.filter(e => e.includes('Failed to load hook'))).toHaveLength(1)
+  })
+
+  it('marks a file that fails on first load as failed until a good save loads', async () => {
+    const {results} = await run([
+      {files: [['auth.js', 'module.exports = {login: (']]},
+      {files: [['auth.js', "module.exports = {login: () => 'v1'}"]]},
+      {files: [['auth.js', null]]}
+    ])
+
+    expect(results).toEqual([
+      {has: false, failed: true, value: null},
+      {has: true, failed: false, value: 'v1'},
+      {has: false, failed: false, value: null}
+    ])
   })
 })
