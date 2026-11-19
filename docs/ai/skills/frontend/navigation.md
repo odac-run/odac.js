@@ -28,6 +28,7 @@ On every subsequent navigation:
 3.  **Exclusion**: Use `data-navigate="false"` attribute or `.no-navigate` class on links to force full page reloads.
 4.  **Lifecycle**: Use `load` and `page` events to run code after navigation.
 5.  **View Transitions**: Add `odac-transition` attribute to elements for native browser View Transition API animations.
+6.  **Dev live reload reuses navigation**: in debug mode a saved view re-renders its part through this same AJAX path (scroll kept, no history entry), so `load` and `page` handlers run again. Keep them idempotent (bind delegated listeners on `document` once, or guard re-initialization) exactly as navigation already requires. See `backend/structure.md` for what each kind of save does.
 
 ## Patterns
 

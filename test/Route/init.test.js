@@ -55,6 +55,18 @@ function run(steps) {
   })
 }
 
+// Runs a custom harness script in a project directory and parses what it prints.
+function runScript(dir, script) {
+  fs.writeFileSync(path.join(dir, 'harness.js'), script)
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, [path.join(dir, 'harness.js'), dir], {timeout: 20000}, (err, stdout, stderr) => {
+      fs.rmSync(dir, {recursive: true, force: true})
+      if (err) return reject(new Error(stderr || err.message))
+      resolve(JSON.parse(stdout))
+    })
+  })
+}
+
 describe('Route.init() hot reload', () => {
   it('keeps reloading after a middleware fails to load', async () => {
     const {results} = await run(`[
@@ -114,6 +126,77 @@ describe('Route.init() hot reload', () => {
        check: r => r.routes.www.get['/h'].cache()}
     ]`)
     expect(results).toEqual(['v1', 'v2'])
+  })
+
+  it('reloads a class at once and keeps the previous module when an edit fails to load', async () => {
+    const {results, errors} = await run(`[
+      {files: [['class/Shop.js', 'module.exports = {v: 1}'], ['class/Zed.js', 'module.exports = {v: 1}'], ['route/www.js', 'module.exports = () => {}']],
+       check: (r, Odac) => [Odac.Route.class.Shop.module.v, Odac.Route.class.Zed.module.v]},
+      {files: [['class/Shop.js', 'module.exports = ('], ['class/Zed.js', 'module.exports = {v: 2}'], ['route/www.js', "module.exports = Odac => Odac.Route.get('/a', () => 1)"]],
+       check: (r, Odac) => [Odac.Route.class.Shop.module.v, Odac.Route.class.Zed.module.v, !!r.routes.www.get['/a']]},
+      {files: [['class/Shop.js', 'module.exports = {v: 3}']],
+       check: (r, Odac) => Odac.Route.class.Shop.module.v}
+    ]`)
+    expect(results).toEqual([[1, 1], [1, 2, true], 3])
+    expect(errors.some(e => e.includes('Failed to load class') && e.includes('Shop.js'))).toBe(true)
+  })
+
+  it('queues one shared cycle behind the cycle in progress', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-'))
+    fs.mkdirSync(path.join(dir, 'route'))
+    fs.writeFileSync(path.join(dir, 'route/www.js'), 'module.exports = () => {}')
+    const script = `
+const fsPromises = require('fs').promises
+const readdir = fsPromises.readdir
+let cycles = 0
+fsPromises.readdir = (p, ...rest) => { if (String(p).endsWith('/route/')) cycles++; return readdir(p, ...rest) }
+const Route = require(${JSON.stringify(ROUTE)})
+global.__dir = process.argv[2]
+const route = new Route()
+global.Odac = {Route: route, Config: {debug: false}}
+;(async () => {
+  const order = []
+  const first = route.init().then(() => order.push(['first', cycles]))
+  const second = route.init().then(() => order.push(['second', cycles]))
+  const third = route.init().then(() => order.push(['third', cycles]))
+  await Promise.all([first, second, third])
+  route.stopCron()
+  process.stdout.write(JSON.stringify(order))
+})()
+`
+    const order = await runScript(dir, script)
+    expect(order).toEqual([
+      ['first', 1],
+      ['second', 2],
+      ['third', 2]
+    ])
+  })
+
+  it.each([
+    [true, true],
+    [false, false]
+  ])('debug %s: the /_odac/dev change stream is registered: %s', async (debug, expected) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'odac-route-'))
+    fs.mkdirSync(path.join(dir, 'route'))
+    fs.writeFileSync(path.join(dir, 'route/www.js'), 'module.exports = () => {}')
+    const registered = await runScript(
+      dir,
+      `
+const Route = require(${JSON.stringify(ROUTE)})
+global.__dir = process.argv[2]
+const route = new Route()
+global.Odac = {Route: route, Config: {debug: ${debug}}}
+;(async () => {
+  await route.init()
+  const found = !!route.routes._odac_internal?.get?.['/_odac/dev']
+  route.stopDevReload()
+  route.stopCron()
+  process.stdout.write(JSON.stringify(found))
+  process.exit(0)
+})()
+`
+    )
+    expect(registered).toBe(expected)
   })
 
   it('keeps the previous routes when a route file throws', async () => {

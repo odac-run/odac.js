@@ -500,6 +500,10 @@ describe('Navigation', () => {
 })
 ```
 
+## Live Reload During Development
+
+In debug mode, saving a view re-renders its part through this same navigation path, keeping the scroll position and without adding a history entry. Stylesheets are swapped in place, and skeleton or script changes reload the page. Because a refresh is a navigation, your `load` and `page` handlers run again: make them safe to run more than once, as navigation already requires. See [Live Reload in the Browser](../../backend/01-overview/03-development-server.md#live-reload-in-the-browser) for the full table.
+
 ## Best Practices
 
 1. **Error Handling**: Always handle failed requests
