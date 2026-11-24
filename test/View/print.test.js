@@ -288,6 +288,32 @@ describe('View.print()', () => {
     })
   })
 
+  describe('dev reload marker', () => {
+    let seq = 0
+    const render = async (debug, html = '<html lang="en"><body></body></html>') => {
+      const name = `devmark${++seq}`
+      await fs.mkdir(path.join(global.__dir, 'skeleton'), {recursive: true})
+      await fs.writeFile(path.join(global.__dir, 'skeleton', `${name}.html`), html)
+      mockOdac.Config.debug = debug
+      view.set({skeleton: name})
+      await view.print()
+      return mockOdac.Request.end.mock.calls[0][0]
+    }
+
+    it('marks the page for odac.js in debug mode', async () => {
+      expect(await render(true)).toMatch(/^<html lang="en" data-odac-skeleton="devmark\d+" data-odac-page="" data-odac-dev>/)
+    })
+
+    it('leaves production pages unmarked', async () => {
+      expect(await render(false)).not.toContain('data-odac-dev')
+    })
+
+    it('does not add the marker twice', async () => {
+      const html = await render(true, '<html data-odac-dev><body></body></html>')
+      expect(html.match(/data-odac-dev/g)).toHaveLength(1)
+    })
+  })
+
   describe('document language', () => {
     const headers = () => Object.fromEntries(mockOdac.Request.header.mock.calls.filter(call => call.length === 2))
     // Skeletons and compiled views are cached by path for the process; every test gets its own.

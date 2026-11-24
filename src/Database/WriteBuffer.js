@@ -62,6 +62,8 @@ const LOCK_TTL = 10
 const ATTEMPTS = '__odac_wb_attempts'
 // Checkpoint prefixes in Storage: counters, updates, queues, dead letters.
 const CHECKPOINT_PREFIXES = ['wb:c:', 'wb:u:', 'wb:q:', 'wb:d:']
+// Dead letters sent per rpush; far below the argument count that overflows the call stack.
+const DEAD_LETTER_CHUNK = 1000
 
 class WriteBuffer {
   constructor() {
@@ -274,6 +276,9 @@ class WriteBuffer {
    */
   async clearDeadLetters(connection, table) {
     const queueKey = `${connection}:${table}`
+    // Unindexed first: a letter pushed between the two steps is then either returned here or
+    // indexed again by its push. The other order could leave such a letter out of checkpoints.
+    await Odac.Ipc.srem('wb:idx:dlq', queueKey)
     const letters = await Odac.Ipc.lrangeAndDel(`wb:dlq:${queueKey}`)
     this._dropCheckpoint([`wb:d:${queueKey}`])
     return letters
@@ -282,20 +287,31 @@ class WriteBuffer {
   // Appends dead letters and keeps the newest maxDeadLetters. Why: rows the database keeps
   // rejecting (input that breaks a constraint) would otherwise grow the list, and with the
   // memory driver the primary's heap and every checkpoint, for as long as the app runs.
+  // Letters beyond the cap are dropped before they are sent, and the rest go in chunks: one
+  // rpush(...letters) of a large batch (a checkpoint written before the cap existed) overflows
+  // the call stack and would stop recovery at startup.
   async _pushDeadLetters(queueKey, letters) {
     if (letters.length === 0) return
     const key = `wb:dlq:${queueKey}`
-    const length = await Odac.Ipc.rpush(key, ...letters)
-    await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
     const max = this._config.maxDeadLetters
-    if (!(max > 0) || length <= max) return
-    await Odac.Ipc.ltrim(key, -max, -1)
+    const kept = max > 0 && letters.length > max ? letters.slice(-max) : letters
+    let length = 0
+    for (let i = 0; i < kept.length; i += DEAD_LETTER_CHUNK) {
+      length = await Odac.Ipc.rpush(key, ...kept.slice(i, i + DEAD_LETTER_CHUNK))
+    }
+    await Odac.Ipc.sadd('wb:idx:dlq', queueKey)
+    let dropped = letters.length - kept.length
+    if (max > 0 && length > max) {
+      await Odac.Ipc.ltrim(key, -max, -1)
+      dropped += length - max
+    }
+    if (dropped === 0) return
     console.error(
       JSON.stringify({
         level: 'WARN',
         message: 'WriteBuffer dropped the oldest dead letters',
         queue: queueKey,
-        dropped: length - max,
+        dropped,
         maxDeadLetters: max
       })
     )

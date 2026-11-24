@@ -397,23 +397,26 @@ class Auth {
 
   // An attempt is counted before its password is checked. Reading the counters first and
   // counting the failure after the check let concurrent requests all pass the limit while
-  // their scrypt checks were still running. Resolves false when the attempt is over the limit.
+  // their scrypt checks were still running. Each flag is true when that counter is within its limit.
   async #reserveLoginAttempt(throttle) {
     const [account, ip] = await Promise.all([
       Odac.Ipc.incrBy(throttle.account, 1, throttle.window),
       Odac.Ipc.incrBy(throttle.ip, 1, throttle.window)
     ])
-    return account <= throttle.maxAccount && ip <= throttle.maxIp
+    return {account: account <= throttle.maxAccount, ip: ip <= throttle.maxIp}
   }
 
   // Returns a reserved attempt that did not end as a wrong password (refused for the limit,
-  // a lookup that threw, or a success), so only failures fill the window. The ttl keeps the
-  // counter expiring even when the window ended between reserving and releasing.
-  async #releaseLoginAttempt(throttle, {success = false} = {}) {
-    await Promise.all([
-      success ? Odac.Ipc.del(throttle.account) : Odac.Ipc.incrBy(throttle.account, -1, throttle.window),
-      Odac.Ipc.incrBy(throttle.ip, -1, throttle.window)
-    ]).catch(() => {})
+  // a lookup that threw, or a success), so only failures fill the window. A refused attempt
+  // gives back only the counters still within their limit: a counter over it is full until its
+  // window ends anyway, and a give-back that lands after the window ended would cancel an attempt
+  // counted in the next one. Ipc never lets a late give-back open a window below zero.
+  async #releaseLoginAttempt(throttle, {success = false, account = true, ip = true} = {}) {
+    const releases = []
+    if (success) releases.push(Odac.Ipc.del(throttle.account))
+    else if (account) releases.push(Odac.Ipc.incrBy(throttle.account, -1, throttle.window))
+    if (ip) releases.push(Odac.Ipc.incrBy(throttle.ip, -1, throttle.window))
+    await Promise.all(releases).catch(() => {})
   }
 
   /**
@@ -494,8 +497,9 @@ class Auth {
     where = await Auth.#resolveCriteria(where)
     method ??= Auth.#hasSecret(where) ? 'password' : 'direct'
     const throttle = this.#loginThrottleKeys(where)
-    if (throttle && !(await this.#reserveLoginAttempt(throttle))) {
-      await this.#releaseLoginAttempt(throttle)
+    const within = throttle && (await this.#reserveLoginAttempt(throttle))
+    if (within && !(within.account && within.ip)) {
+      await this.#releaseLoginAttempt(throttle, within)
       await this.#loginFailed(where, method, 'throttled')
       return {success: false, reason: 'throttled'}
     }

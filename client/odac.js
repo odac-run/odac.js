@@ -124,6 +124,10 @@ if (typeof window !== 'undefined') {
     #formElementSelectors = new WeakMap()
     #loader = {elements: {}, callback: null, parts: {}}
     #isNavigating = false
+    // Scroll position a dev reload refresh restores; null for a normal navigation.
+    #keepScroll = null
+    // Dev reload refresh waiting for a navigation: true for every part, or a Set of part names.
+    #devQueued = null
     #pendingHash = ''
     #stackScripts = []
     #lazyObserver = null
@@ -137,6 +141,7 @@ if (typeof window !== 'undefined') {
       const ready = () => {
         this.#initForms()
         this.#initLazy()
+        this.#initDev()
       }
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', ready)
@@ -1104,6 +1109,16 @@ if (typeof window !== 'undefined') {
     }
 
     load(url, callback, push = true) {
+      return this.#navigate(url, callback, push, null)
+    }
+
+    /**
+     * Navigation behind load(), with the dev reload refresh mode.
+     * @param {string[]|null} refresh Parts to re-render in place: they are requested alone,
+     *   left out of X-Odac-Parts so the server renders them even though their view did not
+     *   change, and the scroll position is kept. null for a normal navigation.
+     */
+    #navigate(url, callback, push, refresh) {
       if (this.#isNavigating) return false
 
       const currentUrl = window.location.href
@@ -1144,6 +1159,11 @@ if (typeof window !== 'undefined') {
         if (!elements[partName]) elements[partName] = `[data-odac-navigate="${partName}"]`
       })
 
+      if (refresh) {
+        for (const key of Object.keys(elements)) if (!refresh.includes(key)) delete elements[key]
+        this.#keepScroll = {x: window.scrollX, y: window.scrollY}
+      }
+
       const elementsToUpdate = []
       for (const [key, selector] of Object.entries(elements)) {
         const element = document.querySelector(selector)
@@ -1152,6 +1172,7 @@ if (typeof window !== 'undefined') {
 
       // Build X-Odac-Parts header from current known parts
       const partsHeader = Object.entries(this.#loader.parts)
+        .filter(([k]) => !refresh || !refresh.includes(k))
         .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
         .join(',')
 
@@ -1241,12 +1262,12 @@ if (typeof window !== 'undefined') {
             })
             .catch(() => {
               this.#clearTransitionNames(document.querySelectorAll('[odac-transition]'))
-              this.#isNavigating = false
+              this.#navigationDone()
             })
         },
         error: () => {
           this.#clearTransitionNames(oldTransitionElements)
-          this.#isNavigating = false
+          this.#navigationDone()
           window.location.replace(url)
         }
       })
@@ -1328,7 +1349,7 @@ if (typeof window !== 'undefined') {
           })
         },
         error: () => {
-          this.#isNavigating = false
+          this.#navigationDone()
           window.location.replace(url)
         }
       })
@@ -1360,9 +1381,110 @@ if (typeof window !== 'undefined') {
           anchor = null
         }
       }
-      if (anchor) anchor.scrollIntoView({behavior: 'smooth'})
-      else window.scrollTo({top: 0, behavior: 'smooth'})
+      // A dev reload refresh re-renders the page the developer is looking at, where they are.
+      // A refresh queued behind this navigation reads the scroll position as soon as it starts:
+      // a smooth scroll would not have moved yet, and the refresh would restore the old page's.
+      const behavior = this.#devQueued ? 'instant' : 'smooth'
+      if (this.#keepScroll) window.scrollTo(this.#keepScroll.x, this.#keepScroll.y)
+      else if (anchor) anchor.scrollIntoView({behavior})
+      else window.scrollTo({top: 0, behavior})
+      this.#navigationDone()
+    }
+
+    // Ends the navigation in progress and runs a dev reload refresh that waited for it.
+    #navigationDone() {
       this.#isNavigating = false
+      this.#keepScroll = null
+      const queued = this.#devQueued
+      this.#devQueued = null
+      if (queued) this.#devRefresh(queued === true ? null : [...queued])
+    }
+
+    /**
+     * Connects to the debug-mode change stream when the server marked the page with it.
+     * Why: saved views, styles and code appear in the open tab without a manual refresh. An
+     * EventSource reconnects on its own; a reconnect after a lost connection means the server
+     * restarted (and may run new code), so the page reloads.
+     */
+    #initDev() {
+      if (typeof EventSource === 'undefined' || document.documentElement.dataset?.odacDev === undefined) return
+      let lost = false
+      const source = new EventSource('/_odac/dev')
+      source.onopen = () => {
+        if (lost) window.location.reload()
+      }
+      source.onerror = () => {
+        lost = true
+      }
+      source.onmessage = event => {
+        let change
+        try {
+          change = JSON.parse(event.data)
+        } catch {
+          return
+        }
+        if (change && typeof change === 'object') this.#devApply(change)
+      }
+    }
+
+    // Applies one dev reload message: {reload: true} or {css?: string[], parts?: string[]|'*'}.
+    #devApply(change) {
+      if (change.reload) {
+        window.location.reload()
+        return
+      }
+      if (Array.isArray(change.css)) this.#devSwapCss(change.css)
+      if (change.parts === '*') this.#devRefresh(null)
+      else if (Array.isArray(change.parts) && change.parts.length > 0) this.#devRefresh(change.parts)
+    }
+
+    /**
+     * Swaps the stylesheets whose files changed without touching the page.
+     * Why: a new <link> is loaded beside the old one and the old one removed only once the new
+     * one applies, so the page never shows unstyled for a frame.
+     */
+    #devSwapCss(paths) {
+      const wanted = new Set(paths)
+      document.querySelectorAll('link[rel="stylesheet"][href]').forEach(link => {
+        let url
+        try {
+          url = new URL(link.getAttribute('href'), window.location.href)
+        } catch {
+          return
+        }
+        if (url.origin !== window.location.origin || !wanted.has(url.pathname)) return
+        url.searchParams.set('_odac_dev', Date.now().toString(36))
+        const next = link.cloneNode(false)
+        next.setAttribute('href', url.pathname + url.search)
+        next.addEventListener('load', () => link.remove(), {once: true})
+        next.addEventListener('error', () => next.remove(), {once: true})
+        link.after(next)
+      })
+    }
+
+    /**
+     * Re-renders changed parts of the current page in place.
+     * @param {string[]|null} parts Changed part names; null when any part may have changed.
+     * Parts the page does not show fall back to all of its parts, and a page without
+     * navigable parts reloads. A refresh during a navigation waits for it to finish.
+     */
+    #devRefresh(parts) {
+      if (this.#isNavigating) {
+        if (parts === null || this.#devQueued === true) this.#devQueued = true
+        else this.#devQueued = new Set([...(this.#devQueued ?? []), ...parts])
+        return
+      }
+
+      const keys = new Set(Object.keys(this.#loader.elements))
+      document.querySelectorAll('[data-odac-navigate]').forEach(el => keys.add(el.getAttribute('data-odac-navigate')))
+      if (keys.size === 0) {
+        window.location.reload()
+        return
+      }
+
+      let refresh = parts ? parts.filter(part => keys.has(part)) : []
+      if (refresh.length === 0) refresh = [...keys]
+      this.#navigate(window.location.pathname + window.location.search, null, false, refresh)
     }
 
     /**

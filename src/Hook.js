@@ -41,7 +41,7 @@ class Hook {
 
       const {mtimeMs: mtime} = await fsPromises.stat(filePath)
       const current = Hook.#modules[name]
-      if (current && current.path === filePath && current.mtime >= mtime - 1000) continue
+      if (current && current.path === filePath && current.mtime >= mtime) continue
 
       if (!EVENTS[name]) {
         Hook.#modules[name] = {path: filePath, mtime, handlers: {}}

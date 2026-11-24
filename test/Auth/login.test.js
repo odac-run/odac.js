@@ -136,6 +136,16 @@ describe('Auth.login() throttling', () => {
     expect(store.get('auth:login:ip:203.0.113.9')).toBe(5)
   })
 
+  it('gives back only the counters a refused attempt did not exceed', async () => {
+    for (let i = 0; i < 5; i++) await fail()
+    for (let i = 0; i < 3; i++) await fail()
+
+    // The account window is full until it ends; giving back there could land in the next window.
+    const accountKey = [...store.keys()].find(key => key.startsWith('auth:login:account:') && !key.endsWith('#ttl'))
+    expect(store.get(accountKey)).toBe(8)
+    expect(store.get('auth:login:ip:203.0.113.9')).toBe(5)
+  })
+
   it('does not count a successful login against the IP limit', async () => {
     for (let i = 0; i < 3; i++) await fail(makeAuth(), `user${i}@example.com`)
     await expect(makeAuth().login({email: 'a@example.com', password: 's3cret'})).resolves.toBe(true)

@@ -18,6 +18,29 @@ npx odac dev
 - Starts the Node.js server (default port `1071`).
 - **Zero-Config Tailwind:** Automatically watches and compiles your classes.
 - **Watch Mode:** Recompiles CSS instantly when you change files.
+- **Hot reload:** Routes, controllers, classes, middleware and hooks are reloaded as soon as you save them, without a restart.
+- **Live reload:** Open browser tabs update themselves when you save (see below).
+
+### Live Reload in the Browser
+
+In debug mode (any run where `NODE_ENV` is not `production`), every page rendered from a skeleton listens for your saves and updates itself. Nothing needs to be configured. The page does the least it has to:
+
+| You save | The open page |
+|----------|---------------|
+| A stylesheet (Tailwind output in `public/**/*.css`) | Swaps the stylesheet in place. No reload; scroll, form input and state stay. |
+| A part's view (`view/content/…`, `view/header/…`, …) | Re-renders **only that part** through AJAX navigation. Other parts stay untouched. |
+| A shared view (`view/components/…`, a file directly in `view/`) | Re-renders every part of the page. |
+| A route, controller, class, middleware or hook | Reloads the code on the server first, then re-renders every part. |
+| A skeleton (`skeleton/…`) | Reloads the page. |
+| A compiled script (`public/**/*.js`) or another public file | Reloads the page. |
+
+Part refreshes keep the scroll position and do not add a history entry. `Odac.action({load})` and `page` handlers run again after a refresh, as they do after every navigation, so write them to run more than once. A page without navigable parts reloads instead. If the server restarts, open tabs reload once it is back.
+
+`view/css/`, `view/js/` and `view/mail/` are not watched directly: their compiled output in `public/` is (mail templates are not shown in pages). Saved language files appear on the next navigation.
+
+**How it works:** the server watches the project with `fs.watch` and pushes each change to open tabs over a Server-Sent Events stream at `/_odac/dev`. Bursts of saves within 100 ms become one update. Only part names and public stylesheet URLs are sent, never server file paths. The stream and the `data-odac-dev` marker on `<html>` exist only in debug mode; production (`odac start`) has neither, and the route is not registered.
+
+Where `fs.watch` reports nothing (some network or VM mounts), the server still picks up code changes within 5 seconds, but the browser is not notified; refresh it yourself.
 
 ### Production Build (`build`)
 

@@ -102,6 +102,27 @@ describe('Ipc - incrBy()', () => {
     }
   })
 
+  it('does not open a window below zero when a give-back arrives after it ended', async () => {
+    jest.useFakeTimers({now: 5_000_000, doNotFake: ['nextTick', 'setImmediate']})
+    try {
+      await Ipc.incrBy('counter:late', 1, 60)
+      jest.setSystemTime(5_000_000 + 61_000)
+      expect(await Ipc.incrBy('counter:late', -1, 60)).toBe(0)
+      expect(await Ipc.get('counter:late')).toBeNull()
+      expect(await Ipc.incrBy('counter:late', 1, 60)).toBe(1)
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
+  it('removes a windowed counter that reaches zero', async () => {
+    await Ipc.incrBy('counter:zero', 1, 60)
+    expect(await Ipc.incrBy('counter:zero', -1, 60)).toBe(0)
+    expect(await Ipc.get('counter:zero')).toBeNull()
+    expect(await Ipc.incrBy('counter:missing', -1, 60)).toBe(0)
+    expect(await Ipc.get('counter:missing')).toBeNull()
+  })
+
   it('keeps counters without a ttl forever', async () => {
     jest.useFakeTimers({now: 3_000_000, doNotFake: ['nextTick', 'setImmediate']})
     try {

@@ -23,6 +23,7 @@ ODAC provides a built-in, Zero-Config frontend asset pipeline powered by **esbui
     *   Watches all scripts in `view/js/` for instant sub-millisecond rebuilds.
     *   Source maps are always enabled to facilitate easy debugging.
     *   No minification or obfuscation is applied.
+    *   A rebuilt bundle reloads open tabs automatically (dev live reload); a rebuilt Tailwind stylesheet is swapped in place without a reload.
 *   **Production (`npm run build` / `odac build`)**:
     *   Enables full bundling, minification, and tree-shaking.
     *   Applies configured obfuscation levels.

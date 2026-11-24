@@ -66,6 +66,12 @@ module.exports = User;
 -   **Separation**: Keep controllers focused on request/response; move all data processing and business logic to the `class/` directory.
 -   **Splitting large services**: Since subfolders aren't scanned, keep the loadable class file at the root of `class/` and `require()` submodules from a subfolder inside it (plain Node.js `require`, not auto-loading) — e.g. `class/Billing.js` requiring `./billing/invoiceHelpers.js`.
 
+## Development: Hot Reload and Live Reload
+-   In debug mode (`NODE_ENV` not `production`, i.e. `odac dev`), saved route, controller, class, middleware and hook files reload at once without a restart (a 5 s poll backs up file systems where `fs.watch` is silent). A file that fails to load (half-saved) keeps its previous version and logs the error; the next save retries.
+-   Open tabs update themselves on save: CSS output is swapped in place, a saved part view (`view/<part>/…`) re-renders only that part, shared views and server code re-render every part, skeletons and `public/**/*.js` reload the page. The stream is `/_odac/dev` (SSE), marked on `<html>` with `data-odac-dev`; both exist only in debug mode.
+-   Never add a live-reload library, browser-sync, nodemon or a custom file watcher to an ODAC app, and never hand-write an `EventSource` to `/_odac/dev`. Do not define a route at `/_odac/dev`.
+-   Only top-level `class/` files are reloaded; a submodule a class `require()`s from a subfolder stays cached until restart.
+
 ## Runtime: TCP Port and Proxy Socket
 -   The app always listens on its TCP port (`PORT`, default `1071`). On an ODAC server, bridge apps also get `ODAC_PROXY_SOCKET` (e.g. `/odac-proxy/http.sock`); the framework then serves the same app on that unix socket too. The server sets it automatically; never set or hard-code it in app code, and never open your own listener for it.
 -   TCP remains the fallback: a socket that cannot be created is logged and the app keeps serving TCP. Operators disable sockets server-wide with `ODAC_BACKEND_SOCKETS=off`. Under ODAC (`ODAC_APP=true`) the primary prints `⚡ Turbo Mode` once when the socket is live; its absence means the app is on TCP only. Graceful shutdown removes the socket file only if nothing still answers on it, so an instance that already took over the path keeps serving.

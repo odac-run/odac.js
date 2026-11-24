@@ -16,9 +16,12 @@ function sendToWorker(worker, message) {
 }
 
 // INCRBYFLOAT and its window expiry in one atomic step. TTL -1 means the key has no expiry: a new
-// key, or one left without it.
+// key, or one left without it. A window count never goes below zero: a negative delta does not
+// create the key (its window already ended) and a count that reaches zero is removed.
 const INCR_WITH_TTL =
+  "if tonumber(ARGV[1]) < 0 and redis.call('EXISTS', KEYS[1]) == 0 then return 0 end " +
   "local v = redis.call('INCRBYFLOAT', KEYS[1], ARGV[1]) " +
+  "if tonumber(v) <= 0 then redis.call('DEL', KEYS[1]) return 0 end " +
   "if redis.call('TTL', KEYS[1]) == -1 then redis.call('EXPIRE', KEYS[1], ARGV[2]) end " +
   'return v'
 
@@ -97,6 +100,11 @@ class Ipc extends EventEmitter {
    * not extended by later increments, so short-lived counters (rate limits) clean themselves up
    * instead of accumulating one key per client forever. A counter found without an expiry gets
    * one, so a key left behind without it (e.g. by an older version) still expires.
+   *
+   * A windowed counter never goes below zero. A negative delta on a missing or expired key
+   * returns 0 without creating it, and a count that reaches zero is removed. Why: a caller that
+   * gives back an increment (a login attempt that was not a failure) can do so after the window
+   * ended; created anew, the key would start the next window below zero and grant extra hits.
    *
    * On Redis the increment and the expiry run as one script: as two commands, a crash or a
    * failed EXPIRE between them left a counter that never expired, which turned a login
@@ -644,13 +652,23 @@ class Ipc extends EventEmitter {
 
       // --- Atomic Counter ---
       case 'incrBy': {
+        const windowed = msg.ttl > 0
         let data = this._memoryStore.get(msg.key)
         if (!data || (data.expireAt !== Infinity && Date.now() > data.expireAt)) {
+          // Same rules as the Redis script: a give-back never opens a window below zero.
+          if (windowed && msg.delta < 0) {
+            this._memoryStore.delete(msg.key)
+            return 0
+          }
           data = {value: 0, expireAt: Infinity}
         }
-        // Same rule as the Redis script: a counter without an expiry gets the window's.
-        if (msg.ttl > 0 && data.expireAt === Infinity) data.expireAt = Date.now() + msg.ttl * 1000
+        // A counter without an expiry gets the window's.
+        if (windowed && data.expireAt === Infinity) data.expireAt = Date.now() + msg.ttl * 1000
         data.value = (typeof data.value === 'number' ? data.value : 0) + msg.delta
+        if (windowed && data.value <= 0) {
+          this._memoryStore.delete(msg.key)
+          return 0
+        }
         this._memoryStore.set(msg.key, data)
         return data.value
       }

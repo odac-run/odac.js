@@ -490,8 +490,8 @@ class View {
     return skeleton
   }
 
-  // Per-request attributes on <html>: the served language and direction, and the skeleton,
-  // page and parts the client diffs against. A declared language replaces the skeleton's own
+  // Per-request attributes on <html>: the served language and direction, the skeleton, page
+  // and parts the client diffs against, and the dev reload flag. A declared language replaces the skeleton's own
   // lang/dir, which is a fixed value (`lang="en"` in new projects) that would mislabel every
   // other language.
   #annotateHtmlTag(skeleton, served) {
@@ -506,6 +506,10 @@ class View {
       }
       if (!attrs.includes('data-odac-page')) {
         updates.push(`data-odac-page="${pageName}"`)
+      }
+      // Tells odac.js to listen for dev reload changes; the endpoint exists only in debug mode.
+      if (this.#odac.Config?.debug && !attrs.includes('data-odac-dev')) {
+        updates.push('data-odac-dev')
       }
 
       // Embed current parts manifest for client-side diffing on first load

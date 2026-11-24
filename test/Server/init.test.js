@@ -85,7 +85,7 @@ describe('Server.init()', () => {
       const track = name => jest.fn(async () => order.push(name))
       global.Odac = {
         Config: {debug: true},
-        Route: {stopCron: jest.fn()},
+        Route: {stopCron: jest.fn(), stopDevReload: jest.fn()},
         Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn(() => order.push('storage'))},
         Ipc: {close: track('ipc')},
         Database: {close: track('database')}
@@ -150,7 +150,7 @@ describe('Server.init()', () => {
       http.createServer.mockReturnValue(server)
       global.Odac = {
         Config: {debug: true},
-        Route: {wsServer: {closeAll: jest.fn()}},
+        Route: {wsServer: {closeAll: jest.fn()}, stopDevReload: jest.fn()},
         Ipc: {close: jest.fn(async () => {})},
         Database: {close: jest.fn(async () => {})},
         Storage: {close: jest.fn(async () => {})}
@@ -279,7 +279,7 @@ describe('Server.init()', () => {
       cluster.fork.mockImplementation(() => ({id: nextId++}))
       global.Odac = {
         Config: {debug: true},
-        Route: {stopCron: jest.fn()},
+        Route: {stopCron: jest.fn(), stopDevReload: jest.fn()},
         Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn()},
         Ipc: {close: jest.fn(async () => {})},
         Database: {close: jest.fn(async () => {})}
@@ -453,7 +453,7 @@ describe('Server.init()', () => {
       cluster.fork.mockImplementation(() => ({id: 1}))
       global.Odac = {
         Config: {debug: true},
-        Route: {stopCron: jest.fn()},
+        Route: {stopCron: jest.fn(), stopDevReload: jest.fn()},
         Storage: {startSessionGC: jest.fn(), stopSessionGC: jest.fn(), close: jest.fn()},
         Ipc: {close: jest.fn(async () => {})},
         Database: {close: jest.fn(async () => {})}
@@ -633,7 +633,7 @@ describe('Server.init()', () => {
       global.Odac = {
         Config: {debug: true},
         instance: jest.fn(() => ({})),
-        Route: {request: jest.fn(), handleWebSocketUpgrade: jest.fn(), wsServer: {closeAll: jest.fn()}},
+        Route: {request: jest.fn(), handleWebSocketUpgrade: jest.fn(), wsServer: {closeAll: jest.fn()}, stopDevReload: jest.fn()},
         Ipc: {close: jest.fn(async () => {})},
         Database: {close: jest.fn(async () => {})},
         Storage: {close: jest.fn(async () => {})}

@@ -101,13 +101,13 @@ let offset = 0
 ;(async () => {
   const results = []
   for (const step of steps) {
-    for (const [name, content] of step.files) {
+    for (const [name, content, at] of step.files) {
       const file = path.join(hookDir, name)
       fs.mkdirSync(hookDir, {recursive: true})
       if (content === null) fs.rmSync(file)
       else {
         fs.writeFileSync(file, content)
-        const time = new Date(Date.now() + offset * 1000)
+        const time = new Date(Date.now() + (at ?? offset) * 1000)
         fs.utimesSync(file, time, time)
       }
     }
@@ -163,6 +163,19 @@ let offset = 0
       {has: false, failed: true, value: null},
       {has: true, failed: false, value: 'v1'},
       {has: false, failed: false, value: null}
+    ])
+  })
+
+  it('loads a fix saved within a second of the broken save', async () => {
+    // A formatter rewriting the file right after the editor saved it, for example.
+    const {results} = await run([
+      {files: [['auth.js', 'module.exports = {login: (', 0]]},
+      {files: [['auth.js', "module.exports = {login: () => 'v1'}", 0.3]]}
+    ])
+
+    expect(results).toEqual([
+      {has: false, failed: true, value: null},
+      {has: true, failed: false, value: 'v1'}
     ])
   })
 })

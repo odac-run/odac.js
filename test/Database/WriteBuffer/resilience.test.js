@@ -113,6 +113,30 @@ describe('WriteBuffer - poison rows', () => {
     expect(cleared.map(letter => letter.row)).toEqual([{type: null}])
     expect(await WriteBuffer.deadLetters('default', 'events')).toEqual([])
     expect(storageData.has('wb:d:default:events')).toBe(false)
+    expect(await Ipc.smembers('wb:idx:dlq')).not.toContain('default:events')
+  })
+
+  it('recovers a checkpoint with more dead letters than one call can take as arguments', async () => {
+    WriteBuffer._config.maxDeadLetters = 0
+    const letters = Array.from({length: 200_000}, (_, id) => ({row: {id}, error: 'x', at: 0}))
+    storageData.set('wb:d:default:events', letters)
+
+    await WriteBuffer._recoverFromCheckpoint()
+
+    expect(await Ipc.llen('wb:dlq:default:events')).toBe(200_000)
+  })
+
+  it('drops the letters over maxDeadLetters before sending them', async () => {
+    WriteBuffer._config.maxDeadLetters = 3
+    const rpush = jest.spyOn(Ipc, 'rpush')
+    const letters = Array.from({length: 10}, (_, id) => ({row: {id}, error: 'x', at: 0}))
+
+    await WriteBuffer._pushDeadLetters('default:events', letters)
+
+    expect(rpush.mock.calls.map(call => call.length - 1)).toEqual([3])
+    const dead = await WriteBuffer.deadLetters('default', 'events')
+    expect(dead.map(letter => letter.row.id)).toEqual([7, 8, 9])
+    expect(console.error.mock.calls.flat().join('\n')).toContain('"dropped":7')
   })
 
   it('does not use up attempts while the database is unreachable', async () => {
