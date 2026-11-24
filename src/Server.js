@@ -183,6 +183,7 @@ module.exports = {
 
         // Phase 1: Stop schedulers so no new work is queued
         Odac.Route.stopCron()
+        Odac.Route.stopDevReload()
         Odac.Storage.stopSessionGC()
 
         // Phase 2: Gracefully drain all workers
@@ -390,6 +391,7 @@ module.exports = {
         for (const s of servers) s.close(onClosed)
         for (const s of servers) s.closeIdleConnections?.()
         Odac.Route.wsServer.closeAll(1001, 'Server shutting down')
+        Odac.Route.stopDevReload()
         Stream.closeAll()
       }
 

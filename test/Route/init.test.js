@@ -5,8 +5,8 @@ const path = require('path')
 
 // Hot reload (debug mode) re-runs Route.init()'s loader every 5 s and relies on require.cache,
 // which Jest's module registry ignores. Each scenario therefore runs in a plain Node process:
-// init() is called once per step (it runs the same loader) and file mtimes are moved past the
-// 1 s change threshold between steps.
+// init() is called once per step (it runs the same loader) and file mtimes are moved 5 s ahead
+// between steps unless a step gives its own offset.
 
 const ROUTE = path.resolve(__dirname, '../../src/Route.js')
 
@@ -139,6 +139,32 @@ describe('Route.init() hot reload', () => {
     ]`)
     expect(results).toEqual([[1, 1], [1, 2, true], 3])
     expect(errors.some(e => e.includes('Failed to load class') && e.includes('Shop.js'))).toBe(true)
+  })
+
+  it('reloads middleware and route files saved again within a second', async () => {
+    const {results} = await run(`[
+      {files: [['middleware/mw.js', 'module.exports = () => 1', 0], ['route/www.js', "module.exports = Odac => Odac.Route.get('/a', () => 1)", 0]],
+       check: r => [r.middlewares.mw.handler(), !!r.routes.www.get['/a'], !!r.routes.www.get['/b']]},
+      {files: [['middleware/mw.js', 'module.exports = () => 2', 0.3], ['route/www.js', "module.exports = Odac => Odac.Route.get('/b', () => 1)", 0.3]],
+       check: r => [r.middlewares.mw.handler(), !!r.routes.www.get['/a'], !!r.routes.www.get['/b']]}
+    ]`)
+    expect(results).toEqual([
+      [1, true, false],
+      [2, false, true]
+    ])
+  })
+
+  it('does not retry a class that failed on its first load until it is saved again', async () => {
+    const {results, errors} = await run(`[
+      {files: [['class/Shop.js', 'module.exports = ('], ['route/www.js', 'module.exports = () => {}']],
+       check: (r, Odac) => !!Odac.Route.class.Shop},
+      {files: [],
+       check: (r, Odac) => !!Odac.Route.class.Shop},
+      {files: [['class/Shop.js', 'module.exports = {v: 1}']],
+       check: (r, Odac) => Odac.Route.class.Shop.module.v}
+    ]`)
+    expect(results).toEqual([false, false, 1])
+    expect(errors.filter(e => e.includes('Failed to load class'))).toHaveLength(1)
   })
 
   it('queues one shared cycle behind the cycle in progress', async () => {

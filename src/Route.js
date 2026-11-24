@@ -55,6 +55,10 @@ class Route {
   #cycle = null
   #queuedCycle = null
   #devReload = null
+  #reloadTimer = null
+  // mtime of a file that failed to load before any version of it loaded, so the same broken
+  // save is not retried (and logged) every cycle.
+  #failedLoads = new Map()
   #wsServer = new WebSocketServer()
   #configCache = {}
   #paramIndex = {}
@@ -509,18 +513,25 @@ class Route {
       if (!file.endsWith('.js')) continue
       const name = file.replace('.js', '')
       const path = `${middlewareDir}${file}`
-      const stat = await fsPromises.stat(path)
-      const mtime = stat.mtimeMs
-
-      if (this.middlewares[name] && this.middlewares[name].mtime >= mtime - 1000) continue
-
-      delete require.cache[require.resolve(path)]
+      let stat
       try {
+        stat = await fsPromises.stat(path)
+      } catch {
+        continue
+      }
+      const mtime = stat.mtimeMs
+      const loaded = this.middlewares[name]
+      if ((loaded?.mtime ?? this.#failedLoads.get(path)) >= mtime) continue
+
+      try {
+        delete require.cache[require.resolve(path)]
         this.middlewares[name] = {path, mtime, handler: require(path)}
+        this.#failedLoads.delete(path)
       } catch (err) {
         // A file saved mid-edit must not stop hot reload; the previous handler stays until
         // the file loads again (mtime is recorded so the same broken save is not retried).
-        if (this.middlewares[name]) this.middlewares[name].mtime = mtime
+        if (loaded) loaded.mtime = mtime
+        else this.#failedLoads.set(path, mtime)
         console.error(`\x1b[31m[Odac]\x1b[0m Failed to load middleware: \x1b[33m${path}\x1b[0m`)
         console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
       }
@@ -618,13 +629,17 @@ class Route {
         continue
       }
       const loaded = Odac.Route.class[name]
-      if (loaded && loaded.mtime >= stat.mtimeMs) continue
+      if ((loaded?.mtime ?? this.#failedLoads.get(filePath)) >= stat.mtimeMs) continue
 
-      delete require.cache[require.resolve(filePath)]
+      // Inside the try: an editor that saves by replacing the file can remove it between
+      // stat() and require.resolve().
       try {
+        delete require.cache[require.resolve(filePath)]
         Odac.Route.class[name] = {path: filePath, mtime: stat.mtimeMs, module: require(filePath)}
+        this.#failedLoads.delete(filePath)
       } catch (err) {
         if (loaded) loaded.mtime = stat.mtimeMs
+        else this.#failedLoads.set(filePath, stat.mtimeMs)
         console.error(`\x1b[31m[Odac]\x1b[0m Failed to load class: \x1b[33m${filePath}\x1b[0m`)
         console.error(`\x1b[31m[Odac]\x1b[0m ${err.message}`)
       }
@@ -641,7 +656,7 @@ class Route {
     const name = file.replace('.js', '')
     const stat = await fsPromises.stat(filePath)
     const mtime = stat.mtimeMs
-    if (routes2[name] && routes2[name] >= mtime - 1000) return
+    if (routes2[name] && routes2[name] >= mtime) return
 
     Odac.Route.buff = name
     delete require.cache[require.resolve(filePath)]
@@ -718,16 +733,19 @@ class Route {
     if (Odac.Config.debug) {
       this.#devReload = new DevReload({root: __dir, reload: () => this.#init()})
       this.#devReload.start()
-      setInterval(() => this.#init(), 5000)
+      this.#reloadTimer = setInterval(() => this.#init(), 5000)
+      this.#reloadTimer.unref?.()
     }
     this.#registerInternalRoutes()
   }
 
   /**
-   * Stops the debug-mode file watcher and ends its browser connections.
-   * Why: lets shutdown and tests release the watcher handles and open event streams.
+   * Stops the debug-mode file watcher and 5 s poll and ends its browser connections.
+   * Why: lets shutdown and tests release the watcher handles, the timer and open event streams.
    */
   stopDevReload() {
+    clearInterval(this.#reloadTimer)
+    this.#reloadTimer = null
     this.#devReload?.stop()
     this.#devReload = null
   }

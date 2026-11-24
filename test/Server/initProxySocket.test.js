@@ -117,6 +117,7 @@ describe('Server.init() with ODAC_PROXY_SOCKET', () => {
         routes: {www: {}},
         request: (req, res) => res.end(JSON.stringify(describeRequest(req))),
         handleWebSocketUpgrade: (req, socket, head, param) => wsServer.handleUpgrade(req, socket, head, param),
+        stopDevReload: jest.fn(),
         wsServer
       },
       instance: (id, req) => ({Request: new OdacRequest(id, req, null, {})}),
