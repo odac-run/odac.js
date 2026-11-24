@@ -248,8 +248,9 @@ describe('odac.js dev reload', () => {
       expect(xhrs).toHaveLength(1)
 
       respond(xhrs[0], {output: {header: 'h', content: 'about'}, parts: {header: 'main', content: 'about'}})
-      // A normal navigation still goes to the top of the page.
-      expect(win.scrollTo).toHaveBeenCalledWith({top: 0, behavior: 'smooth'})
+      // A normal navigation still goes to the top of the page, at once, so the queued refresh
+      // keeps the new page's position instead of the old one's.
+      expect(win.scrollTo).toHaveBeenCalledWith({top: 0, behavior: 'instant'})
       expect(xhrs).toHaveLength(2)
       expect(xhrs[1].headers['X-Odac-Load']).toBe('header,content')
       expect(xhrs[1].headers['X-Odac-Parts']).toBeUndefined()

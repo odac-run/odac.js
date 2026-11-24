@@ -1382,9 +1382,12 @@ if (typeof window !== 'undefined') {
         }
       }
       // A dev reload refresh re-renders the page the developer is looking at, where they are.
+      // A refresh queued behind this navigation reads the scroll position as soon as it starts:
+      // a smooth scroll would not have moved yet, and the refresh would restore the old page's.
+      const behavior = this.#devQueued ? 'instant' : 'smooth'
       if (this.#keepScroll) window.scrollTo(this.#keepScroll.x, this.#keepScroll.y)
-      else if (anchor) anchor.scrollIntoView({behavior: 'smooth'})
-      else window.scrollTo({top: 0, behavior: 'smooth'})
+      else if (anchor) anchor.scrollIntoView({behavior})
+      else window.scrollTo({top: 0, behavior})
       this.#navigationDone()
     }
 
