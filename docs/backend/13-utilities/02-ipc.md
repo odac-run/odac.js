@@ -121,6 +121,8 @@ const attempts = await Odac.Ipc.incrBy(`signup:${Odac.Request.ip}`, 1, 3600)
 if (attempts > 10) return Odac.Request.abort(429)
 ```
 
+A windowed counter never goes below zero. A negative delta on a counter that does not exist (or whose window has ended) returns `0` without creating it, and a counter that reaches `0` is removed. Giving back a hit — for example an attempt that turned out not to count — is therefore safe even when the window ended in between: it can never start the next window below zero and grant extra hits.
+
 ---
 
 ### Hash Maps

@@ -44,6 +44,9 @@ await Odac.Ipc.decrBy('page:views', 2)    // → 4
 // Fixed window: ttl (seconds) is set when the counter is created, never extended.
 // Atomic with the increment on Redis, so a window can never become permanent.
 await Odac.Ipc.incrBy(`signup:${Odac.Request.ip}`, 1, 3600)
+// A windowed counter never goes below zero: a negative delta on a missing/expired key returns 0
+// without creating it, and a count that reaches 0 is removed. Giving back a hit late is safe.
+await Odac.Ipc.incrBy(`signup:${Odac.Request.ip}`, -1, 3600)
 
 // Read current value
 const views = await Odac.Ipc.get('page:views')  // → 4

@@ -8,8 +8,13 @@ const mockClient = {
   connect: jest.fn().mockResolvedValue(undefined),
   duplicate: jest.fn(() => ({connect: jest.fn().mockResolvedValue(undefined), quit: jest.fn().mockResolvedValue(undefined)})),
   eval: jest.fn(async (script, {keys: [key], arguments: [delta, ttl]}) => {
+    if (Number(delta) < 0 && !store.has(key)) return 0
     const entry = store.get(key) ?? {value: 0, ttl: -1}
     entry.value += Number(delta)
+    if (entry.value <= 0) {
+      store.delete(key)
+      return 0
+    }
     if (entry.ttl === -1) entry.ttl = Number(ttl)
     store.set(key, entry)
     return String(entry.value)
@@ -59,8 +64,17 @@ describe('Ipc redis - incrBy()', () => {
   })
 
   it('keeps the window on a negative delta', async () => {
-    await expect(Ipc.incrBy('rate', -1, 60)).resolves.toBe(-1)
-    expect(store.get('rate').ttl).toBe(60)
+    store.set('rate', {value: 3, ttl: 42})
+    await expect(Ipc.incrBy('rate', -1, 60)).resolves.toBe(2)
+    expect(store.get('rate').ttl).toBe(42)
+  })
+
+  it('never lets a negative delta open a window below zero', async () => {
+    await expect(Ipc.incrBy('rate', -1, 60)).resolves.toBe(0)
+    expect(store.has('rate')).toBe(false)
+    const script = mockClient.eval.mock.calls[0][0]
+    expect(script).toContain("redis.call('EXISTS', KEYS[1]) == 0 then return 0")
+    expect(script).toContain("redis.call('DEL', KEYS[1])")
   })
 
   it('never sets an expiry without a ttl', async () => {
