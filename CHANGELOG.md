@@ -1,3 +1,20 @@
+### ✨ What's New
+
+- **dev:** live reload open tabs on save
+
+### 🛠️ Fixes & Improvements
+
+- **auth:** keep a late login-attempt give-back out of the next window
+- **client:** keep the new page's scroll for a refresh queued behind a navigation
+- **database:** cap dead letters before sending them and unindex cleared tables
+- **dev:** reload files saved again within a second
+
+
+
+---
+
+Powered by [⚡ ODAC](https://odac.run)
+
 ### 🛠️ Fixes & Improvements
 
 - **auth:** refuse sign-ins when hook/auth.js fails to load
