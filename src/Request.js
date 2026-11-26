@@ -47,13 +47,18 @@ const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/
 // application/json and structured-syntax suffixes such as application/vnd.api+json.
 const JSON_CONTENT_TYPE = /^application\/(?:[\w.-]+\+)?json\s*(?:;|$)/i
 
+// Shared immutable zero-length buffer returned for empty non-multipart bodies.
+const EMPTY_BUFFER = Buffer.alloc(0)
+
 class OdacRequest {
   #odac
   #complete = false
   #cookies = {data: {}, sent: []}
   data = {post: {}, get: {}, url: {}}
   #files = {}
+  #isMultipart = false
   #multipartPending = false
+  #rawBody = null
   #activeWrites = new Set()
   #cleanedUp = false
   #event = {data: [], end: []}
@@ -240,6 +245,7 @@ class OdacRequest {
     if (contentType.startsWith('multipart/form-data')) {
       // Parsed on first request()/file() call, so a multipart body sent to a URL with no
       // route, or to a handler that never reads it, is never written to disk.
+      this.#isMultipart = true
       this.#multipartPending = true
       return
     }
@@ -255,6 +261,7 @@ class OdacRequest {
       const maxBodySize = global.Odac.Config.request.maxBodySize
       if (received > maxBodySize) {
         chunks.length = 0
+        this.#rawBody = null
         this.status(413)
         this.end()
         this.req.removeAllListeners('data')
@@ -271,9 +278,14 @@ class OdacRequest {
 
     this.req.on('end', () => {
       if (this.#complete) return
-      if (received === 0) return this.#finish()
-      const body = Buffer.concat(chunks, received).toString('utf8')
+      if (received === 0) {
+        if (!this.#cleanedUp) this.#rawBody = EMPTY_BUFFER
+        return this.#finish()
+      }
+      const raw = Buffer.concat(chunks, received)
       chunks.length = 0
+      if (!this.#cleanedUp) this.#rawBody = raw
+      const body = raw.toString('utf8')
       // The body's own shape is not trusted to pick the parser: only a declared JSON media
       // type is parsed as JSON, so a text/plain form cannot smuggle a JSON payload in.
       if (JSON_CONTENT_TYPE.test(contentType)) {
@@ -523,6 +535,7 @@ class OdacRequest {
   #cleanupFiles() {
     if (this.#cleanedUp) return
     this.#cleanedUp = true
+    this.#rawBody = null
 
     for (const active of this.#activeWrites) {
       active.writeStream.destroy()
@@ -603,6 +616,36 @@ class OdacRequest {
   // - HAS EARLY HINTS
   hasEarlyHints() {
     return this.#earlyHints !== null && this.#earlyHints.length > 0
+  }
+
+  /**
+   * Returns the raw, unmodified request body once the stream has completed.
+   *
+   * Why: webhook signature verification (HMAC-SHA256 for Stripe, GitHub, etc.)
+   * and non-JSON/form payloads require the exact wire bytes before parsing;
+   * re-serializing parsed objects changes key order and whitespace, breaking
+   * signatures. Returns a Buffer by default to avoid UTF-8 decoding overhead
+   * and byte corruption, or a decoded string when `encoding` is specified.
+   * Returns null for multipart uploads (streamed to disk, never buffered in RAM),
+   * oversized bodies rejected with 413, or after the response has ended.
+   *
+   * @param {BufferEncoding} [encoding] Optional Buffer encoding (e.g. 'utf8', 'base64', 'hex').
+   * @returns {Promise<Buffer|string|null>}
+   * @throws {TypeError} If `encoding` is provided but is not a valid Buffer encoding.
+   */
+  async rawBody(encoding) {
+    if (encoding !== undefined && (typeof encoding !== 'string' || !Buffer.isEncoding(encoding))) {
+      throw new TypeError(`ODAC: invalid rawBody encoding "${encoding}"`)
+    }
+    if (this.#isMultipart) return null
+    const resolveRaw = () => {
+      if (this.#rawBody === null) return null
+      return encoding === undefined ? this.#rawBody : this.#rawBody.toString(encoding)
+    }
+    if (this.#complete) return resolveRaw()
+    return new Promise(resolve => {
+      this.#event.end.push({callback: () => resolve(resolveRaw())})
+    })
   }
 
   // - REDIRECT

@@ -87,6 +87,37 @@ Entries can be IP addresses, CIDR ranges or the names `loopback` and `private`; 
 - **Under ODAC:** a published port or a neighbour container on the same network reaches the app's TCP port directly, but it cannot sign, so it cannot pick its IP or fake HTTPS. The key reaches a container when it starts: an app that was running before the server was updated falls back to trusting private addresses until its next restart.
 - **ODAC tunnels** are signed like the proxy: the ODAC server forwarding the tunnel signs the visitor's address and TLS state as ODAC Cloud reported them, so `ip` and `ssl` describe the visitor.
 
+### Raw Request Body (Webhooks & HMAC)
+
+Use `Odac.rawBody()` (or `Odac.Request.rawBody()`) to access the exact, unmodified bytes received on the wire. This is required for cryptographic signature verification (such as Stripe, GitHub, or Slack HMAC webhooks) where re-serializing parsed JSON would alter whitespace or key order, as well as for non-JSON payloads like XML or raw binary data.
+
+```javascript
+const crypto = require('crypto')
+
+module.exports = async function (Odac) {
+  const raw = await Odac.rawBody() // Buffer by default
+  const signature = Odac.Request.header('x-hub-signature-256') || ''
+  const expected = 'sha256=' + crypto.createHmac('sha256', Odac.env('WEBHOOK_SECRET')).update(raw).digest('hex')
+
+  const valid =
+    signature.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))
+
+  if (!valid) return Odac.abort(401)
+
+  // Parsed JSON fields are still available via Odac.request()
+  const payload = await Odac.request()
+  return {received: true, event: payload.event}
+}
+```
+
+Pass a Node.js `BufferEncoding` (e.g. `await Odac.rawBody('utf8')`) to receive a decoded string instead of a `Buffer`.
+
+*   Returns a `Buffer` by default, or a `string` when `encoding` is specified.
+*   Returns an empty `Buffer` (or `''` with an encoding) when the request has no body.
+*   Returns `null` for `multipart/form-data` uploads (streamed to disk, never buffered in memory), oversized bodies rejected with `413`, or after the response ends.
+*   Throws `TypeError` if an invalid `encoding` is passed.
+
 ### Request Headers
 
 ```javascript

@@ -12,6 +12,7 @@ Handling incoming data and sending structured responses.
 ## Core Rules
 1.  **Request Data**: 
     -   `Odac.request('key')`: Auto-detect GET/POST (Recommended).
+    -   `Odac.rawBody(encoding?)`: Async raw request body (`Buffer` by default, or decoded `string` when a valid `BufferEncoding` like `'utf8'` is passed). Use this for webhook HMAC signature verification (Stripe, GitHub, etc.) or non-JSON payloads — never re-serialize `await Odac.request()` or try to read `Odac.Request.req` manually (the stream is already consumed before controllers run). Returns `null` for `multipart/form-data`, oversized `413` bodies, or after response end.
     -   `Odac.Request.post('key')`: Targeted POST data.
     -   `Odac.Request.get('key')`: Targeted URL parameters.
 2.  **Metadata**: Access `Odac.Request.method`, `Odac.Request.ip`, `Odac.Request.header('name')`.
@@ -42,7 +43,25 @@ module.exports = function(Odac) {
 };
 ```
 
-### 3. Proxy Cache Control
+### 3. Raw Body & Webhook HMAC Verification
+```javascript
+const crypto = require('crypto')
+
+module.exports = async function (Odac) {
+  const raw = await Odac.rawBody() // Buffer (exact wire bytes)
+  const sig = Odac.Request.header('x-hub-signature-256') || ''
+  const expected = 'sha256=' + crypto.createHmac('sha256', Odac.env('WEBHOOK_SECRET')).update(raw).digest('hex')
+
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return Odac.abort(401)
+  }
+
+  const payload = await Odac.request() // Parsed JSON still available
+  return {ok: true, event: payload.event}
+}
+```
+
+### 4. Proxy Cache Control
 Enable ODAC Proxy caching for static or semi-static page responses. Sets `X-ODAC-Cache` and `Cache-Control` headers automatically.
 
 **ODAC Ecosystem Only** — requires the ODAC Proxy. Has no effect in standalone deployments.

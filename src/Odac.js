@@ -155,6 +155,9 @@ module.exports = {
         return _odac.Env.get(key, defaultValue)
       }
       if (typeof req === 'object') {
+        _odac.rawBody = function (encoding) {
+          return _odac.Request.rawBody(encoding)
+        }
         _odac.return = function (data) {
           return _odac.Request.end(data)
         }
